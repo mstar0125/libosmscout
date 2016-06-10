@@ -27,14 +27,14 @@
 
 // Type and style sheet configuration
 #include <osmscout/TypeConfig.h>
-#include <osmscout/TypeSet.h>
 
 #include <osmscout/CoordDataFile.h>
 
 namespace osmscout {
 
   /**
-    Database instance initialisation parameter to influence the behaviour of the database
+    \ingroup Database
+    Database instance initialization parameter to influence the behavior of the database
     instance.
 
     The following groups attributes are currently available:
@@ -49,14 +49,19 @@ namespace osmscout {
 
   };
 
+  /**
+    \ingroup Database
+   * Secondary Database class for accessing debug information not normally available
+   * on the target device.
+   */
   class OSMSCOUT_API DebugDatabase
   {
   private:
-    bool                      isOpen;          //! true, if opened
+    bool                      isOpen;     //!< true, if opened
 
-    std::string               path;             //! Path to the directory containing all files
+    std::string               path;       //!< Path to the directory containing all files
 
-    TypeConfig                *typeConfig;      //! Type config for the currently opened map
+    TypeConfigRef             typeConfig; //!< Type config for the currently opened map
 
   private:
     bool ResolveReferences(const std::string& mapName,
@@ -74,10 +79,10 @@ namespace osmscout {
     bool IsOpen() const;
     void Close();
 
-    TypeConfig* GetTypeConfig() const;
+    TypeConfigRef GetTypeConfig() const;
 
     bool GetCoords(std::set<OSMId>& ids,
-                   CoordDataFile::CoordResultMap& coordsMap) const;
+                   CoordDataFile::ResultMap& coordsMap) const;
 
     bool ResolveReferences(const std::set<ObjectOSMRef>& ids,
                            const std::set<ObjectFileRef>& fileOffsets,

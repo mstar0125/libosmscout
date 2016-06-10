@@ -25,30 +25,29 @@
 #include <osmscout/system/Math.h>
 
 #include <osmscout/util/File.h>
+#include <osmscout/util/Geometry.h>
+#include <osmscout/util/Logger.h>
 #include <osmscout/util/Projection.h>
 #include <osmscout/util/StopClock.h>
 #include <osmscout/util/String.h>
 #include <osmscout/util/Transformation.h>
 
-#include <iostream>
-
 namespace osmscout
 {
+  const char* OptimizeWaysLowZoom::FILE_WAYSOPT_DAT = "waysopt.dat";
+
   OptimizeWaysLowZoom::OptimizeWaysLowZoom()
-  : datafile("waysopt.dat"),
-    magnification(0.0)
+  : magnification(0.0)
   {
     // no code
   }
 
   OptimizeWaysLowZoom::~OptimizeWaysLowZoom()
   {
-    if (scanner.IsOpen()) {
-      Close();
-    }
+    Close();
   }
 
-  bool OptimizeWaysLowZoom::ReadTypeData(FileScanner& scanner,
+  void OptimizeWaysLowZoom::ReadTypeData(FileScanner& scanner,
                                          OptimizeWaysLowZoom::TypeData& data)
   {
     scanner.Read(data.optLevel);
@@ -64,79 +63,79 @@ namespace osmscout
     data.cellXCount=data.cellXEnd-data.cellXStart+1;
     data.cellYCount=data.cellYEnd-data.cellYStart+1;
 
-    data.cellWidth=360.0/pow(2.0,(int)data.indexLevel);
-    data.cellHeight=180.0/pow(2.0,(int)data.indexLevel);
+    data.cellWidth=cellDimension[data.indexLevel].width;
+    data.cellHeight=cellDimension[data.indexLevel].height;
 
     data.minLon=data.cellXStart*data.cellWidth-180.0;
     data.maxLon=(data.cellXEnd+1)*data.cellWidth-180.0;
     data.minLat=data.cellYStart*data.cellHeight-90.0;
     data.maxLat=(data.cellYEnd+1)*data.cellHeight-90.0;
-
-    return !scanner.HasError();
   }
 
-  bool OptimizeWaysLowZoom::Open(const std::string& path)
+  bool OptimizeWaysLowZoom::Open(const TypeConfigRef& typeConfig,
+                                 const std::string& path)
   {
-    datafilename=AppendFileToDir(path,datafile);
+    this->typeConfig=typeConfig;
+    datafilename=AppendFileToDir(path,FILE_WAYSOPT_DAT);
 
-    if (!scanner.Open(datafilename,FileScanner::LowMemRandom,true)) {
-      std::cout << "Cannot open file '" << scanner.GetFilename() << "'!" << std::endl;
-      return false;
-    }
+    try {
+      scanner.Open(datafilename,FileScanner::LowMemRandom,true);
 
-    FileOffset indexOffset;
+      FileOffset indexOffset;
 
-    if (!scanner.ReadFileOffset(indexOffset)) {
-      std::cout << "Cannot read index offset!" << std::endl;
-      return false;
-    }
+      scanner.ReadFileOffset(indexOffset);
 
-    if (!scanner.SetPos(indexOffset)) {
-      std::cout << "Cannot goto to start of index at position " << indexOffset << "!" << std::endl;
-      return false;
-    }
+      scanner.SetPos(indexOffset);
 
-    uint32_t optimizationMaxMag;
-    uint32_t wayTypeCount;
+      uint32_t optimizationMaxMag;
+      uint32_t wayTypeCount;
 
-    scanner.Read(optimizationMaxMag);
-    scanner.Read(wayTypeCount);
+      scanner.Read(optimizationMaxMag);
+      scanner.Read(wayTypeCount);
 
-    if (scanner.HasError()) {
-      return false;
-    }
-
-    magnification=pow(2.0,(int)optimizationMaxMag);
-
-    for (size_t i=1; i<=wayTypeCount; i++) {
-      TypeId typeId;
-
-      scanner.Read(typeId);
-
-      TypeData typeData;
-
-      if (!ReadTypeData(scanner,
-                        typeData)) {
+      if (scanner.HasError()) {
         return false;
       }
 
-      wayTypesData[typeId].push_back(typeData);
-    }
+      magnification=pow(2.0,(int)optimizationMaxMag);
 
-    return !scanner.HasError();
+      for (size_t i=1; i<=wayTypeCount; i++) {
+        TypeId typeId;
+
+        scanner.Read(typeId);
+
+        TypeInfoRef type=typeConfig->GetWayTypeInfo(typeId);
+
+        TypeData typeData;
+
+        ReadTypeData(scanner,
+                     typeData);
+
+        wayTypesData[type].push_back(typeData);
+      }
+
+      return !scanner.HasError();
+    }
+    catch (IOException& e) {
+      log.Error() << e.GetDescription();
+      return false;
+    }
   }
 
   bool OptimizeWaysLowZoom::Close()
   {
-    bool success=true;
-
-    if (scanner.IsOpen()) {
-      if (!scanner.Close()) {
-        success=false;
+    try  {
+      if (scanner.IsOpen()) {
+        scanner.Close();
       }
     }
+    catch (IOException& e) {
+      log.Error() << e.GetDescription();
+      scanner.CloseFailsafe();
+      return false;
+    }
 
-    return success;
+    return true;
   }
 
   bool OptimizeWaysLowZoom::HasOptimizations(double magnification) const
@@ -144,33 +143,30 @@ namespace osmscout
     return magnification<=this->magnification;
   }
 
-  bool OptimizeWaysLowZoom::GetOffsets(const TypeData& typeData,
-                                       double minlon,
-                                       double minlat,
-                                       double maxlon,
-                                       double maxlat,
-                                       std::vector<FileOffset>& offsets) const
+  void OptimizeWaysLowZoom::GetOffsets(const TypeData& typeData,
+                                       const GeoBox& boundingBox,
+                                       std::set<FileOffset>& offsets) const
   {
-    std::set<FileOffset> newOffsets;
+    std::lock_guard<std::mutex> guard(lookupMutex);
 
     if (typeData.bitmapOffset==0) {
       // No data for this type available
-      return true;
+      return;
     }
 
-    if (maxlon<typeData.minLon ||
-        minlon>=typeData.maxLon ||
-        maxlat<typeData.minLat ||
-        minlat>=typeData.maxLat) {
+    if (boundingBox.GetMaxLon()<typeData.minLon ||
+        boundingBox.GetMinLon()>=typeData.maxLon ||
+        boundingBox.GetMaxLat()<typeData.minLat ||
+        boundingBox.GetMinLat()>=typeData.maxLat) {
       // No data available in given bounding box
-      return true;
+      return;
     }
 
-    uint32_t minxc=(uint32_t)floor((minlon+180.0)/typeData.cellWidth);
-    uint32_t maxxc=(uint32_t)floor((maxlon+180.0)/typeData.cellWidth);
+    uint32_t minxc=(uint32_t)floor((boundingBox.GetMinLon()+180.0)/typeData.cellWidth);
+    uint32_t maxxc=(uint32_t)floor((boundingBox.GetMaxLon()+180.0)/typeData.cellWidth);
 
-    uint32_t minyc=(uint32_t)floor((minlat+90.0)/typeData.cellHeight);
-    uint32_t maxyc=(uint32_t)floor((maxlat+90.0)/typeData.cellHeight);
+    uint32_t minyc=(uint32_t)floor((boundingBox.GetMinLat()+90.0)/typeData.cellHeight);
+    uint32_t maxyc=(uint32_t)floor((boundingBox.GetMaxLat()+90.0)/typeData.cellHeight);
 
     minxc=std::max(minxc,typeData.cellXStart);
     maxxc=std::min(maxxc,typeData.cellXEnd);
@@ -189,20 +185,14 @@ namespace osmscout
                                  ((y-typeData.cellYStart)*typeData.cellXCount+
                                   minxc-typeData.cellXStart)*typeData.dataOffsetBytes;
 
-      if (!scanner.SetPos(cellIndexOffset)) {
-        std::cerr << "Cannot go to type cell index position " << cellIndexOffset << std::endl;
-        return false;
-      }
+      scanner.SetPos(cellIndexOffset);
 
       // For each column in row
       for (size_t x=minxc; x<=maxxc; x++) {
         FileOffset cellDataOffset;
 
-        if (!scanner.ReadFileOffset(cellDataOffset,
-                                    typeData.dataOffsetBytes)) {
-          std::cerr << "Cannot read cell data position" << std::endl;
-          return false;
-        }
+        scanner.ReadFileOffset(cellDataOffset,
+                               typeData.dataOffsetBytes);
 
         if (cellDataOffset==0) {
           continue;
@@ -221,10 +211,7 @@ namespace osmscout
 
       assert(initialCellDataOffset>=cellIndexOffset);
 
-      if (!scanner.SetPos(initialCellDataOffset)) {
-        std::cerr << "Cannot go to cell data position " << initialCellDataOffset << std::endl;
-        return false;
-      }
+      scanner.SetPos(initialCellDataOffset);
 
       // For each data cell in row found
       for (size_t i=0; i<cellDataOffsetCount; i++) {
@@ -232,10 +219,7 @@ namespace osmscout
         FileOffset lastOffset=0;
 
 
-        if (!scanner.ReadNumber(dataCount)) {
-          std::cerr << "Cannot read cell data count" << std::endl;
-          return false;
-        }
+        scanner.ReadNumber(dataCount);
 
         for (size_t d=0; d<dataCount; d++) {
           FileOffset objectOffset;
@@ -244,94 +228,104 @@ namespace osmscout
 
           objectOffset+=lastOffset;
 
-          newOffsets.insert(objectOffset);
+          offsets.insert(objectOffset);
 
           lastOffset=objectOffset;
         }
       }
     }
-
-    for (std::set<FileOffset>::const_iterator offset=newOffsets.begin();
-         offset!=newOffsets.end();
-         ++offset) {
-      offsets.push_back(*offset);
-    }
-
-    return true;
   }
 
-  bool OptimizeWaysLowZoom::GetWays(double lonMin, double latMin,
-                                    double lonMax, double latMax,
-                                    const Magnification& magnification,
-                                    size_t /*maxWayCount*/,
-                                    std::vector<TypeSet>& wayTypes,
-                                    std::vector<WayRef>& ways) const
+  void OptimizeWaysLowZoom::LoadData(std::set<FileOffset>& offsets,
+                                     std::vector<WayRef>& ways) const
   {
-    std::vector<FileOffset> offsets;
+    std::lock_guard<std::mutex> guard(lookupMutex);
 
-    if (!scanner.IsOpen()) {
-      if (!scanner.Open(datafilename,FileScanner::LowMemRandom,true)) {
-        std::cerr << "Error while opening " << datafilename << " for reading!" << std::endl;
-        return false;
+    for (const auto& offset : offsets) {
+      scanner.SetPos(offset);
+
+      WayRef way=std::make_shared<Way>();
+
+      way->ReadOptimized(*typeConfig,
+                         scanner);
+
+      ways.push_back(way);
+    }
+  }
+
+  /**
+   * Returns the subset of types of wayTypes that can get retrieved from this index.
+   */
+  void OptimizeWaysLowZoom::GetTypes(const Magnification& magnification,
+                                     const TypeInfoSet& wayTypes,
+                                     TypeInfoSet& availableWayTypes) const
+  {
+    availableWayTypes.Clear();
+
+    for (const auto& type : wayTypesData) {
+      if (wayTypes.IsSet(type.first)) {
+        for (const auto& typeData : type.second) {
+          if (typeData.optLevel==magnification.GetLevel()) {
+            availableWayTypes.Set(type.first);
+            break;
+          }
+        }
       }
     }
+  }
 
-    offsets.reserve(20000);
+  bool OptimizeWaysLowZoom::GetWays(const GeoBox& boundingBox,
+                                    const Magnification& magnification,
+                                    const TypeInfoSet& wayTypes,
+                                    std::vector<WayRef>& ways,
+                                    TypeInfoSet& loadedWayTypes) const
+  {
+    StopClock            time;
+    std::set<FileOffset> offsets;
 
-    for (size_t i=0; i<wayTypes.size(); i++) {
-      for (std::map<TypeId,std::list<TypeData> >::const_iterator type=wayTypesData.begin();
-          type!=wayTypesData.end();
-          ++type) {
-        if (wayTypes[i].IsTypeSet(type->first)) {
+    loadedWayTypes.Clear();
+
+    try {
+      for (std::map<TypeInfoRef,std::list<TypeData> >::const_iterator type=wayTypesData.begin();
+           type!=wayTypesData.end();
+           ++type) {
+        if (wayTypes.IsSet(type->first)) {
           std::list<TypeData>::const_iterator match=type->second.end();
 
           for (std::list<TypeData>::const_iterator typeData=type->second.begin();
-              typeData!=type->second.end();
-              ++typeData) {
+               typeData!=type->second.end();
+               ++typeData) {
             if (typeData->optLevel==magnification.GetLevel()) {
               match=typeData;
+              break;
             }
           }
 
           if (match!=type->second.end()) {
             if (match->bitmapOffset!=0) {
-              if (!GetOffsets(*match,
-                              lonMin,
-                              latMin,
-                              lonMax,
-                              latMax,
-                              offsets)) {
-                return false;
-              }
-
-              for (std::vector<FileOffset>::const_iterator offset=offsets.begin();
-                  offset!=offsets.end();
-                  ++offset) {
-                if (!scanner.SetPos(*offset)) {
-                  std::cerr << "Error while positioning in file " << datafilename  << std::endl;
-                  type++;
-                  continue;
-                }
-
-                WayRef way=new Way();
-
-                if (!way->ReadOptimized(scanner)) {
-                  std::cerr << "Error while reading data entry of type " << type->first << " from file " << datafilename  << std::endl;
-                  continue;
-                }
-
-                ways.push_back(way);
-              }
-
-              offsets.clear();
+              GetOffsets(*match,
+                         boundingBox,
+                         offsets);
             }
-          }
 
-          if (match!=type->second.end()) {
-            wayTypes[i].UnsetType(type->first);
+            // Successfully loaded type data
+            loadedWayTypes.Set(type->first);
           }
         }
       }
+
+      LoadData(offsets,
+               ways);
+    }
+    catch (IOException& e) {
+      log.Error() << e.GetDescription();
+      return false;
+    }
+
+    time.Stop();
+
+    if (time.GetMilliseconds()>100) {
+      log.Warn() << "Retrieving " << ways.size() << " optimized ways from area index took " << time.ResultString();
     }
 
     return true;

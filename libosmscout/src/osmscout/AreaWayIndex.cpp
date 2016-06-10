@@ -19,11 +19,28 @@
 
 #include <osmscout/AreaWayIndex.h>
 
-#include <iostream>
+#include <algorithm>
+
+#include <osmscout/util/File.h>
+#include <osmscout/util/Geometry.h>
+#include <osmscout/util/Logger.h>
+#include <osmscout/util/StopClock.h>
 
 #include <osmscout/system/Math.h>
 
 namespace osmscout {
+
+  const char* AreaWayIndex::AREA_WAY_IDX="areaway.idx";
+
+  FileOffset AreaWayIndex::TypeData::GetDataOffset() const
+  {
+    return bitmapOffset+cellXCount*cellYCount*(FileOffset)dataOffsetBytes;
+  }
+
+  FileOffset AreaWayIndex::TypeData::GetCellOffset(size_t x, size_t y) const
+  {
+    return bitmapOffset+((y-cellYStart)*cellXCount+x-cellXStart)*dataOffsetBytes;
+  }
 
   AreaWayIndex::TypeData::TypeData()
   : indexLevel(0),
@@ -45,96 +62,109 @@ namespace osmscout {
   }
 
   AreaWayIndex::AreaWayIndex()
-  : filepart("areaway.idx")
   {
     // no code
   }
 
+  AreaWayIndex::~AreaWayIndex()
+  {
+    Close();
+  }
+
   void AreaWayIndex::Close()
   {
-    if (scanner.IsOpen()) {
-      scanner.Close();
+    try  {
+      if (scanner.IsOpen()) {
+        scanner.Close();
+      }
+    }
+    catch (IOException& e) {
+      log.Error() << e.GetDescription();
+      scanner.CloseFailsafe();
     }
   }
 
-  bool AreaWayIndex::Load(const std::string& path)
+  bool AreaWayIndex::Open(const TypeConfigRef& typeConfig,
+                          const std::string& path)
   {
-    datafilename=path+"/"+filepart;
+    datafilename=AppendFileToDir(path,AREA_WAY_IDX);
 
-    if (!scanner.Open(datafilename,FileScanner::LowMemRandom,true)) {
-      std::cerr << "Cannot open file '" << datafilename << "'" << std::endl;
+    try {
+      scanner.Open(datafilename,FileScanner::FastRandom,true);
+
+      uint32_t indexEntries;
+
+      scanner.Read(indexEntries);
+
+      wayTypeData.reserve(indexEntries);
+
+      for (size_t i=0; i<indexEntries; i++) {
+        TypeId typeId;
+
+        scanner.ReadTypeId(typeId,
+                           typeConfig->GetWayTypeIdBytes());
+
+        TypeData data;
+
+        data.type=typeConfig->GetWayTypeInfo(typeId);
+
+        scanner.ReadFileOffset(data.bitmapOffset);
+
+        if (data.bitmapOffset>0) {
+          scanner.Read(data.dataOffsetBytes);
+
+          scanner.ReadNumber(data.indexLevel);
+
+          scanner.ReadNumber(data.cellXStart);
+          scanner.ReadNumber(data.cellXEnd);
+          scanner.ReadNumber(data.cellYStart);
+          scanner.ReadNumber(data.cellYEnd);
+
+          data.cellXCount=data.cellXEnd-data.cellXStart+1;
+          data.cellYCount=data.cellYEnd-data.cellYStart+1;
+
+          data.cellWidth=cellDimension[data.indexLevel].width;
+          data.cellHeight=cellDimension[data.indexLevel].height;
+
+          data.minLon=data.cellXStart*data.cellWidth-180.0;
+          data.maxLon=(data.cellXEnd+1)*data.cellWidth-180.0;
+          data.minLat=data.cellYStart*data.cellHeight-90.0;
+          data.maxLat=(data.cellYEnd+1)*data.cellHeight-90.0;
+        }
+
+        wayTypeData.push_back(data);
+      }
+
+      return !scanner.HasError();
+    }
+    catch (IOException& e) {
+      log.Error() << e.GetDescription();
       return false;
     }
-
-    uint32_t indexEntries;
-
-    scanner.Read(indexEntries);
-
-    for (size_t i=0; i<indexEntries; i++) {
-      TypeId type;
-
-      scanner.ReadNumber(type);
-
-      if (type>=wayTypeData.size()) {
-        wayTypeData.resize(type+1);
-      }
-
-      scanner.ReadFileOffset(wayTypeData[type].bitmapOffset);
-
-      if (wayTypeData[type].bitmapOffset>0) {
-        scanner.Read(wayTypeData[type].dataOffsetBytes);
-
-        scanner.ReadNumber(wayTypeData[type].indexLevel);
-
-        scanner.ReadNumber(wayTypeData[type].cellXStart);
-        scanner.ReadNumber(wayTypeData[type].cellXEnd);
-        scanner.ReadNumber(wayTypeData[type].cellYStart);
-        scanner.ReadNumber(wayTypeData[type].cellYEnd);
-
-        wayTypeData[type].cellXCount=wayTypeData[type].cellXEnd-wayTypeData[type].cellXStart+1;
-        wayTypeData[type].cellYCount=wayTypeData[type].cellYEnd-wayTypeData[type].cellYStart+1;
-
-        wayTypeData[type].cellWidth=360.0/pow(2.0,(int)wayTypeData[type].indexLevel);
-        wayTypeData[type].cellHeight=180.0/pow(2.0,(int)wayTypeData[type].indexLevel);
-
-        wayTypeData[type].minLon=wayTypeData[type].cellXStart*wayTypeData[type].cellWidth-180.0;
-        wayTypeData[type].maxLon=(wayTypeData[type].cellXEnd+1)*wayTypeData[type].cellWidth-180.0;
-        wayTypeData[type].minLat=wayTypeData[type].cellYStart*wayTypeData[type].cellHeight-90.0;
-        wayTypeData[type].maxLat=(wayTypeData[type].cellYEnd+1)*wayTypeData[type].cellHeight-90.0;
-      }
-    }
-
-    return !scanner.HasError() && scanner.Close();
   }
 
   bool AreaWayIndex::GetOffsets(const TypeData& typeData,
-                                double minlon,
-                                double minlat,
-                                double maxlon,
-                                double maxlat,
-                                size_t maxWayCount,
-                                OSMSCOUT_HASHSET<FileOffset>& offsets,
-                                size_t currentSize,
-                                bool& sizeExceeded) const
+                                const GeoBox& boundingBox,
+                                std::unordered_set<FileOffset>& offsets) const
   {
     if (typeData.bitmapOffset==0) {
       // No data for this type available
       return true;
     }
 
-    if (maxlon<typeData.minLon ||
-        minlon>=typeData.maxLon ||
-        maxlat<typeData.minLat ||
-        minlat>=typeData.maxLat) {
+    if (boundingBox.GetMaxLon()<typeData.minLon ||
+        boundingBox.GetMinLon()>=typeData.maxLon ||
+        boundingBox.GetMaxLat()<typeData.minLat ||
+        boundingBox.GetMinLat()>=typeData.maxLat) {
       // No data available in given bounding box
       return true;
     }
 
-    uint32_t minxc=(uint32_t)floor((minlon+180.0)/typeData.cellWidth);
-    uint32_t maxxc=(uint32_t)floor((maxlon+180.0)/typeData.cellWidth);
+    uint32_t minxc=(uint32_t)floor((boundingBox.GetMinLon()+180.0)/typeData.cellWidth);
+    uint32_t maxxc=(uint32_t)floor((boundingBox.GetMaxLon()+180.0)/typeData.cellWidth);
 
-    uint32_t minyc=(uint32_t)floor((minlat+90.0)/typeData.cellHeight);
-    uint32_t maxyc=(uint32_t)floor((maxlat+90.0)/typeData.cellHeight);
+    uint32_t minyc=(uint32_t)floor((boundingBox.GetMinLat()+90.0)/typeData.cellHeight);
+    uint32_t maxyc=(uint32_t)floor((boundingBox.GetMaxLat()+90.0)/typeData.cellHeight);
 
     minxc=std::max(minxc,typeData.cellXStart);
     maxxc=std::min(maxxc,typeData.cellXEnd);
@@ -142,31 +172,23 @@ namespace osmscout {
     minyc=std::max(minyc,typeData.cellYStart);
     maxyc=std::min(maxyc,typeData.cellYEnd);
 
-    FileOffset dataOffset=typeData.bitmapOffset+
-                          typeData.cellXCount*typeData.cellYCount*(FileOffset)typeData.dataOffsetBytes;
+    FileOffset dataOffset=typeData.GetDataOffset();
 
     // For each row
     for (size_t y=minyc; y<=maxyc; y++) {
-      FileOffset initialCellDataOffset=0;
-      size_t     cellDataOffsetCount=0;
-      FileOffset bitmapCellOffset=typeData.bitmapOffset+
-                                  ((y-typeData.cellYStart)*typeData.cellXCount+
-                                   minxc-typeData.cellXStart)*(FileOffset)typeData.dataOffsetBytes;
+      std::lock_guard<std::mutex> guard(lookupMutex);
+      FileOffset                  initialCellDataOffset=0;
+      size_t                      cellDataOffsetCount=0;
+      FileOffset                  bitmapCellOffset=typeData.GetCellOffset(minxc,y);
 
-      if (!scanner.SetPos(bitmapCellOffset)) {
-        std::cerr << "Cannot go to type cell index position " << bitmapCellOffset << std::endl;
-        return false;
-      }
+      scanner.SetPos(bitmapCellOffset);
 
       // For each column in row
       for (size_t x=minxc; x<=maxxc; x++) {
         FileOffset cellDataOffset;
 
-        if (!scanner.ReadFileOffset(cellDataOffset,
-                                    typeData.dataOffsetBytes)) {
-          std::cerr << "Cannot read cell data position" << std::endl;
-          return false;
-        }
+        scanner.ReadFileOffset(cellDataOffset,
+                               typeData.dataOffsetBytes);
 
         if (cellDataOffset==0) {
           continue;
@@ -191,27 +213,14 @@ namespace osmscout {
       assert(initialCellDataOffset>=bitmapCellOffset);
 
       // first data entry in the row
-      if (!scanner.SetPos(initialCellDataOffset)) {
-        std::cerr << "Cannot go to cell data position " << initialCellDataOffset << std::endl;
-        return false;
-      }
+      scanner.SetPos(initialCellDataOffset);
 
       // For each data cell (in range) in row found
       for (size_t i=0; i<cellDataOffsetCount; i++) {
         uint32_t   dataCount;
         FileOffset lastOffset=0;
 
-
-        if (!scanner.ReadNumber(dataCount)) {
-          std::cerr << "Cannot read cell data count" << std::endl;
-          return false;
-        }
-
-        if (currentSize+offsets.size()+dataCount>maxWayCount) {
-          //std::cout << currentSize<< "+" << newOffsets.size() << "+" << dataCount << ">" << maxWayCount << std::endl;
-          sizeExceeded=true;
-          return true;
-        }
+        scanner.ReadNumber(dataCount);
 
         for (size_t d=0; d<dataCount; d++) {
           FileOffset objectOffset;
@@ -230,67 +239,46 @@ namespace osmscout {
     return true;
   }
 
-  bool AreaWayIndex::GetOffsets(double minlon,
-                                double minlat,
-                                double maxlon,
-                                double maxlat,
-                                const std::vector<TypeSet>& wayTypes,
-                                size_t maxWayCount,
-                                std::vector<FileOffset>& offsets) const
+  bool AreaWayIndex::GetOffsets(const GeoBox& boundingBox,
+                                const TypeInfoSet& types,
+                                std::vector<FileOffset>& offsets,
+                                TypeInfoSet& loadedTypes) const
   {
-    if (!scanner.IsOpen()) {
-      if (!scanner.Open(datafilename,FileScanner::LowMemRandom,true)) {
-        std::cerr << "Error while opening " << datafilename << " for reading!" << std::endl;
-        return false;
-      }
-    }
+    StopClock time;
 
-    bool                         sizeExceeded=false;
-    OSMSCOUT_HASHSET<FileOffset> newOffsets;
+    offsets.reserve(std::min((size_t)10000,offsets.capacity()));
+    loadedTypes.Clear();
 
-    offsets.reserve(std::min(100000u,(uint32_t)maxWayCount));
+    std::unordered_set<FileOffset> uniqueOffsets;
 
-#if defined(OSMSCOUT_HASHSET_HAS_RESERVE)
-    newOffsets.reserve(std::min(100000u,(uint32_t)maxWayCount));
-#endif
-
-    for (size_t i=0; i<wayTypes.size(); i++) {
-      newOffsets.clear();
-
-      for (size_t type=0;
-          type<wayTypeData.size();
-          ++type) {
-        if (wayTypes[i].IsTypeSet(type)) {
-          if (!GetOffsets(wayTypeData[type],
-                          minlon,
-                          minlat,
-                          maxlon,
-                          maxlat,
-                          maxWayCount,
-                          newOffsets,
-                          offsets.size(),
-                          sizeExceeded)) {
+    try {
+      for (const auto& data : wayTypeData) {
+        if (types.IsSet(data.type)) {
+          if (!GetOffsets(data,
+                          boundingBox,
+                          uniqueOffsets)) {
             return false;
           }
 
-          if (sizeExceeded) {
-            return true;
-          }
+          loadedTypes.Set(data.type);
         }
       }
-
-      // Copy data from temporary set to final vector
-
-      offsets.insert(offsets.end(),newOffsets.begin(),newOffsets.end());
     }
+    catch (IOException& e) {
+      log.Error() << e.GetDescription();
+      return false;
+    }
+
+    offsets.insert(offsets.end(),uniqueOffsets.begin(),uniqueOffsets.end());
 
     //std::cout << "Found " << wayWayOffsets.size() << "+" << relationWayOffsets.size()<< " offsets in 'areaway.idx'" << std::endl;
 
+    time.Stop();
+
+    if (time.GetMilliseconds()>100) {
+      log.Warn() << "Retrieving " << offsets.size() << " way offsets from area index for " << boundingBox.GetDisplayText() << " took " << time.ResultString();
+    }
+
     return true;
   }
-
-  void AreaWayIndex::DumpStatistics()
-  {
-  }
 }
-

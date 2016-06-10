@@ -6,7 +6,7 @@ if [ $# -lt 1 ]; then
 fi
 
 scriptDirectory="${BASH_SOURCE%/*}"
-if [[ ! -d "$scriptDirectory" ]]; then scriptDirectory="$PWD"; fi
+if [ ! -d "$scriptDirectory" ]; then scriptDirectory="$PWD"; fi
 
 mappingFile="$1"
 
@@ -14,9 +14,6 @@ if [ ! -f "$mappingFile" ]; then
   echo "Mapping file $mappingFile does not exist!"
   exit 1
 fi
-
-echo "Mapping File:" | tee $outputFile
-echo " $mappingFile" | tee -a $outputFile
 
 if [ "$mappingFile" != "${mappingFile%.osm.pbf}" ]; then
   mappingFileBase="${mappingFile%.osm.pbf}"
@@ -26,6 +23,14 @@ else
   echo "$mapping file is neither an *.osm nor an *.osm.pbf file"
   exit 1
 fi
+
+targetDirectory="$mappingFileBase"
+outputFile="${mappingFileBase}.txt"
+
+echo -n >$outputFile
+
+echo "Mapping File:" | tee $outputFile
+echo " $mappingFile" | tee -a $outputFile
 
 mappingFileOpt="$scriptDirectory/${mappingFileBase}.opt"
 defaultOpt="$scriptDirectory/default.opt"
@@ -40,13 +45,10 @@ elif [ -f "$defaultOpt" ]; then
   . "$defaultOpt"
 fi
 
-targetDirectory=$mappingFileBase
 
-outputFile=${mappingFileBase}.txt
-
-if [ ! -d $targetDirectory ]; then
+if [ ! -d "$targetDirectory" ]; then
   echo "Creating target directory $targetDirectory..."
-  mkdir $targetDirectory
+  mkdir "$targetDirectory"
 fi
 
 echo "Target directory:" | tee -a $outputFile
@@ -56,6 +58,6 @@ echo " $outputFile" | tee -a $outputFile
 echo "Options:" | tee -a $outputFile
 echo " $options" | tee -a $outputFile
 echo "Call:" | tee -a $outputFile
-echo " ../Import/src/Import $options --typefile ../Import/map.ost --destinationDirectory $targetDirectory $mappingFile" | tee -a $outputFile
+echo " ../Import/src/Import $options --typefile ../stylesheets/map.ost --destinationDirectory $targetDirectory $@" | tee -a $outputFile
 
-../Import/src/Import $options --typefile ../Import/map.ost --destinationDirectory $targetDirectory $mappingFile 2>&1 | tee -a $outputFile
+../Import/src/Import $options --typefile ../stylesheets/map.ost --destinationDirectory "$targetDirectory" "$@" 2>&1 | tee -a $outputFile

@@ -20,6 +20,12 @@
 
 #include <osmscout/Database.h>
 
+#include <osmscout/POIService.h>
+
+#include <osmscout/TypeFeatures.h>
+
+#include <osmscout/util/GeoBox.h>
+
 /*
   Example for the nordrhein-westfalen.osm (to be executed in the Demos top
   level directory):
@@ -66,57 +72,51 @@ int main(int argc, char* argv[])
   }
 
   osmscout::DatabaseParameter databaseParameter;
-  osmscout::Database          database(databaseParameter);
+  osmscout::DatabaseRef       database(new osmscout::Database(databaseParameter));
+  osmscout::POIServiceRef     poiService(new osmscout::POIService(database));
+  osmscout::GeoBox            boundingBox(osmscout::GeoCoord(latTop,lonLeft),
+                                          osmscout::GeoCoord(latBottom,lonRight));
 
-  if (!database.Open(map.c_str())) {
+  if (!database->Open(map.c_str())) {
     std::cerr << "Cannot open database" << std::endl;
 
     return 1;
   }
 
-  std::cout << "- Search area: ";
-  std::cout << "[" << std::min(latTop,latBottom) << "," << std::min(lonLeft,lonRight) << "]";
-  std::cout << "x";
-  std::cout << "[" <<std::max(latTop,latBottom) << "," << std::max(lonLeft,lonRight) << "]" << std::endl;
+  std::cout << "- Search area: " << boundingBox.GetDisplayText() << std::endl;
 
-  osmscout::TypeSet types(*database.GetTypeConfig());
+  osmscout::TypeConfigRef          typeConfig(database->GetTypeConfig());
+  osmscout::TypeInfoSet            nodeTypes(*typeConfig);
+  osmscout::TypeInfoSet            wayTypes(*typeConfig);
+  osmscout::TypeInfoSet            areaTypes(*typeConfig);
+  osmscout::NameFeatureLabelReader nameLabelReader(*typeConfig);
 
-  for (std::list<std::string>::const_iterator name=typeNames.begin();
-      name!=typeNames.end();
-      name++) {
-    osmscout::TypeId nodeType;
-    osmscout::TypeId wayType;
-    osmscout::TypeId areaType;
+  for (const auto &name : typeNames) {
+    osmscout::TypeInfoRef type=typeConfig->GetTypeInfo(name);
 
-    nodeType=database.GetTypeConfig()->GetNodeTypeId(*name);
-    wayType=database.GetTypeConfig()->GetWayTypeId(*name);
-    areaType=database.GetTypeConfig()->GetAreaTypeId(*name);
-
-    if (nodeType==osmscout::typeIgnore &&
-        wayType==osmscout::typeIgnore &&
-        areaType==osmscout::typeIgnore) {
-      std::cerr << "Cannot resolve type name '" << *name << "'" << std::endl;
+    if (type->GetIgnore()) {
+      std::cerr << "Cannot resolve type name '" << name << "'" << std::endl;
       continue;
     }
 
-    std::cout << "- Searching for '" << *name << "' as";
+    std::cout << "- Searching for '" << name << "' as";
 
-    if (nodeType!=osmscout::typeIgnore) {
-      std::cout << " node (" << nodeType << ")";
 
-      types.SetType(nodeType);
-    }
+    if (!type->GetIgnore()) {
+      if (type->CanBeNode()) {
+        std::cout << " node";
+        nodeTypes.Set(type);
+      }
 
-    if (wayType!=osmscout::typeIgnore) {
-      std::cout << " way (" << wayType << ")";
+      if (type->CanBeWay()) {
+        std::cout << " way";
+        wayTypes.Set(type);
+      }
 
-      types.SetType(wayType);
-    }
-
-    if (areaType!=osmscout::typeIgnore) {
-      std::cout << " area (" << areaType << ")";
-
-      types.SetType(areaType);
+      if (type->CanBeArea()) {
+        std::cout << " area";
+        areaTypes.Set(type);
+      }
     }
 
     std::cout << std::endl;
@@ -126,41 +126,34 @@ int main(int argc, char* argv[])
   std::vector<osmscout::WayRef>  ways;
   std::vector<osmscout::AreaRef> areas;
 
-  if (!database.GetObjects(std::min(lonLeft,lonRight),
-                           std::min(latTop,latBottom),
-                           std::max(lonLeft,lonRight),
-                           std::max(latTop,latBottom),
-                           types,
-                           nodes,
-                           ways,
-                           areas)) {
+  if (!poiService->GetPOIsInArea(boundingBox,
+                                 nodeTypes,
+                                 nodes,
+                                 wayTypes,
+                                 ways,
+                                 areaTypes,
+                                 areas)) {
     std::cerr << "Cannot load data from database" << std::endl;
 
     return 1;
   }
 
-  for (std::vector<osmscout::NodeRef>::const_iterator node=nodes.begin();
-      node!=nodes.end();
-      node++) {
-    std::cout << "+ Node " << (*node)->GetFileOffset();
-    std::cout << " " << database.GetTypeConfig()->GetTypeInfo((*node)->GetType()).GetName();
-    std::cout << " " << (*node)->GetName() << std::endl;
+  for (const auto &node : nodes) {
+    std::cout << "+ Node " << node->GetFileOffset();
+    std::cout << " " << node->GetType()->GetName();
+    std::cout << " " << nameLabelReader.GetLabel((node->GetFeatureValueBuffer())) << std::endl;
   }
 
-  for (std::vector<osmscout::WayRef>::const_iterator way=ways.begin();
-      way!=ways.end();
-      way++) {
-    std::cout << "+ Way " << (*way)->GetFileOffset();
-    std::cout << " " << database.GetTypeConfig()->GetTypeInfo((*way)->GetType()).GetName();
-    std::cout << " " << (*way)->GetName() << std::endl;
+  for (const auto &way :ways) {
+    std::cout << "+ Way " << way->GetFileOffset();
+    std::cout << " " << way->GetType()->GetName();
+    std::cout << " " << nameLabelReader.GetLabel(way->GetFeatureValueBuffer()) << std::endl;
   }
 
-  for (std::vector<osmscout::AreaRef>::const_iterator area=areas.begin();
-      area!=areas.end();
-      area++) {
-    std::cout << "+ Area " << (*area)->GetFileOffset();
-    std::cout << " " << database.GetTypeConfig()->GetTypeInfo((*area)->GetType()).GetName();
-    std::cout << " " << (*area)->rings.front().GetName() << std::endl;
+  for (const auto &area : areas) {
+    std::cout << "+ Area " << area->GetFileOffset();
+    std::cout << " " << area->GetType()->GetName();
+    std::cout << " " << nameLabelReader.GetLabel(area->rings.front().GetFeatureValueBuffer()) << std::endl;
   }
 
   return 0;

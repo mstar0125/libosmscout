@@ -20,6 +20,7 @@
   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307  USA
 */
 
+#include <list>
 #include <string>
 
 #include <osmscout/ImportFeatures.h>
@@ -29,7 +30,6 @@
 #include <osmscout/TypeConfig.h>
 
 #include <osmscout/util/Progress.h>
-
 #include <osmscout/util/Transformation.h>
 
 namespace osmscout {
@@ -43,74 +43,123 @@ namespace osmscout {
     */
   class OSMSCOUT_IMPORT_API ImportParameter
   {
+  public:
+    /**
+     * Definition of a router
+     */
+    class OSMSCOUT_IMPORT_API Router
+    {
+    private:
+      VehicleMask vehicleMask;
+      std::string filenamebase;
+
+    public:
+      Router(VehicleMask vehicleMask,
+             const std::string& filenamebase);
+
+      inline VehicleMask GetVehicleMask() const
+      {
+        return vehicleMask;
+      }
+
+      inline std::string GetFilenamebase() const
+      {
+        return filenamebase;
+      }
+
+      inline std::string GetDataFilename() const
+      {
+        return filenamebase+".dat";
+      }
+
+      inline std::string GetVariantFilename() const
+      {
+        return filenamebase+"2.dat";
+      }
+
+      inline std::string GetIndexFilename() const
+      {
+        return filenamebase+".idx";
+      }
+    };
+
+    typedef std::shared_ptr<Router> RouterRef;
+
   private:
-    std::string                  mapfile;                  //! Name of the file containing the map (either *.osm or *.osm.pbf)
-    std::string                  typefile;                 //! Name and path ff type definition file (map.ost.xml)
-    std::string                  destinationDirectory;     //! Name of the destination directory
-    size_t                       startStep;                //! Starting step for import
-    size_t                       endStep;                  //! End step for import
+    std::list<std::string>       mapfiles;                 //<! Name of the files containing map data (either *.osm or *.osm.pbf)
+    std::string                  typefile;                 //<! Name and path ff type definition file (map.ost.xml)
+    std::string                  destinationDirectory;     //<! Name of the destination directory
+    size_t                       startStep;                //<! Starting step for import
+    size_t                       endStep;                  //<! End step for import
+    bool                         eco;                      //<! Eco modus, deletes temporary files ASAP
+    std::list<Router>            router;                   //<! Definition of router
 
-    bool                         strictAreas;              //! Assure that areas conform to "simple" definition
+    bool                         strictAreas;              //<! Assure that areas conform to "simple" definition
 
-    bool                         sortObjects;              //! Sort all objects
-    size_t                       sortBlockSize;            //! Number of entries loaded in one sort iteration
-    size_t                       sortTileMag;              //! Zoom level for individual sorting cells
+    bool                         sortObjects;              //<! Sort all objects
+    size_t                       sortBlockSize;            //<! Number of entries loaded in one sort iteration
+    size_t                       sortTileMag;              //<! Zoom level for individual sorting cells
 
-    size_t                       numericIndexPageSize;     //! Size of an numeric index page in bytes
+    size_t                       numericIndexPageSize;     //<! Size of an numeric index page in bytes
 
-    bool                         coordDataMemoryMaped;     //! Use memory mapping for coord data file access
+    size_t                       rawCoordBlockSize;        //<! Number of raw coords loaded during import in one go
 
-    bool                         rawNodeDataMemoryMaped;   //! Use memory mapping for raw node data file access
-    size_t                       rawNodeDataCacheSize;     //! Size of the raw node data cache
+    bool                         rawNodeDataMemoryMaped;   //<! Use memory mapping for raw node data file access
 
-    bool                         rawWayIndexMemoryMaped;   //! Use memory mapping for raw way index file access
-    bool                         rawWayDataMemoryMaped;    //! Use memory mapping for raw way data file access
-    size_t                       rawWayDataCacheSize;      //! Size of the raw way data cache
-    size_t                       rawWayIndexCacheSize;     //! Size of the raw way index cache
-    size_t                       rawWayBlockSize;          //! Number of ways loaded during import until nodes get resolved
+    bool                         rawWayIndexMemoryMaped;   //<! Use memory mapping for raw way index file access
+    bool                         rawWayDataMemoryMaped;    //<! Use memory mapping for raw way data file access
+    size_t                       rawWayIndexCacheSize;     //<! Size of the raw way index cache
+    size_t                       rawWayBlockSize;          //<! Number of ways loaded during import until nodes get resolved
 
-    bool                         areaDataMemoryMaped;      //! Use memory mapping for area data file access
-    size_t                       areaDataCacheSize;        //! Size of the area data cache
+    bool                         coordDataMemoryMaped;     //<! Use memory mapping for coord data file access
+    size_t                       coordIndexCacheSize;      //<! Size of the coord index cache
 
-    bool                         wayDataMemoryMaped;       //! Use memory mapping for way data file access
-    size_t                       wayDataCacheSize;         //! Size of the way data cache
+    bool                         areaDataMemoryMaped;      //<! Use memory mapping for area data file access
+    size_t                       areaDataCacheSize;        //<! Size of the area data cache
 
-    size_t                       areaAreaIndexMaxMag;      //! Maximum depth of the index generated
+    bool                         wayDataMemoryMaped;       //<! Use memory mapping for way data file access
+    size_t                       wayDataCacheSize;         //<! Size of the way data cache
 
-    size_t                       areaWayMinMag;            //! Minimum magnification of index for individual type
-    double                       areaWayIndexMinFillRate;  //! Minimum rate of filled cells in index bitmap
-    size_t                       areaWayIndexCellSizeAverage; //! Average entries per index cell
-    size_t                       areaWayIndexCellSizeMax;  //! Maximum number of entries  per index cell
+    size_t                       areaAreaIndexMaxMag;      //<! Maximum depth of the index generated
 
-    size_t                       areaNodeMinMag;           //! Minimum magnification of index for individual type
-    double                       areaNodeIndexMinFillRate; //! Minimum rate of filled cells in index bitmap
-    size_t                       areaNodeIndexCellSizeAverage; //! Average entries per index cell
-    size_t                       areaNodeIndexCellSizeMax; //! Maximum number of entries  per index cell
+    size_t                       areaNodeMinMag;           //<! Minimum magnification of index for individual type
+    double                       areaNodeIndexMinFillRate; //<! Minimum rate of filled cells in index bitmap
+    size_t                       areaNodeIndexCellSizeAverage; //<! Average entries per index cell
+    size_t                       areaNodeIndexCellSizeMax; //<! Maximum number of entries  per index cell
 
-    size_t                       waterIndexMinMag;         //! Minimum level of the generated water index
-    size_t                       waterIndexMaxMag;         //! Maximum level of the generated water index
+    size_t                       areaWayMinMag;            //<! Minimum magnification of index for individual type
+    size_t                       areaWayIndexMaxLevel;     //<! Maximum zoom level for area way index bitmap
 
-    size_t                       optimizationMaxWayCount;  //! Maximum number of ways for one iteration
-    size_t                       optimizationMaxMag;       //! Maximum magnification for optimization
-    size_t                       optimizationMinMag;       //! Minimum magnification of index for individual type
-    size_t                       optimizationCellSizeAverage; //! Average entries per index cell
-    size_t                       optimizationCellSizeMax;  //! Maximum number of entries  per index cell
-    TransPolygon::OptimizeMethod optimizationWayMethod;    //! what method to use to optimize ways
+    size_t                       waterIndexMinMag;         //<! Minimum level of the generated water index
+    size_t                       waterIndexMaxMag;         //<! Maximum level of the generated water index
 
-    size_t                       routeNodeBlockSize;       //! Number of route nodes loaded during import until ways get resolved
+    size_t                       optimizationMaxWayCount;  //<! Maximum number of ways for one iteration
+    size_t                       optimizationMaxMag;       //<! Maximum magnification for optimization
+    size_t                       optimizationMinMag;       //<! Minimum magnification of index for individual type
+    size_t                       optimizationCellSizeAverage; //<! Average entries per index cell
+    size_t                       optimizationCellSizeMax;  //<! Maximum number of entries  per index cell
+    TransPolygon::OptimizeMethod optimizationWayMethod;    //<! what method to use to optimize ways
 
-    bool                         assumeLand;               //! During sea/land detection,we either trust coastlines only or make some
-                                                           //! assumptions which tiles are sea and which are land.
+    size_t                       routeNodeBlockSize;       //<! Number of route nodes loaded during import until ways get resolved
+
+    bool                         assumeLand;               //<! During sea/land detection,we either trust coastlines only or make some
+                                                           //<! assumptions which tiles are sea and which are land.
+    std::vector<std::string>     langOrder;                //<! languages used when parsing name[:lang] and
+                                                           //<! place_name[:lang] tags
+    std::vector<std::string>     altLangOrder;             //<! the same as langOrder but for a alt (second) lang
 
   public:
     ImportParameter();
 
-    std::string GetMapfile() const;
+    const std::list<std::string>& GetMapfiles() const;
     std::string GetTypefile() const;
     std::string GetDestinationDirectory() const;
 
     size_t GetStartStep() const;
     size_t GetEndStep() const;
+    bool   IsEco() const;
+
+    const std::list<Router>& GetRouter() const;
 
     bool GetStrictAreas() const;
 
@@ -120,16 +169,17 @@ namespace osmscout {
 
     size_t GetNumericIndexPageSize() const;
 
-    bool GetCoordDataMemoryMaped() const;
+    size_t GetRawCoordBlockSize() const;
 
     bool GetRawNodeDataMemoryMaped() const;
-    size_t GetRawNodeDataCacheSize() const;
 
     bool GetRawWayIndexMemoryMaped() const;
     bool GetRawWayDataMemoryMaped() const;
-    size_t GetRawWayDataCacheSize() const;
     size_t GetRawWayIndexCacheSize() const;
     size_t GetRawWayBlockSize() const;
+
+    bool GetCoordDataMemoryMaped() const;
+    size_t GetCoordIndexCacheSize() const;
 
     bool GetAreaDataMemoryMaped() const;
     size_t GetAreaDataCacheSize() const;
@@ -143,9 +193,7 @@ namespace osmscout {
     size_t GetAreaNodeIndexCellSizeMax() const;
 
     size_t GetAreaWayMinMag() const;
-    double GetAreaWayIndexMinFillRate() const;
-    size_t GetAreaWayIndexCellSizeAverage() const;
-    size_t GetAreaWayIndexCellSizeMax() const;
+    size_t GetAreaWayIndexMaxLevel() const;
 
     size_t GetAreaAreaIndexMaxMag() const;
 
@@ -162,13 +210,20 @@ namespace osmscout {
     size_t GetRouteNodeBlockSize() const;
 
     bool GetAssumeLand() const;
-
-    void SetMapfile(const std::string& mapfile);
+      
+    const std::vector<std::string>& GetLangOrder () const;
+    const std::vector<std::string>& GetAltLangOrder () const;
+      
+    void SetMapfiles(const std::list<std::string>& mapfile);
     void SetTypefile(const std::string& typefile);
     void SetDestinationDirectory(const std::string& destinationDirectory);
 
     void SetStartStep(size_t startStep);
     void SetSteps(size_t startStep, size_t endStep);
+    void SetEco(bool eco);
+
+    void ClearRouter();
+    void AddRouter(const Router& router);
 
     void SetStrictAreas(bool strictAreas);
 
@@ -178,7 +233,7 @@ namespace osmscout {
 
     void SetNumericIndexPageSize(size_t numericIndexPageSize);
 
-    void SetCoordDataMemoryMaped(bool memoryMaped);
+    void SetRawCoordBlockSize(size_t blockSize);
 
     void SetRawNodeDataMemoryMaped(bool memoryMaped);
     void SetRawNodeDataCacheSize(size_t nodeDataCacheSize);
@@ -188,6 +243,9 @@ namespace osmscout {
     void SetRawWayDataCacheSize(size_t wayDataCacheSize);
     void SetRawWayIndexCacheSize(size_t wayIndexCacheSize);
     void SetRawWayBlockSize(size_t blockSize);
+
+    void SetCoordDataMemoryMaped(bool memoryMaped);
+    void SetCoordIndexCacheSize(size_t coordIndexCacheSize);
 
     void SetAreaDataMemoryMaped(bool memoryMaped);
     void SetAreaDataCacheSize(size_t areaDataCacheSize);
@@ -203,9 +261,7 @@ namespace osmscout {
     void SetAreaNodeIndexCellSizeMax(size_t areaNodeIndexCellSizeMax);
 
     void SetAreaWayMinMag(size_t areaWayMinMag);
-    void SetAreaWayIndexMinFillRate(double areaWayIndexMinFillRate);
-    void SetAreaWayIndexCellSizeAverage(size_t areaWayIndexCellSizeAverage);
-    void SetAreaWayIndexCellSizeMax(size_t areaWayIndexCellSizeMax);
+    void SetAreaWayIndexMaxMag(size_t areaWayIndexMaxLevel);
 
     void SetWaterIndexMinMag(size_t waterIndexMinMag);
     void SetWaterIndexMaxMag(size_t waterIndexMaxMag);
@@ -220,6 +276,67 @@ namespace osmscout {
     void SetRouteNodeBlockSize(size_t blockSize);
 
     void SetAssumeLand(bool assumeLand);
+
+    void SetLangOrder(const std::vector<std::string>& langOrder);
+    void SetAltLangOrder(const std::vector<std::string>& altLangOrder);
+
+  };
+
+  class OSMSCOUT_IMPORT_API ImportModuleDescription
+  {
+  private:
+    std::string            name;
+    std::string            description;
+    std::list<std::string> providedFiles;
+    std::list<std::string> providedOptionalFiles;
+    std::list<std::string> providedDebuggingFiles;
+    std::list<std::string> providedTemporaryFiles;
+    std::list<std::string> requiredFiles;
+
+  public:
+    void SetName(const std::string& name);
+    void SetDescription(const std::string& description);
+
+    void AddProvidedFile(const std::string& providedFile);
+    void AddProvidedOptionalFile(const std::string& providedFile);
+    void AddProvidedDebuggingFile(const std::string& providedFile);
+    void AddProvidedTemporaryFile(const std::string& providedFile);
+    void AddRequiredFile(const std::string& requiredFile);
+
+    inline std::string GetName() const
+    {
+      return name;
+    }
+
+    inline std::string GetDescription() const
+    {
+      return description;
+    }
+
+    inline std::list<std::string> GetProvidedFiles() const
+    {
+      return providedFiles;
+    }
+
+    inline std::list<std::string> GetProvidedOptionalFiles() const
+    {
+      return providedOptionalFiles;
+    }
+
+    inline std::list<std::string> GetProvidedDebuggingFiles() const
+    {
+      return providedDebuggingFiles;
+    }
+
+    inline std::list<std::string> GetProvidedTemporaryFiles() const
+    {
+      return providedTemporaryFiles;
+    }
+
+    inline std::list<std::string> GetRequiredFiles() const
+    {
+      return requiredFiles;
+    }
   };
 
   /**
@@ -233,18 +350,60 @@ namespace osmscout {
   {
   public:
     virtual ~ImportModule();
-    virtual std::string GetDescription() const = 0;
-    virtual bool Import(const ImportParameter& parameter,
-                        Progress& progress,
-                        const TypeConfig& typeConfig) = 0;
+
+    virtual void GetDescription(const ImportParameter& parameter,
+                                ImportModuleDescription& description) const;
+
+    /**
+     * Do the import
+     *
+     * @param typeConfig
+     *   Type configuration
+     * @param parameter
+     *   Import parameter
+     * @param progress
+     *   Progress object, for tracking import progress
+     */
+    virtual bool Import(const TypeConfigRef& typeConfig,
+                        const ImportParameter& parameter,
+                        Progress& progress) = 0;
   };
+
+  typedef std::shared_ptr<ImportModule> ImportModuleRef;
 
   /**
     Does the import based on the given parameters. Feedback about the import progress
     is given by the indivudal import modules calling the Progress instance as appropriate.
     */
-  extern OSMSCOUT_IMPORT_API bool Import(const ImportParameter& parameter,
-                                         Progress& progress);
+  class OSMSCOUT_IMPORT_API Importer
+  {
+  private:
+    ImportParameter                      parameter;
+    std::vector<ImportModuleRef>         modules;
+    std::vector<ImportModuleDescription> moduleDescriptions;
+
+  private:
+    bool ValidateDescription(Progress& progress);
+    bool ValidateParameter(Progress& progress);
+    void GetModuleList(std::vector<ImportModuleRef>& modules);
+    void DumpTypeConfigData(const TypeConfig& typeConfig,
+                            Progress& progress);
+    void DumpModuleDescription(const ImportModuleDescription& description,
+                               Progress& progress);
+    bool CleanupTemporaries(size_t currentStep,
+                            Progress& progress);
+
+    bool ExecuteModules(const TypeConfigRef& typeConfig,
+                        Progress& progress);
+  public:
+    Importer(const ImportParameter& parameter);
+    virtual ~Importer();
+
+    bool Import(Progress& progress);
+
+    std::list<std::string> GetProvidedFiles() const;
+    std::list<std::string> GetProvidedOptionalFiles() const;
+  };
 }
 
 #endif

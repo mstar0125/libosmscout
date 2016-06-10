@@ -19,574 +19,364 @@
 
 #include <osmscout/import/GenOptimizeAreaWayIds.h>
 
+#include <unordered_set>
+
 #include <osmscout/util/FileScanner.h>
 #include <osmscout/util/FileWriter.h>
 
 #include <osmscout/DataFile.h>
+#include <osmscout/import/GenMergeAreas.h>
+#include <osmscout/import/GenWayWayDat.h>
 
 namespace osmscout {
 
-  std::string OptimizeAreaWayIdsGenerator::GetDescription() const
+  const char* OptimizeAreaWayIdsGenerator::AREAS3_TMP = "areas3.tmp";
+  const char* OptimizeAreaWayIdsGenerator::WAYS_TMP = "ways.tmp";
+
+  void OptimizeAreaWayIdsGenerator::GetDescription(const ImportParameter& /*parameter*/,
+                                                   ImportModuleDescription& description) const
   {
-    return "Optimize ids for areas and ways";
+    description.SetName("OptimizeAreaWayIdsGenerator");
+    description.SetDescription("Optimize ids for areas and ways");
+
+    description.AddRequiredFile(MergeAreasGenerator::AREAS2_TMP);
+    description.AddRequiredFile(WayWayDataGenerator::WAYWAY_TMP);
+
+    description.AddProvidedTemporaryFile(AREAS3_TMP);
+    description.AddProvidedTemporaryFile(WAYS_TMP);
   }
 
-  bool OptimizeAreaWayIdsGenerator::ScanWayAreaIds(const ImportParameter& parameter,
-                                                   Progress& progress,
-                                                   NodeUseMap& nodeUseMap)
+  bool OptimizeAreaWayIdsGenerator::ScanAreaIds(const ImportParameter& parameter,
+                                                Progress& progress,
+                                                const TypeConfig& typeConfig,
+                                                std::unordered_set<Id>& usedIdSet,
+                                                std::unordered_set<Id>& usedIdAtLeastTwiceSet)
   {
     FileScanner scanner;
     uint32_t    dataCount=0;
+    uint32_t    idCount=0;
 
-    progress.SetAction("Scanning ids from 'wayarea.tmp'");
+    progress.SetAction("Scanning ids from 'areas2.tmp'");
 
-    if (!scanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
-                                      "wayarea.tmp"),
-                                      FileScanner::Sequential,
-                                      parameter.GetAreaDataMemoryMaped())) {
-      progress.Error(std::string("Cannot open '")+scanner.GetFilename()+"'");
-      return false;
-    }
+    try {
+      scanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
+                                   MergeAreasGenerator::AREAS2_TMP),
+                   FileScanner::Sequential,
+                   parameter.GetAreaDataMemoryMaped());
 
-    if (!scanner.Read(dataCount)) {
-      progress.Error("Error while reading number of data entries in file");
-      return false;
-    }
+      scanner.Read(dataCount);
 
-    for (size_t current=1; current<=dataCount; current++) {
-      Id   id;
-      Area data;
+      for (uint32_t current=1; current<=dataCount; current++) {
+        uint8_t type;
+        OSMId   osmId;
+        Area    data;
 
-      progress.SetProgress(current,dataCount);
+        progress.SetProgress(current,dataCount);
 
-      if (!scanner.Read(id)) {
-        progress.Error(std::string("Error while reading data entry ")+
-                       NumberToString(current)+" of "+
-                       NumberToString(dataCount)+
-                       " in file '"+
-                       scanner.GetFilename()+"'");
+        scanner.Read(type);
+        scanner.Read(osmId);
 
-        return false;
-      }
+        data.ReadImport(typeConfig,
+                        scanner);
 
-      if (!data.Read(scanner)) {
-        progress.Error(std::string("Error while reading data entry ")+
-                       NumberToString(current)+" of "+
-                       NumberToString(dataCount)+
-                       " in file '"+
-                       scanner.GetFilename()+"'");
+        for (const auto& ring: data.rings) {
+          if (!ring.GetType()->CanRoute()) {
+            continue;
+          }
 
-        return false;
-      }
+          std::unordered_set<Id> nodeIds;
+          for (const auto node : ring.nodes) {
+            Id id=node.GetId();
 
-      for (std::vector<Area::Ring>::const_iterator ring=data.rings.begin();
-           ring!=data.rings.end();
-           ring++) {
-        std::set<Id> nodeIds;
+            if (nodeIds.find(id)==nodeIds.end()) {
+              if (usedIdSet.find(id)!=usedIdSet.end()) {
+                usedIdAtLeastTwiceSet.insert(id);
+              }
+              else {
+                usedIdSet.insert(id);
+              }
 
-        for (std::vector<Id>::const_iterator id=ring->ids.begin();
-             id!=ring->ids.end();
-             id++) {
-          if (nodeIds.find(*id)==nodeIds.end()) {
-            nodeUseMap.SetNodeUsed(*id);
-
-            nodeIds.insert(*id);
+              nodeIds.insert(id);
+              idCount++;
+            }
           }
         }
       }
-    }
 
-    if (!scanner.Close()) {
-      progress.Error(std::string("Error while closing file '")+
-                     scanner.GetFilename()+"'");
+      progress.Info(NumberToString(dataCount)+" areas, "+NumberToString(idCount)+" ids found");
+
+      scanner.Close();
+    }
+    catch (IOException& e) {
+      progress.Error(e.GetDescription());
       return false;
     }
 
     return true;
   }
 
-  bool OptimizeAreaWayIdsGenerator::ScanRelAreaIds(const ImportParameter& parameter,
-                                                   Progress& progress,
-                                                   NodeUseMap& nodeUseMap)
+  bool OptimizeAreaWayIdsGenerator::ScanWayIds(const ImportParameter& parameter,
+                                               Progress& progress,
+                                               const TypeConfig& typeConfig,
+                                               std::unordered_set<Id>& usedIdSet,
+                                               std::unordered_set<Id>& usedIdAtLeastTwiceSet)
   {
     FileScanner scanner;
     uint32_t    dataCount=0;
-
-    progress.SetAction("Scanning ids from 'relarea.tmp'");
-
-    if (!scanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
-                                      "relarea.tmp"),
-                                      FileScanner::Sequential,
-                                      parameter.GetAreaDataMemoryMaped())) {
-      progress.Error(std::string("Cannot open '")+scanner.GetFilename()+"'");
-      return false;
-    }
-
-    if (!scanner.Read(dataCount)) {
-      progress.Error("Error while reading number of data entries in file");
-      return false;
-    }
-
-    for (size_t current=1; current<=dataCount; current++) {
-      Id   id;
-      Area data;
-
-      progress.SetProgress(current,dataCount);
-
-      if (!scanner.Read(id)) {
-        progress.Error(std::string("Error while reading data entry ")+
-                       NumberToString(current)+" of "+
-                       NumberToString(dataCount)+
-                       " in file '"+
-                       scanner.GetFilename()+"'");
-
-        return false;
-      }
-
-      if (!data.Read(scanner)) {
-        progress.Error(std::string("Error while reading data entry ")+
-                       NumberToString(current)+" of "+
-                       NumberToString(dataCount)+
-                       " in file '"+
-                       scanner.GetFilename()+"'");
-
-        return false;
-      }
-
-      for (std::vector<Area::Ring>::const_iterator ring=data.rings.begin();
-           ring!=data.rings.end();
-           ring++) {
-        std::set<Id> nodeIds;
-
-        for (std::vector<Id>::const_iterator id=ring->ids.begin();
-             id!=ring->ids.end();
-             id++) {
-          if (nodeIds.find(*id)==nodeIds.end()) {
-            nodeUseMap.SetNodeUsed(*id);
-
-            nodeIds.insert(*id);
-          }
-        }
-      }
-    }
-
-    if (!scanner.Close()) {
-      progress.Error(std::string("Error while closing file '")+
-                     scanner.GetFilename()+"'");
-      return false;
-    }
-
-    return true;
-  }
-
-  bool OptimizeAreaWayIdsGenerator::ScanWayWayIds(const ImportParameter& parameter,
-                                                  Progress& progress,
-                                                  NodeUseMap& nodeUseMap)
-  {
-    FileScanner scanner;
-    uint32_t    dataCount=0;
+    uint32_t    idCount=0;
+    uint32_t    circularWayCount=0;
 
     progress.SetAction("Scanning ids from 'wayway.tmp'");
 
-    if (!scanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
-                                      "wayway.tmp"),
-                                      FileScanner::Sequential,
-                                      parameter.GetWayDataMemoryMaped())) {
-      progress.Error(std::string("Cannot open '")+scanner.GetFilename()+"'");
-      return false;
-    }
+    try {
+      scanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
+                                   WayWayDataGenerator::WAYWAY_TMP),
+                   FileScanner::Sequential,
+                   parameter.GetWayDataMemoryMaped());
 
-    if (!scanner.Read(dataCount)) {
-      progress.Error("Error while reading number of data entries in file");
-      return false;
-    }
+      scanner.Read(dataCount);
 
-    for (size_t current=1; current<=dataCount; current++) {
-      Id  id;
-      Way data;
+      for (uint32_t current=1; current<=dataCount; current++) {
+        uint8_t type;
+        OSMId   osmId;
+        Way     data;
 
-      progress.SetProgress(current,dataCount);
+        progress.SetProgress(current,dataCount);
 
-      if (!scanner.Read(id)) {
-        progress.Error(std::string("Error while reading data entry ")+
-                       NumberToString(current)+" of "+
-                       NumberToString(dataCount)+
-                       " in file '"+
-                       scanner.GetFilename()+"'");
+        scanner.Read(type);
+        scanner.Read(osmId);
 
-        return false;
-      }
+        data.Read(typeConfig,
+                  scanner);
 
-      if (!data.Read(scanner)) {
-        progress.Error(std::string("Error while reading data entry ")+
-                       NumberToString(current)+" of "+
-                       NumberToString(dataCount)+
-                       " in file '"+
-                       scanner.GetFilename()+"'");
-
-        return false;
-      }
-
-      std::set<Id> nodeIds;
-
-      for (std::vector<Id>::const_iterator id=data.ids.begin();
-          id!=data.ids.end();
-          id++) {
-        if (nodeIds.find(*id)==nodeIds.end()) {
-          nodeUseMap.SetNodeUsed(*id);
-
-          nodeIds.insert(*id);
+        if (!data.GetType()->CanRoute()) {
+          continue;
         }
-      }
-    }
 
-    if (!scanner.Close()) {
-      progress.Error(std::string("Error while closing file '")+
-                     scanner.GetFilename()+"'");
-      return false;
-    }
+        std::unordered_set<Id> nodeIds;
 
-    return true;
-  }
+        for (const auto& node : data.nodes) {
+          Id id=node.GetId();
 
-  bool OptimizeAreaWayIdsGenerator::CopyWayArea(const ImportParameter& parameter,
-                                                Progress& progress,
-                                                NodeUseMap& nodeUseMap)
-  {
-    FileScanner scanner;
-    FileWriter  writer;
-    uint32_t    dataCount=0;
+          if (nodeIds.find(id)==nodeIds.end()) {
+            if (usedIdSet.find(id)!=usedIdSet.end()) {
+              usedIdAtLeastTwiceSet.insert(id);
+            }
+            else {
+              usedIdSet.insert(id);
+            }
 
-    progress.SetAction("Copy data from 'wayarea.tmp' to 'wayarea.dat'");
-
-    if (!scanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
-                                      "wayarea.tmp"),
-                                      FileScanner::Sequential,
-                                      parameter.GetAreaDataMemoryMaped())) {
-      progress.Error(std::string("Cannot open '")+scanner.GetFilename()+"'");
-      return false;
-    }
-
-    if (!scanner.Read(dataCount)) {
-      progress.Error("Error while reading number of data entries in file");
-      return false;
-    }
-
-    if (!writer.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
-                                     "wayarea.dat"))) {
-      progress.Error(std::string("Cannot create '")+writer.GetFilename()+"'");
-      return false;
-    }
-
-    writer.Write(dataCount);
-
-    for (size_t current=1; current<=dataCount; current++) {
-      Id   id;
-      Area data;
-
-      progress.SetProgress(current,dataCount);
-
-      if (!scanner.Read(id)) {
-        progress.Error(std::string("Error while reading data entry ")+
-                       NumberToString(current)+" of "+
-                       NumberToString(dataCount)+
-                       " in file '"+
-                       scanner.GetFilename()+"'");
-
-        return false;
-      }
-
-      if (!data.Read(scanner)) {
-        progress.Error(std::string("Error while reading data entry ")+
-                       NumberToString(current)+" of "+
-                       NumberToString(dataCount)+
-                       " in file '"+
-                       scanner.GetFilename()+"'");
-
-        return false;
-      }
-
-      for (std::vector<Area::Ring>::iterator ring=data.rings.begin();
-           ring!=data.rings.end();
-           ring++) {
-        std::set<Id> nodeIds;
-
-        for (std::vector<Id>::iterator id=ring->ids.begin();
-             id!=ring->ids.end();
-             id++) {
-          if (!nodeUseMap.IsNodeUsedAtLeastTwice(*id)) {
-            *id=0;
+            nodeIds.insert(id);
+            idCount++;
           }
         }
+
+        // If we have a circular way, we "fake" a double usage,
+        // to make sure, that the node id of the first node
+        // is not dropped later on, and we cannot detect
+        // circular ways anymore
+        if (data.IsCircular()) {
+          usedIdAtLeastTwiceSet.insert(data.GetBackId());
+          circularWayCount++;
+        }
       }
 
-      if (!writer.Write(id)) {
-        progress.Error(std::string("Error while writing data id to file '")+
-                       writer.GetFilename()+"'");
+      progress.Info(NumberToString(dataCount)+" ways, "+NumberToString(idCount)+" ids, "+NumberToString(circularWayCount)+" circular ways found");
 
-        return false;
-      }
-
-      if (!data.Write(writer)) {
-        progress.Error(std::string("Error while writing data entry to file '")+
-                       writer.GetFilename()+"'");
-
-        return false;
-      }
+      scanner.Close();
     }
-
-    if (!scanner.Close()) {
-      progress.Error(std::string("Error while closing file '")+
-                     scanner.GetFilename()+"'");
-      return false;
-    }
-
-    if (!writer.Close()) {
-      progress.Error(std::string("Error while closing file '")+
-                     writer.GetFilename()+"'");
+    catch (IOException& e) {
+      progress.Error(e.GetDescription());
       return false;
     }
 
     return true;
   }
 
-  bool OptimizeAreaWayIdsGenerator::CopyRelArea(const ImportParameter& parameter,
-                                                Progress& progress,
-                                                NodeUseMap& nodeUseMap)
+  bool OptimizeAreaWayIdsGenerator::CopyAreas(const ImportParameter& parameter,
+                                              Progress& progress,
+                                              const TypeConfig& typeConfig,
+                                              const std::unordered_set<Id>& usedIdAtLeastTwiceSet)
   {
     FileScanner scanner;
     FileWriter  writer;
-    uint32_t    dataCount=0;
+    uint32_t    areaCount=0;
+    uint32_t    idClearedCount=0;
 
-    progress.SetAction("Copy data from 'relarea.tmp' to 'relarea.dat'");
+    try {
+      writer.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
+                                  AREAS3_TMP));
 
-    if (!scanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
-                                      "relarea.tmp"),
-                                      FileScanner::Sequential,
-                                      parameter.GetAreaDataMemoryMaped())) {
-      progress.Error(std::string("Cannot open '")+scanner.GetFilename()+"'");
-      return false;
-    }
+      writer.Write(areaCount);
 
-    if (!scanner.Read(dataCount)) {
-      progress.Error("Error while reading number of data entries in file");
-      return false;
-    }
+      progress.SetAction("Copy data from 'areas2.tmp' to 'areas3.tmp'");
 
-    if (!writer.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
-                                     "relarea.dat"))) {
-      progress.Error(std::string("Cannot create '")+writer.GetFilename()+"'");
-      return false;
-    }
+      scanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
+                                   MergeAreasGenerator::AREAS2_TMP),
+                   FileScanner::Sequential,
+                   parameter.GetAreaDataMemoryMaped());
 
-    writer.Write(dataCount);
+      scanner.Read(areaCount);
 
-    for (size_t current=1; current<=dataCount; current++) {
-      Id   id;
-      Area data;
+      for (uint32_t current=1; current<=areaCount; current++) {
+        uint8_t type;
+        OSMId   osmId;
+        Area    data;
 
-      progress.SetProgress(current,dataCount);
+        progress.SetProgress(current,areaCount);
 
-      if (!scanner.Read(id)) {
-        progress.Error(std::string("Error while reading data entry ")+
-                       NumberToString(current)+" of "+
-                       NumberToString(dataCount)+
-                       " in file '"+
-                       scanner.GetFilename()+"'");
+        scanner.Read(type);
+        scanner.Read(osmId);
 
-        return false;
-      }
+        data.ReadImport(typeConfig,
+                        scanner);
 
-      if (!data.Read(scanner)) {
-        progress.Error(std::string("Error while reading data entry ")+
-                       NumberToString(current)+" of "+
-                       NumberToString(dataCount)+
-                       " in file '"+
-                       scanner.GetFilename()+"'");
-
-        return false;
-      }
-
-      for (std::vector<Area::Ring>::iterator ring=data.rings.begin();
-           ring!=data.rings.end();
-           ring++) {
-        std::set<Id> nodeIds;
-
-        for (std::vector<Id>::iterator id=ring->ids.begin();
-             id!=ring->ids.end();
-             id++) {
-          if (!nodeUseMap.IsNodeUsedAtLeastTwice(*id)) {
-            *id=0;
+        for (auto& ring : data.rings) {
+          for (auto& node : ring.nodes) {
+            if (usedIdAtLeastTwiceSet.find(node.GetId())==usedIdAtLeastTwiceSet.end()) {
+              node.ClearSerial();
+              idClearedCount++;
+            }
           }
         }
+
+        writer.Write(type);
+        writer.Write(osmId);
+
+        data.Write(typeConfig,
+                   writer);
       }
 
-      if (!writer.Write(id)) {
-        progress.Error(std::string("Error while writing data id to file '")+
-                       writer.GetFilename()+"'");
+      scanner.Close();
 
-        return false;
-      }
+      writer.GotoBegin();
+      writer.Write(areaCount);
 
-      if (!data.Write(writer)) {
-        progress.Error(std::string("Error while writing data entry to file '")+
-                       writer.GetFilename()+"'");
+      writer.Close();
 
-        return false;
-      }
+      progress.Info(NumberToString(idClearedCount)+" node serials cleared");
     }
+    catch (IOException& e) {
+      progress.Error(e.GetDescription());
 
-    if (!scanner.Close()) {
-      progress.Error(std::string("Error while closing file '")+
-                     scanner.GetFilename()+"'");
-      return false;
-    }
+      scanner.CloseFailsafe();
+      writer.CloseFailsafe();
 
-    if (!writer.Close()) {
-      progress.Error(std::string("Error while closing file '")+
-                     writer.GetFilename()+"'");
       return false;
     }
 
     return true;
   }
 
-  bool OptimizeAreaWayIdsGenerator::CopyWayWay(const ImportParameter& parameter,
-                                               Progress& progress,
-                                               NodeUseMap& nodeUseMap)
+  bool OptimizeAreaWayIdsGenerator::CopyWays(const ImportParameter& parameter,
+                                             Progress& progress,
+                                             const TypeConfig& typeConfig,
+                                             const std::unordered_set<Id>& usedIdAtLeastTwiceSet)
   {
     FileScanner scanner;
     FileWriter  writer;
     uint32_t    dataCount=0;
+    uint32_t    idClearedCount=0;
 
-    progress.SetAction("Copy data from 'wayway.tmp' to 'wayway.dat'");
+    progress.SetAction("Copy data from 'wayway.tmp' to 'ways.tmp'");
 
-    if (!scanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
-                                      "wayway.tmp"),
-                                      FileScanner::Sequential,
-                                      parameter.GetWayDataMemoryMaped())) {
-      progress.Error(std::string("Cannot open '")+scanner.GetFilename()+"'");
-      return false;
-    }
+    try {
+      scanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
+                                   WayWayDataGenerator::WAYWAY_TMP),
+                   FileScanner::Sequential,
+                   parameter.GetWayDataMemoryMaped());
 
-    if (!scanner.Read(dataCount)) {
-      progress.Error("Error while reading number of data entries in file");
-      return false;
-    }
+      scanner.Read(dataCount);
 
-    if (!writer.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
-                                     "wayway.dat"))) {
-      progress.Error(std::string("Cannot create '")+writer.GetFilename()+"'");
-      return false;
-    }
+      writer.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
+                                  WAYS_TMP));
 
-    writer.Write(dataCount);
+      writer.Write(dataCount);
 
-    for (size_t current=1; current<=dataCount; current++) {
-      Id  id;
-      Way data;
+      for (uint32_t current=1; current<=dataCount; current++) {
+        uint8_t type;
+        OSMId   osmId;
+        Way     data;
 
-      progress.SetProgress(current,dataCount);
+        progress.SetProgress(current,dataCount);
 
-      if (!scanner.Read(id)) {
-        progress.Error(std::string("Error while reading data entry ")+
-                       NumberToString(current)+" of "+
-                       NumberToString(dataCount)+
-                       " in file '"+
-                       scanner.GetFilename()+"'");
+        scanner.Read(type);
+        scanner.Read(osmId);
 
-        return false;
-      }
+        data.Read(typeConfig,
+                  scanner);
 
-      if (!data.Read(scanner)) {
-        progress.Error(std::string("Error while reading data entry ")+
-                       NumberToString(current)+" of "+
-                       NumberToString(dataCount)+
-                       " in file '"+
-                       scanner.GetFilename()+"'");
-
-        return false;
-      }
-
-      for (std::vector<Id>::iterator id=data.ids.begin();
-          id!=data.ids.end();
-          id++) {
-        if (!nodeUseMap.IsNodeUsedAtLeastTwice(*id)) {
-          *id=0;
+        for (auto& node : data.nodes) {
+          if (usedIdAtLeastTwiceSet.find(node.GetId())==usedIdAtLeastTwiceSet.end()) {
+            node.ClearSerial();
+            idClearedCount++;
+          }
         }
+
+        writer.Write(type);
+        writer.Write(osmId);
+
+        data.Write(typeConfig,
+                   writer);
       }
 
-      if (!writer.Write(id)) {
-        progress.Error(std::string("Error while writing data id to file '")+
-                       writer.GetFilename()+"'");
+      scanner.Close();
+      writer.Close();
 
-        return false;
-      }
-
-      if (!data.Write(writer)) {
-        progress.Error(std::string("Error while writing data entry to file '")+
-                       writer.GetFilename()+"'");
-
-        return false;
-      }
+      progress.Info(NumberToString(idClearedCount)+" node serials cleared");
     }
+    catch (IOException& e) {
+      progress.Error(e.GetDescription());
 
-    if (!scanner.Close()) {
-      progress.Error(std::string("Error while closing file '")+
-                     scanner.GetFilename()+"'");
-      return false;
-    }
+      scanner.CloseFailsafe();
+      writer.CloseFailsafe();
 
-    if (!writer.Close()) {
-      progress.Error(std::string("Error while closing file '")+
-                     writer.GetFilename()+"'");
       return false;
     }
 
     return true;
   }
 
-  bool OptimizeAreaWayIdsGenerator::Import(const ImportParameter& parameter,
-                                           Progress& progress,
-                                           const TypeConfig& /*typeConfig*/)
+  bool OptimizeAreaWayIdsGenerator::Import(const TypeConfigRef& typeConfig,
+                                           const ImportParameter& parameter,
+                                           Progress& progress)
   {
     progress.SetAction("Optimize ids for areas and ways");
 
-    NodeUseMap nodeUseMap;
+    std::unordered_set<Id> usedIdSet;
+    std::unordered_set<Id> usedIdAtLeastTwiceSet;
 
-    if (!ScanWayAreaIds(parameter,
-                        progress,
-                        nodeUseMap)) {
-      return false;
-    }
-
-    if (!ScanRelAreaIds(parameter,
-                        progress,
-                        nodeUseMap)) {
-      return false;
-    }
-
-    if (!ScanWayWayIds(parameter,
-                       progress,
-                       nodeUseMap)) {
-      return false;
-    }
-
-    if (!CopyWayArea(parameter,
+    if (!ScanAreaIds(parameter,
                      progress,
-                     nodeUseMap)) {
+                     *typeConfig,
+                     usedIdSet,
+                     usedIdAtLeastTwiceSet)) {
       return false;
     }
 
-    if (!CopyRelArea(parameter,
-                     progress,
-                     nodeUseMap)) {
-      return false;
-    }
-
-    if (!CopyWayWay(parameter,
+    if (!ScanWayIds(parameter,
                     progress,
-                    nodeUseMap)) {
+                    *typeConfig,
+                    usedIdSet,
+                    usedIdAtLeastTwiceSet)) {
+      return false;
+    }
+
+    progress.Info("Found "+NumberToString(usedIdSet.size())+" relevant nodes, "+NumberToString(usedIdAtLeastTwiceSet.size())+" of it at least used twice");
+
+    usedIdSet.clear();
+
+    if (!CopyAreas(parameter,
+                   progress,
+                   *typeConfig,
+                   usedIdAtLeastTwiceSet)) {
+      return false;
+    }
+
+    if (!CopyWays(parameter,
+                    progress,
+                    *typeConfig,
+                  usedIdAtLeastTwiceSet)) {
       return false;
     }
 

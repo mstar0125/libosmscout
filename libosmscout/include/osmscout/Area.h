@@ -20,165 +20,157 @@
   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307  USA
 */
 
+#include <memory>
+
 #include <osmscout/GeoCoord.h>
+#include <osmscout/Point.h>
 
 #include <osmscout/TypeConfig.h>
 
 #include <osmscout/util/FileScanner.h>
 #include <osmscout/util/FileWriter.h>
+#include <osmscout/util/GeoBox.h>
 #include <osmscout/util/Progress.h>
-#include <osmscout/util/Reference.h>
 
 namespace osmscout {
-
-  class OSMSCOUT_API AreaAttributes
-  {
-  private:
-    // Attribute availability flags (for optimized attribute storage)
-    const static uint8_t isSimple        = 1 << 2; //1 We are a simple area, only one Ring, no roles
-    const static uint8_t hasNameAlt      = 1 << 3; //! We have an alternative name (mainly in a second language)
-    const static uint8_t hasName         = 1 << 4; //! We have a name
-    const static uint8_t hasLocation     = 1 << 5; //! A location like a Street or place name and..
-    const static uint8_t hasAddress      = 1 << 6; //! an address like a house number
-    const static uint8_t hasTags         = 1 << 7; //! We have additional tags
-
-    const static uint8_t hasAccess       = 1 << 0; //! We do have (general) access rights to this way/area
-
-  public:
-    std::string      name;     //! name
-
-  private:
-    mutable uint8_t  flags;
-    std::string      nameAlt;  //! alternative name
-    std::string      location; //! Street and...
-    std::string      address;  //! ...house number
-    std::vector<Tag> tags;     //! list of preparsed tags
-
-  private:
-    void GetFlags(uint8_t& flags) const;
-    bool Read(FileScanner& scanner);
-    bool Read(FileScanner& scanner,
-              uint8_t flags);
-    bool Write(FileWriter& writer) const;
-    bool Write(FileWriter& writer,
-               uint8_t flags) const;
-
-    friend class Area;
-
-  public:
-    inline AreaAttributes()
-    : flags(0)
-    {
-      // no code
-    }
-
-    inline uint8_t GetFlags() const
-    {
-      return flags;
-    }
-
-    inline std::string GetName() const
-    {
-      return name;
-    }
-
-    inline std::string GetNameAlt() const
-    {
-      return nameAlt;
-    }
-
-    inline std::string GetLocation() const
-    {
-      return location;
-    }
-
-    inline std::string GetAddress() const
-    {
-      return address;
-    }
-
-    inline bool HasAccess() const
-    {
-      return (flags & hasAccess)!=0;
-    }
-
-    inline bool HasTags() const
-    {
-      return !tags.empty();
-    }
-
-    inline const std::vector<Tag>& GetTags() const
-    {
-      return tags;
-    }
-
-    bool SetTags(Progress& progress,
-                 const TypeConfig& typeConfig,
-                 std::vector<Tag>& tags);
-
-    bool operator==(const AreaAttributes& other) const;
-    bool operator!=(const AreaAttributes& other) const;
-  };
-
   /**
     Representation of an (complex/multipolygon) area
     */
-  class OSMSCOUT_API Area : public Referencable
+  class OSMSCOUT_API Area
   {
   public:
-    const static size_t masterRingId = 0;
-    const static size_t outerRingId = 1;
+    static const uint8_t masterRingId;
+    static const uint8_t outerRingId;
 
   public:
-    class Ring
+    class OSMSCOUT_API Ring
     {
+    private:
+      FeatureValueBuffer    featureValueBuffer; //!< List of features
+      uint8_t               ring;               //!< The ring hierarchy number (0...n)
+
     public:
-      TypeId                type;     //! type of ring
-      AreaAttributes        attributes;
-      uint8_t               ring;
-      std::vector<Id>       ids;
-      std::vector<GeoCoord> nodes;
+      std::vector<Point>    nodes;              //!< The array of coordinates
 
     public:
       inline Ring()
-      : type(typeIgnore),
-        ring(0)
+      : ring(0)
       {
         // no code
       }
 
-      inline void SetType(const TypeId& type)
+      inline TypeInfoRef GetType() const
       {
-        this->type=type;
+        return featureValueBuffer.GetType();
       }
 
-      inline const AreaAttributes& GetAttributes() const
+      inline size_t GetFeatureCount() const
       {
-        return attributes;
+        return featureValueBuffer.GetType()->GetFeatureCount();
       }
 
-      inline TypeId GetType() const
+      inline bool HasFeature(size_t idx) const
       {
-        return type;
+        return featureValueBuffer.HasFeature(idx);
       }
 
-      inline uint16_t GetFlags() const
+      bool HasAnyFeaturesSet() const;
+
+      inline const FeatureInstance& GetFeature(size_t idx) const
       {
-        return attributes.GetFlags();
+        return featureValueBuffer.GetType()->GetFeature(idx);
       }
 
-      inline std::string GetName() const
+      inline FeatureValue* GetFeatureValue(size_t idx) const
       {
-        return attributes.GetName();
+        return featureValueBuffer.GetValue(idx);
       }
 
-      bool GetCenter(double& lat,
-                     double& lon) const;
+      inline void UnsetFeature(size_t idx)
+      {
+        featureValueBuffer.FreeValue(idx);
+      }
 
-      void GetBoundingBox(double& minLon,
-                          double& maxLon,
-                          double& minLat,
-                          double& maxLat) const;
+      inline const FeatureValueBuffer& GetFeatureValueBuffer() const
+      {
+        return featureValueBuffer;
+      }
+
+      inline bool IsMasterRing() const
+      {
+        return ring==masterRingId;
+      }
+
+      inline bool IsOuterRing() const
+      {
+        return ring==outerRingId;
+      }
+
+      inline uint8_t GetRing() const
+      {
+        return ring;
+      }
+
+      inline Id GetSerial(size_t index) const
+      {
+        return nodes[index].GetSerial();
+      }
+
+      inline Id GetId(size_t index) const
+      {
+        return nodes[index].GetId();
+      }
+
+      inline Id GetFrontId() const
+      {
+        return nodes.front().GetId();
+      }
+
+      inline Id GetBackId() const
+      {
+        return nodes.back().GetId();
+      }
+
+      inline const GeoCoord& GetCoord(size_t index) const
+      {
+        return nodes[index].GetCoord();
+      }
+
+      bool GetCenter(GeoCoord& center) const;
+
+      void GetBoundingBox(GeoBox& boundingBox) const;
+
+      inline void SetType(const TypeInfoRef& type)
+      {
+        featureValueBuffer.SetType(type);
+      }
+
+      inline void SetFeatures(const FeatureValueBuffer& buffer)
+      {
+        featureValueBuffer.Set(buffer);
+      }
+
+      inline void MarkAsMasterRing()
+      {
+        ring=masterRingId;
+      }
+
+      inline void MarkAsOuterRing()
+      {
+        ring=outerRingId;
+      }
+
+      inline void SetRing(uint8_t ring)
+      {
+        this->ring=ring;
+      }
+
+      inline void SetSerial(size_t index, uint8_t serial)
+      {
+        nodes[index].SetSerial(serial);
+      }
+
+      friend class Area;
     };
 
   private:
@@ -199,7 +191,7 @@ namespace osmscout {
       return fileOffset;
     }
 
-    inline TypeId GetType() const
+    inline TypeInfoRef GetType() const
     {
       return rings.front().GetType();
     }
@@ -209,31 +201,52 @@ namespace osmscout {
       return rings.size()==1;
     }
 
-    bool GetCenter(double& lat,
-                   double& lon) const;
-    void GetBoundingBox(double& minLon,
-                        double& maxLon,
-                        double& minLat,
-                        double& maxLat) const;
+    bool GetCenter(GeoCoord& center) const;
 
-    bool ReadIds(FileScanner& scanner,
-                 uint32_t nodesCount,
-                 std::vector<Id>& ids);
-    bool ReadCoords(FileScanner& scanner,
-                    uint32_t nodesCount,
-                    std::vector<GeoCoord>& coords);
-    bool Read(FileScanner& scanner);
-    bool ReadOptimized(FileScanner& scanner);
+    void GetBoundingBox(GeoBox& boundingBox) const;
 
-    bool WriteIds(FileWriter& writer,
-                  const std::vector<Id>& ids) const;
-    bool WriteCoords(FileWriter& writer,
-                    const std::vector<GeoCoord>& coords) const;
-    bool Write(FileWriter& writer) const;
-    bool WriteOptimized(FileWriter& writer) const;
+    /**
+     * Read the area as written by Write().
+     */
+    void Read(const TypeConfig& typeConfig,
+              FileScanner& scanner);
+
+    /**
+     * Read the area as written by WriteImport().
+     */
+    void ReadImport(const TypeConfig& typeConfig,
+                    FileScanner& scanner);
+
+    /**
+     * Read the area as stored by WriteOptimized().
+     */
+    void ReadOptimized(const TypeConfig& typeConfig,
+                       FileScanner& scanner);
+
+    /**
+     * Write the area with all data required in the
+     * standard database.
+     */
+    void Write(const TypeConfig& typeConfig,
+               FileWriter& writer) const;
+
+    /**
+     * Write the area with all data required during import,
+     * certain optimizations done on the final data
+     * are not done here to not loose information.
+     */
+    void WriteImport(const TypeConfig& typeConfig,
+                     FileWriter& writer) const;
+
+    /**
+     * Write the area with all data required by the OptimizeLowZoom
+     * index, dropping all ids.
+     */
+    void WriteOptimized(const TypeConfig& typeConfig,
+                        FileWriter& writer) const;
   };
 
-  typedef Ref<Area> AreaRef;
+  typedef std::shared_ptr<Area> AreaRef;
 }
 
 #endif

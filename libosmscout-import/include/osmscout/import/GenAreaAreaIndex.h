@@ -23,55 +23,100 @@
 #include <map>
 #include <set>
 
+#include <osmscout/Area.h>
 #include <osmscout/Pixel.h>
 
 #include <osmscout/util/FileWriter.h>
 #include <osmscout/util/Geometry.h>
 
 #include <osmscout/import/Import.h>
+#include <osmscout/import/SortDat.h>
 
 namespace osmscout {
 
   class AreaAreaIndexGenerator : public ImportModule
   {
+  public:
+    static const char* AREAADDRESS_DAT;
+
   private:
     struct Entry
     {
-      TypeId     type;
       FileOffset offset;
+      TypeId     type;
     };
 
     struct AreaLeaf
     {
-      FileOffset       offset;
       std::list<Entry> areas;
-      FileOffset       children[4];
-
-      AreaLeaf()
-      {
-        offset=0;
-        children[0]=0;
-        children[1]=0;
-        children[2]=0;
-        children[3]=0;
-      }
     };
 
+    typedef std::map<Pixel,AreaLeaf> Level;
+
   private:
-    void SetOffsetOfChildren(const std::map<Pixel,AreaLeaf>& leafs,
-                             std::map<Pixel,AreaLeaf>& newAreaLeafs);
+    std::list<SortDataGenerator<Area>::ProcessingFilterRef> filters;
 
-    bool WriteIndexLevel(const ImportParameter& parameter,
-                         FileWriter& writer,
-                         int level,
-                         std::map<Pixel,AreaLeaf>& leafs);
+  private:
+    size_t CalculateLevel(const ImportParameter& parameter,
+                          const GeoBox& boundingBox) const;
 
+    void EnrichLevels(std::vector<Level>& levels);
+
+    bool CopyData(const TypeConfig& typeConfig,
+                  Progress& progress,
+                  FileScanner& scanner,
+                  FileWriter& dataWriter,
+                  FileWriter& mapWriter,
+                  const std::list<FileOffset>& srcOffsets,
+                  FileOffset& dataStartOffset,
+                  uint32_t& dataWrittenCount);
+
+    bool WriteChildCells(const TypeConfig& typeConfig,
+                         Progress& progress,
+                         const ImportParameter& parameter,
+                         FileScanner& scanner,
+                         FileWriter& indexWriter,
+                         FileWriter& dataWriter,
+                         FileWriter& mapWriter,
+                         const std::vector<Level>& levels,
+                         size_t level,
+                         const Pixel& pixel,
+                         FileOffset& offset,
+                         uint32_t& dataWrittenCount);
+
+    bool WriteCell(const TypeConfig& typeConfig,
+                   Progress& progress,
+                   const ImportParameter& parameter,
+                   FileScanner& scanner,
+                   FileWriter& indexWriter,
+                   FileWriter& dataWriter,
+                   FileWriter& mapWriter,
+                   const std::vector<Level>& levels,
+                   size_t level,
+                   const Pixel& pixel,
+                   const AreaLeaf& leaf,
+                   FileOffset& dataStartOffset,
+                   uint32_t& dataWrittenCount);
+
+    bool BuildInMemoryIndex(const TypeConfigRef& typeConfig,
+                            const ImportParameter& parameter,
+                            Progress& progress,
+                            FileScanner& scanner,
+                            std::vector<Level>& levels);
+
+    bool ImportInternal(const TypeConfigRef& typeConfig,
+                        const ImportParameter& parameter,
+                        Progress& progress);
 
   public:
-    std::string GetDescription() const;
-    bool Import(const ImportParameter& parameter,
-                Progress& progress,
-                const TypeConfig& typeConfig);
+    AreaAreaIndexGenerator();
+
+    void GetDescription(const ImportParameter& parameter,
+                        ImportModuleDescription& description) const;
+
+    bool Import(const TypeConfigRef& typeConfig,
+                const ImportParameter& parameter,
+                Progress& progress);
   };
 }
 

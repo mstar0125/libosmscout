@@ -7,30 +7,32 @@ nobase_include_HEADERS= osmscout/private/Config.h \
                         osmscout/util/Breaker.h \
                         osmscout/util/Cache.h \
                         osmscout/util/Color.h \
+                        osmscout/util/Exception.h \
                         osmscout/util/File.h \
                         osmscout/util/FileScanner.h \
                         osmscout/util/FileWriter.h \
+                        osmscout/util/GeoBox.h \
                         osmscout/util/Geometry.h \
-                        osmscout/util/HashMap.h \
-                        osmscout/util/HashSet.h \
+                        osmscout/util/Logger.h \
                         osmscout/util/Magnification.h \
+                        osmscout/util/MemoryMonitor.h \
                         osmscout/util/NodeUseMap.h \
                         osmscout/util/Number.h \
                         osmscout/util/NumberSet.h \
-                        osmscout/util/Parser.h \
+                        osmscout/util/Parsing.h \
                         osmscout/util/Progress.h \
                         osmscout/util/Projection.h \
-                        osmscout/util/Reference.h \
                         osmscout/util/StopClock.h \
                         osmscout/util/String.h \
+                        osmscout/util/Tiling.h \
                         osmscout/util/Transformation.h \
+                        osmscout/util/WorkQueue.h \
                         osmscout/CoreFeatures.h \
                         osmscout/Types.h \
                         osmscout/TypeConfig.h \
-                        osmscout/TypeSet.h \
+                        osmscout/TypeFeatures.h \
                         osmscout/ost/Scanner.h \
                         osmscout/ost/Parser.h \
-                        osmscout/TypeConfigLoader.h \
                         osmscout/GroundTile.h \
                         osmscout/Coord.h \
                         osmscout/GeoCoord.h \
@@ -42,7 +44,6 @@ nobase_include_HEADERS= osmscout/private/Config.h \
                         osmscout/Intersection.h \
                         osmscout/Location.h \
                         osmscout/Tag.h \
-                        osmscout/AttributeAccess.h \
                         osmscout/TurnRestriction.h \
                         osmscout/Way.h \
                         osmscout/ObjectRef.h \
@@ -66,8 +67,10 @@ nobase_include_HEADERS= osmscout/private/Config.h \
                         osmscout/RoutingProfile.h \
                         osmscout/Database.h \
                         osmscout/DebugDatabase.h \
-                        osmscout/Router.h \
-                        osmscout/SRTM.h
+                        osmscout/SRTM.h \
+                        osmscout/LocationService.h \
+                        osmscout/POIService.h \
+                        osmscout/RoutingService.h
 
 if OSMSCOUT_HAVE_SSE2
 nobase_include_HEADERS+=osmscout/system/SSEMath.h

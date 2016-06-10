@@ -21,18 +21,19 @@
 */
 
 #include <list>
+#include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <osmscout/ObjectRef.h>
 #include <osmscout/Path.h>
-
-#include <osmscout/util/HashMap.h>
-#include <osmscout/util/Reference.h>
+#include <osmscout/GeoCoord.h>
 
 namespace osmscout {
 
   /**
+   * \ingroup Routing
    * Description of a route, enhanced with information that are required to
    * give a human textual (or narrative) drive instructions;
    *
@@ -72,12 +73,15 @@ namespace osmscout {
     static const char* const MOTORWAY_CHANGE_DESC;
     /** Constant for a description of leaving a motorway (MotorwayLeaveDescription) */
     static const char* const MOTORWAY_LEAVE_DESC;
+    /** Constant for a description of node describing a motorway junction */
+    static const char* const MOTORWAY_JUNCTION_DESC;
 
   public:
-    /*
+    /**
+     * \ingroup Routing
      * Base class of all descriptions.
      */
-    class OSMSCOUT_API Description : public Referencable
+    class OSMSCOUT_API Description
     {
     public:
       virtual ~Description();
@@ -85,9 +89,10 @@ namespace osmscout {
       virtual std::string GetDebugString() const = 0;
     };
 
-    typedef Ref<Description> DescriptionRef;
+    typedef std::shared_ptr<Description> DescriptionRef;
 
     /**
+     * \ingroup Routing
      * Start of the route
      */
     class OSMSCOUT_API StartDescription : public Description
@@ -103,10 +108,11 @@ namespace osmscout {
       std::string GetDescription() const;
     };
 
-    typedef Ref<StartDescription> StartDescriptionRef;
+    typedef std::shared_ptr<StartDescription> StartDescriptionRef;
 
     /**
-     * Start of the route
+     * \ingroup Routing
+     * Target of the route
      */
     class OSMSCOUT_API TargetDescription : public Description
     {
@@ -121,9 +127,10 @@ namespace osmscout {
       std::string GetDescription() const;
     };
 
-    typedef Ref<TargetDescription> TargetDescriptionRef;
+    typedef std::shared_ptr<TargetDescription> TargetDescriptionRef;
 
     /**
+     * \ingroup Routing
      * Something has a name. A name consists of a name and a optional alphanumeric
      * reference (LIke B1 or A40).
      */
@@ -149,9 +156,10 @@ namespace osmscout {
       std::string GetDescription() const;
     };
 
-    typedef Ref<NameDescription> NameDescriptionRef;
+    typedef std::shared_ptr<NameDescription> NameDescriptionRef;
 
     /**
+     * \ingroup Routing
      * Something has a name. A name consists of a name and a optional alphanumeric
      * reference (Like B1 or A40).
      */
@@ -161,8 +169,8 @@ namespace osmscout {
       NameDescriptionRef targetDescription;
 
     public:
-      NameChangedDescription(NameDescription* originDescription,
-                             NameDescription* targetDescription);
+      NameChangedDescription(const NameDescriptionRef& originDescription,
+                             const NameDescriptionRef& targetDescription);
 
       std::string GetDebugString() const;
 
@@ -177,9 +185,10 @@ namespace osmscout {
       }
     };
 
-    typedef Ref<NameChangedDescription> NameChangedDescriptionRef;
+    typedef std::shared_ptr<NameChangedDescription> NameChangedDescriptionRef;
 
     /**
+     * \ingroup Routing
      * List the names of allways, that are crossing the current node.
      */
     class OSMSCOUT_API CrossingWaysDescription : public Description
@@ -192,10 +201,10 @@ namespace osmscout {
 
     public:
       CrossingWaysDescription(size_t exitCount,
-                              NameDescription* originDescription,
-                              NameDescription* targetDescription);
+                              const NameDescriptionRef& originDescription,
+                              const NameDescriptionRef& targetDescription);
 
-      void AddDescription(NameDescription* description);
+      void AddDescription(const NameDescriptionRef& description);
 
       std::string GetDebugString() const;
 
@@ -225,9 +234,10 @@ namespace osmscout {
       }
     };
 
-    typedef Ref<CrossingWaysDescription> CrossingWaysDescriptionRef;
+    typedef std::shared_ptr<CrossingWaysDescription> CrossingWaysDescriptionRef;
 
     /**
+     * \ingroup Routing
      * Describes the turn and the curve while getting from the previous node to the next node via the current node.
      *
      * The turn is the angle between the incoming way (previous node and current node)
@@ -287,9 +297,10 @@ namespace osmscout {
       }
     };
 
-    typedef Ref<DirectionDescription> DirectionDescriptionRef;
+    typedef std::shared_ptr<DirectionDescription> DirectionDescriptionRef;
 
     /**
+     * \ingroup Routing
      * Signals an explicit turn
      */
     class OSMSCOUT_API TurnDescription : public Description
@@ -300,9 +311,10 @@ namespace osmscout {
       std::string GetDebugString() const;
     };
 
-    typedef Ref<TurnDescription> TurnDescriptionRef;
+    typedef std::shared_ptr<TurnDescription> TurnDescriptionRef;
 
     /**
+     * \ingroup Routing
      * Signals entering a roundabout
      */
     class OSMSCOUT_API RoundaboutEnterDescription : public Description
@@ -313,9 +325,10 @@ namespace osmscout {
       std::string GetDebugString() const;
     };
 
-    typedef Ref<RoundaboutEnterDescription> RoundaboutEnterDescriptionRef;
+    typedef std::shared_ptr<RoundaboutEnterDescription> RoundaboutEnterDescriptionRef;
 
     /**
+     * \ingroup Routing
      * Signals leaving a roundabout
      */
     class OSMSCOUT_API RoundaboutLeaveDescription : public Description
@@ -334,9 +347,10 @@ namespace osmscout {
       }
     };
 
-    typedef Ref<RoundaboutLeaveDescription> RoundaboutLeaveDescriptionRef;
+    typedef std::shared_ptr<RoundaboutLeaveDescription> RoundaboutLeaveDescriptionRef;
 
     /**
+     * \ingroup Routing
      * Signals entering a motorway
      */
     class OSMSCOUT_API MotorwayEnterDescription : public Description
@@ -345,7 +359,7 @@ namespace osmscout {
       NameDescriptionRef toDescription;
 
     public:
-      MotorwayEnterDescription(NameDescription* toDescription);
+      MotorwayEnterDescription(const NameDescriptionRef& toDescription);
 
       std::string GetDebugString() const;
 
@@ -355,9 +369,10 @@ namespace osmscout {
       }
     };
 
-    typedef Ref<MotorwayEnterDescription> MotorwayEnterDescriptionRef;
+    typedef std::shared_ptr<MotorwayEnterDescription> MotorwayEnterDescriptionRef;
 
     /**
+     * \ingroup Routing
      * Signals changing a motorway
      */
     class OSMSCOUT_API MotorwayChangeDescription : public Description
@@ -367,8 +382,8 @@ namespace osmscout {
       NameDescriptionRef toDescription;
 
     public:
-      MotorwayChangeDescription(NameDescription* fromDescription,
-                                NameDescription* toDescription);
+      MotorwayChangeDescription(const NameDescriptionRef& fromDescription,
+                                const NameDescriptionRef& toDescription);
 
       std::string GetDebugString() const;
 
@@ -383,9 +398,10 @@ namespace osmscout {
       }
     };
 
-    typedef Ref<MotorwayChangeDescription> MotorwayChangeDescriptionRef;
+    typedef std::shared_ptr<MotorwayChangeDescription> MotorwayChangeDescriptionRef;
 
     /**
+     * \ingroup Routing
      * Signals leaving a motorway
      */
     class OSMSCOUT_API MotorwayLeaveDescription : public Description
@@ -394,7 +410,7 @@ namespace osmscout {
       NameDescriptionRef fromDescription;
 
     public:
-      MotorwayLeaveDescription(NameDescription* fromDescription);
+      MotorwayLeaveDescription(const NameDescriptionRef& fromDescription);
 
       std::string GetDebugString() const;
 
@@ -404,19 +420,45 @@ namespace osmscout {
       }
     };
 
-    typedef Ref<MotorwayLeaveDescription> MotorwayLeaveDescriptionRef;
+    typedef std::shared_ptr<MotorwayLeaveDescription> MotorwayLeaveDescriptionRef;
 
+    /**
+     * \ingroup Routing
+     * A motorway junction
+     */
+    class OSMSCOUT_API MotorwayJunctionDescription : public Description
+    {
+    private:
+      NameDescriptionRef junctionDescription;
+
+    public:
+      MotorwayJunctionDescription(const NameDescriptionRef& junctionDescription);
+
+      std::string GetDebugString() const;
+
+      inline const NameDescriptionRef& GetJunctionDescription() const
+      {
+        return junctionDescription;
+      }
+    };
+
+    typedef std::shared_ptr<MotorwayJunctionDescription> MotorwayJunctionDescriptionRef;
+
+    /**
+     * \ingroup Routing
+     */
     class OSMSCOUT_API Node
     {
     private:
-      size_t                                       currentNodeIndex;
-      std::vector<ObjectFileRef>                   objects;
-      ObjectFileRef                                pathObject;
-      size_t                                       targetNodeIndex;
-      double                                       distance;
-      double                                       time;
-      OSMSCOUT_HASHMAP<std::string,DescriptionRef> descriptionMap;
-      std::list<DescriptionRef>                    descriptions;
+      size_t                                         currentNodeIndex;
+      std::vector<ObjectFileRef>                     objects;
+      ObjectFileRef                                  pathObject;
+      size_t                                         targetNodeIndex;
+      double                                         distance;
+      double                                         time;
+      GeoCoord                                       location;
+      std::unordered_map<std::string,DescriptionRef> descriptionMap;
+      std::list<DescriptionRef>                      descriptions;
 
     public:
       Node(size_t currentNodeIndex,
@@ -429,26 +471,42 @@ namespace osmscout {
         return currentNodeIndex;
       }
 
+      /**
+       * Return the objects that intersect at the current node index.
+       */
       inline const std::vector<ObjectFileRef>& GetObjects() const
       {
         return objects;
       }
 
+      /**
+       * Return a list of descriptions attached to the current node
+       */
       inline const std::list<DescriptionRef>& GetDescriptions() const
       {
         return descriptions;
       }
 
+      /**
+       * There exists a object/path from the current node to the next node
+       * in the route.
+       */
       inline bool HasPathObject() const
       {
         return pathObject.Valid();
       }
 
+      /**
+       * Return the path object that connects the current node to the next node.
+       */
       inline ObjectFileRef GetPathObject() const
       {
         return pathObject;
       }
 
+      /**
+       * The the index of the target node on the path that is the next node on the route.
+       */
       inline size_t GetTargetNodeIndex() const
       {
         return targetNodeIndex;
@@ -470,13 +528,23 @@ namespace osmscout {
         return time;
       }
 
+      /**
+       * Location (latitude,longitude) of the node
+       */
+      inline GeoCoord GetLocation() const
+      {
+        return location;
+      }
+
       bool HasDescription(const char* name) const;
-      Description* GetDescription(const char* name) const;
+      DescriptionRef GetDescription(const char* name) const;
 
       void SetDistance(double distance);
       void SetTime(double time);
+      void SetLocation(const GeoCoord &coord);
 
-      void AddDescription(const char* name, Description* description);
+      void AddDescription(const char* name,
+                          const DescriptionRef& description);
     };
 
   private:
@@ -494,6 +562,11 @@ namespace osmscout {
                  size_t targetNodeIndex);
 
     inline std::list<Node>& Nodes()
+    {
+      return nodes;
+    }
+
+    inline const std::list<Node>& Nodes() const
     {
       return nodes;
     }

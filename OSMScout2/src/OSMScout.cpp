@@ -19,6 +19,7 @@
 
 // Qt includes
 #include <QGuiApplication>
+#include <QQmlApplicationEngine>
 #include <QQuickView>
 
 // Custom QML objects
@@ -29,8 +30,22 @@
 // Application settings
 #include "Settings.h"
 
-// Main Window
-#include "MainWindow.h"
+// Application theming
+#include "Theme.h"
+
+#include <osmscout/util/Logger.h>
+
+Q_DECLARE_METATYPE(osmscout::TileRef)
+
+static QObject *ThemeProvider(QQmlEngine *engine, QJSEngine *scriptEngine)
+{
+    Q_UNUSED(engine)
+    Q_UNUSED(scriptEngine)
+
+    Theme *theme = new Theme();
+
+    return theme;
+}
 
 int main(int argc, char* argv[])
 {
@@ -40,17 +55,15 @@ int main(int argc, char* argv[])
 
   QGuiApplication app(argc,argv);
   SettingsRef     settings;
-  MainWindow      *window;
   int             result;
 
   app.setOrganizationName("libosmscout");
   app.setOrganizationDomain("libosmscout.sf.net");
   app.setApplicationName("OSMScout");
 
-  settings=new Settings();
-
-  //qRegisterMetaType<RenderMapRequest>();
+  qRegisterMetaType<RenderMapRequest>();
   qRegisterMetaType<DatabaseLoadedResponse>();
+  qRegisterMetaType<osmscout::TileRef>();
 
   qmlRegisterType<MapWidget>("net.sf.libosmscout.map", 1, 0, "Map");
   qmlRegisterType<Location>("net.sf.libosmscout.map", 1, 0, "Location");
@@ -58,30 +71,31 @@ int main(int argc, char* argv[])
   qmlRegisterType<RouteStep>("net.sf.libosmscout.map", 1, 0, "RouteStep");
   qmlRegisterType<RoutingListModel>("net.sf.libosmscout.map", 1, 0, "RoutingListModel");
 
+  qmlRegisterSingletonType<Theme>("net.sf.libosmscout.map", 1, 0, "Theme", ThemeProvider);
+
+  osmscout::log.Debug(true);
+
+  settings=std::make_shared<Settings>();
+
   QThread thread;
 
-  if (!DBThread::InitializeInstance(settings)) {
+  if (!DBThread::InitializeInstance()) {
     std::cerr << "Cannot initialize DBThread" << std::endl;
+    return 1;
   }
 
   DBThread* dbThread=DBThread::GetInstance();
-
-  window=new MainWindow(settings,
-                        dbThread);
-  window->resize(480,800);
-  window->setResizeMode(QQuickView::SizeRootObjectToView);
 
   dbThread->connect(&thread, SIGNAL(started()), SLOT(Initialize()));
   dbThread->connect(&thread, SIGNAL(finished()), SLOT(Finalize()));
 
   dbThread->moveToThread(&thread);
+
+  QQmlApplicationEngine window(QUrl("qrc:/qml/main.qml"));
+
   thread.start();
 
-  window->show();
-
   result=app.exec();
-
-  delete window;
 
   thread.quit();
   thread.wait();
@@ -90,9 +104,3 @@ int main(int argc, char* argv[])
 
   return result;
 }
-
-#if defined(__WIN32__) || defined(WIN32)
-int CALLBACK WinMain(HINSTANCE /*hInstance*/, HINSTANCE /*hPrevInstance*/, LPSTR /*lpCmdLine*/, int /*nCmdShow*/){
-	main(0, NULL);
-}
-#endif

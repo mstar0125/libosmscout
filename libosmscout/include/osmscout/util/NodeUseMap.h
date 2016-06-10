@@ -23,14 +23,14 @@
 #include <osmscout/private/CoreImportExport.h>
 
 #include <bitset>
+#include <unordered_map>
 
 #include <osmscout/Types.h>
-
-#include <osmscout/util/HashMap.h>
 
 namespace osmscout {
 
   /**
+   * \ingroup Util
    * The NodeUseMap can be used to efficiently check if an
    * id used at least twice. In concrete it is used, to
    * check if a node id is shared by multiple ways/areas.
@@ -48,17 +48,22 @@ namespace osmscout {
   class OSMSCOUT_API NodeUseMap
   {
   private:
-    typedef std::bitset<4096>               Bitset;
-    typedef OSMSCOUT_HASHMAP<PageId,Bitset> Map;
+    typedef std::bitset<4096>                 Bitset;
+    typedef std::unordered_map<PageId,Bitset> Map;
 
   private:
-    Map nodeUseMap;
+    Map                                       nodeUseMap;
+    size_t                                    nodeCount;
+    size_t                                    duplicateCount;
 
   public:
+    NodeUseMap();
     virtual ~NodeUseMap();
 
     void SetNodeUsed(Id id);
     bool IsNodeUsedAtLeastTwice(Id id) const;
+    size_t GetNodeUsedCount() const;
+    size_t GetDuplicateCount() const;
 
     void Clear();
   };

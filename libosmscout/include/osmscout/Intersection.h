@@ -20,14 +20,15 @@
   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307  USA
 */
 
+#include <memory>
 #include <vector>
 
 #include <osmscout/private/CoreImportExport.h>
 
 #include <osmscout/ObjectRef.h>
+#include <osmscout/TypeConfig.h>
 
 #include <osmscout/util/FileScanner.h>
-#include <osmscout/util/Reference.h>
 
 namespace osmscout {
 
@@ -35,11 +36,11 @@ namespace osmscout {
    * A Intersection is a node, where multiple routeable ways or areas
    * meet.
    */
-  class OSMSCOUT_API Intersection : public Referencable
+  class OSMSCOUT_API Intersection
   {
   private:
-    Id                         nodeId;  //! The id/file offset of the node where the ways meet
-    std::vector<ObjectFileRef> objects; //! The objects that meet at the given node
+    Id                         nodeId;  //!< The id/file offset of the node where the ways meet
+    std::vector<ObjectFileRef> objects; //!< The objects that meet at the given node
 
   public:
     Intersection();
@@ -56,9 +57,11 @@ namespace osmscout {
     }
 
     bool Read(FileScanner& scanner);
+    bool Read(const TypeConfig& typeConfig,
+              FileScanner& scanner);
   };
 
-  typedef Ref<Intersection> JunctionRef;
+  typedef std::shared_ptr<Intersection> JunctionRef;
 }
 
 #endif

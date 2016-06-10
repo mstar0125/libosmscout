@@ -41,32 +41,38 @@
 #endif
 
 #include <osmscout/Database.h>
+#include <osmscout/MapService.h>
+
 #include <osmscout/MapPainterOpenGL.h>
-#include <osmscout/StyleConfigLoader.h>
 
 static int window=-1;
 
 static int width=640;
 static int height=480;
 
+static const double DPI=96.0;
+
 //static double lat=51.577;
 //static double lon=7.46;
-static double lat=50.6811;
-static double lon=7.158;
-static double zoom=80000;
+static const double lat=50.6811;
+static const double lon=7.158;
+static const double zoom=80000;
+
+static osmscout::MercatorProjection projection;
+static osmscout::MapParameter       drawParameter;
+static osmscout::MapPainterOpenGL   *painter=NULL;
 
 class Database
 {
 private:
-  osmscout::Database            *database;
-  osmscout::StyleConfig         *styleConfig;
+  osmscout::DatabaseRef         database;
+  osmscout::MapServiceRef       mapService;
+  osmscout::StyleConfigRef      styleConfig;
 
   osmscout::AreaSearchParameter searchParameter;
 
 public:
   Database()
-  : database(NULL),
-    styleConfig(NULL)
   {
     // no code
   }
@@ -76,9 +82,8 @@ public:
   {
     osmscout::DatabaseParameter databaseParameter;
 
-    databaseParameter.SetDebugPerformance(true);
-
-    database=new osmscout::Database(databaseParameter);
+    database=std::make_shared<osmscout::Database>(databaseParameter);
+    mapService=std::make_shared<osmscout::MapService>(database);
 
     if (!database->Open(map.c_str())) {
       std::cerr << "Cannot open database" << std::endl;
@@ -86,11 +91,12 @@ public:
       return false;
     }
 
-    styleConfig=new osmscout::StyleConfig(database->GetTypeConfig());
+    styleConfig=std::make_shared<osmscout::StyleConfig>(database->GetTypeConfig());
 
-    if (!osmscout::LoadStyleConfig(style.c_str(),
-                                   *styleConfig)) {
+    if (!styleConfig->Load(style)) {
       std::cerr << "Cannot open style" << std::endl;
+
+      return false;
     }
 
     searchParameter.SetUseLowZoomOptimization(true);
@@ -100,11 +106,11 @@ public:
 
   ~Database()
   {
-    delete styleConfig;
-    delete database;
+    delete painter;
+    painter=NULL;
   }
 
-  const osmscout::StyleConfig* GetStyleConfig() const
+  const osmscout::StyleConfigRef GetStyleConfig() const
   {
     return styleConfig;
   }
@@ -112,38 +118,20 @@ public:
   bool LoadData(const osmscout::Projection& projection,
                 osmscout::MapData& data)
   {
-    osmscout::TypeSet              nodeTypes;
-    std::vector<osmscout::TypeSet> wayTypes;
-    osmscout::TypeSet              areaTypes;
+    painter = new osmscout::MapPainterOpenGL(styleConfig);
+    bool result=true;
 
-    styleConfig->GetNodeTypesWithMaxMag(projection.GetMagnification(),
-                                       nodeTypes);
+    std::list<osmscout::TileRef> tiles;
 
-    styleConfig->GetWayTypesByPrioWithMaxMag(projection.GetMagnification(),
-                                            wayTypes);
+    mapService->LookupTiles(projection,tiles);
+    result=mapService->LoadMissingTileData(searchParameter,*styleConfig,tiles);
+    mapService->ConvertTilesToMapData(tiles,data);
 
-    styleConfig->GetAreaTypesWithMaxMag(projection.GetMagnification(),
-                                       areaTypes);
-
-    return database->GetObjects(nodeTypes,
-                                wayTypes,
-                                areaTypes,
-                                projection.GetLonMin(),
-                                projection.GetLatMin(),
-                                projection.GetLonMax(),
-                                projection.GetLatMax(),
-                                projection.GetMagnification(),
-                                searchParameter,
-                                data.nodes,
-                                data.ways,
-                                data.areas);
+    return result;
   }
 };
 
-static Database                      database;
-static osmscout::ReversedYAxisMercatorProjection  projection;
-static osmscout::MapParameter        drawParameter;
-static osmscout::MapPainterOpenGL    painter;
+static Database database;
 
 void OnInit()          // We call this right after our OpenGL window is created.
 {
@@ -165,7 +153,8 @@ void OnDisplay()
 
   projection.Set(lon,
                  lat,
-                 zoom,
+                 osmscout::Magnification(zoom),
+                 DPI,
                  width,
                  height);
 
@@ -181,10 +170,9 @@ void OnDisplay()
   //glTranslated(-width/2.0,-height/2.0,-9.0);
   //glRotatef(-15.0f,1.0f,0.0f,0.0f);
 
-  if (!painter.DrawMap(*database.GetStyleConfig(),
-                       projection,
-                       drawParameter,
-                       data)) {
+  if (!painter->DrawMap(projection,
+                        drawParameter,
+                        data)) {
     std::cerr << "Cannot render" << std::endl;
     return;
   }
@@ -212,7 +200,7 @@ void OnResize(int width, int height)
   ::height=height;
 }
 
-void OnKeyPressed(unsigned char key, int x, int y)
+void OnKeyPressed(unsigned char key, int /*x*/, int /*y*/)
 {
   /* avoid thrashing this procedure */
   //usleep(100);

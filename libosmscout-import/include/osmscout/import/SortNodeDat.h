@@ -28,26 +28,18 @@ namespace osmscout {
 
   class SortNodeDataGenerator : public SortDataGenerator<Node>
   {
+  public:
+    static const char* NODEADDRESS_DAT;
+
   private:
     void GetTopLeftCoordinate(const Node& data,
-                              double& maxLat,
-                              double& minLon)
-    {
-      maxLat=data.GetLat();
-      minLon=data.GetLon();
-    }
+                              GeoCoord& coord);
 
   public:
-    SortNodeDataGenerator()
-    : SortDataGenerator<Node>("nodes.dat","nodes.idmap")
-    {
-      AddSource(osmRefNode,"nodes.tmp");
-    }
+    SortNodeDataGenerator();
 
-    std::string GetDescription() const
-    {
-      return "Sort/copy nodes";
-    }
+    void GetDescription(const ImportParameter& parameter,
+                        ImportModuleDescription& description) const;
   };
 }
 

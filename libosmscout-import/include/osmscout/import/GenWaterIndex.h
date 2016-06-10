@@ -20,6 +20,7 @@
   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307  USA
 */
 
+#include <memory>
 #include <vector>
 
 #include <osmscout/GeoCoord.h>
@@ -31,7 +32,6 @@
 
 #include <osmscout/util/FileWriter.h>
 #include <osmscout/util/Geometry.h>
-#include <osmscout/util/Reference.h>
 
 namespace osmscout {
 
@@ -109,11 +109,6 @@ namespace osmscout {
     {
       FileOffset                 indexEntryOffset;
 
-      double                     minLat;
-      double                     maxLat;
-      double                     minLon;
-      double                     maxLon;
-
       double                     cellWidth;
       double                     cellHeight;
 
@@ -126,8 +121,8 @@ namespace osmscout {
       uint32_t                   cellYCount;
       std::vector<unsigned char> area;
 
-      void SetBox(uint32_t minLat, uint32_t maxLat,
-                  uint32_t minLon, uint32_t maxLon,
+      void SetBox(const GeoCoord& minCoord,
+                  const GeoCoord& maxCoord,
                   double cellWidth, double cellHeight);
 
       bool IsInAbsolute(uint32_t x, uint32_t y) const;
@@ -141,17 +136,17 @@ namespace osmscout {
     /**
      * A individual coastline
      */
-    struct Coast : public Referencable
+    struct Coast
     {
-      Id                    id;
-      bool                  isArea;
-      double                sortCriteria;
-      Id                    frontNodeId;
-      Id                    backNodeId;
-      std::vector<GeoCoord> coast;
+      Id                 id;
+      bool               isArea;
+      double             sortCriteria;
+      Id                 frontNodeId;
+      Id                 backNodeId;
+      std::vector<Point> coast;
     };
 
-    typedef Ref<Coast> CoastRef;
+    typedef std::shared_ptr<Coast> CoastRef;
 
     struct GeoBoundingBox
     {
@@ -210,7 +205,7 @@ namespace osmscout {
                   std::set<Pixel>& cellIntersections);
 
     void GetCells(const Level& level,
-                  const std::vector<GeoCoord>& points,
+                  const std::vector<Point>& points,
                   std::set<Pixel>& cellIntersections);
 
     void GetCellIntersections(const Level& level,
@@ -276,10 +271,12 @@ namespace osmscout {
                                           Data& data);
 
   public:
-    std::string GetDescription() const;
-    bool Import(const ImportParameter& parameter,
-                Progress& progress,
-                const TypeConfig& typeConfig);
+    void GetDescription(const ImportParameter& parameter,
+                        ImportModuleDescription& description) const;
+
+    bool Import(const TypeConfigRef& typeConfig,
+                const ImportParameter& parameter,
+                Progress& progress);
   };
 }
 

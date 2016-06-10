@@ -71,10 +71,12 @@ namespace osmscout {
     AggTextContourConverter   *convTextContours;
 
   private:
-    void SetFont(const MapParameter& parameter,
+    void SetFont(const Projection& projection,
+                 const MapParameter& parameter,
                  double size);
 
-    void SetOutlineFont(const MapParameter& parameter,
+    void SetOutlineFont(const Projection& projection,
+                        const MapParameter& parameter,
                         double size);
 
     void GetTextDimension(const std::wstring& text,
@@ -99,7 +101,13 @@ namespace osmscout {
                  const MapParameter& parameter,
                  IconStyle& style);
 
-    void GetTextDimension(const MapParameter& parameter,
+    void GetFontHeight(const Projection& projection,
+                       const MapParameter& parameter,
+                       double fontSize,
+                       double& height);
+
+    void GetTextDimension(const Projection& projection,
+                          const MapParameter& parameter,
                           double fontSize,
                           const std::string& text,
                           double& xOff,
@@ -149,12 +157,11 @@ namespace osmscout {
                   const AreaData& area);
 
   public:
-    MapPainterAgg();
+    MapPainterAgg(const StyleConfigRef& styleConfig);
     virtual ~MapPainterAgg();
 
 
-    bool DrawMap(const StyleConfig& styleConfig,
-                 const Projection& projection,
+    bool DrawMap(const Projection& projection,
                  const MapParameter& parameter,
                  const MapData& data,
                  AggPixelFormat* pf);

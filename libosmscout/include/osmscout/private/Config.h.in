@@ -1,16 +1,71 @@
 /* include/osmscout/private/Config.h.in.  Generated from configure.ac by autoheader.  */
 
+/* Define to 1 to support Advanced Bit Manipulation */
+#undef HAVE_ABM
+
+/* Define to 1 to support Multi-Precision Add-Carry Instruction Extensions */
+#undef HAVE_ADX
+
+/* Define to 1 to support Advanced Encryption Standard New Instruction Set
+   (AES-NI) */
+#undef HAVE_AES
+
 /* Support Altivec instructions */
 #undef HAVE_ALTIVEC
 
-/* Support AVX (Advanced Vector Extensions) instructions */
+/* Define to 1 to support Advanced Vector Extensions */
 #undef HAVE_AVX
+
+/* Define to 1 to support Advanced Vector Extensions 2 */
+#undef HAVE_AVX2
+
+/* Define to 1 to support AVX-512 Byte and Word Instructions */
+#undef HAVE_AVX512_BW
+
+/* Define to 1 to support AVX-512 Conflict Detection Instructions */
+#undef HAVE_AVX512_CD
+
+/* Define to 1 to support AVX-512 Doubleword and Quadword Instructions */
+#undef HAVE_AVX512_DQ
+
+/* Define to 1 to support AVX-512 Exponential & Reciprocal Instructions */
+#undef HAVE_AVX512_ER
+
+/* Define to 1 to support AVX-512 Foundation Extensions */
+#undef HAVE_AVX512_F
+
+/* Define to 1 to support AVX-512 Integer Fused Multiply Add Instructions */
+#undef HAVE_AVX512_IFMA
+
+/* Define to 1 to support AVX-512 Conflict Prefetch Instructions */
+#undef HAVE_AVX512_PF
+
+/* Define to 1 to support AVX-512 Vector Byte Manipulation Instructions */
+#undef HAVE_AVX512_VBMI
+
+/* Define to 1 to support AVX-512 Vector Length Extensions */
+#undef HAVE_AVX512_VL
+
+/* Define to 1 to support Bit Manipulation Instruction Set 1 */
+#undef HAVE_BMI1
+
+/* Define to 1 to support Bit Manipulation Instruction Set 2 */
+#undef HAVE_BMI2
+
+/* define if the compiler supports basic C++11 syntax */
+#undef HAVE_CXX11
 
 /* Define to 1 if you have the <dlfcn.h> header file. */
 #undef HAVE_DLFCN_H
 
 /* Define to 1 if you have the <fcntl.h> header file. */
 #undef HAVE_FCNTL_H
+
+/* Define to 1 to support Fused Multiply-Add Extensions 3 */
+#undef HAVE_FMA3
+
+/* Define to 1 to support Fused Multiply-Add Extensions 4 */
+#undef HAVE_FMA4
 
 /* Define to 1 if fseeko (and presumably ftello) exists and is declared. */
 #undef HAVE_FSEEKO
@@ -30,14 +85,20 @@
 /* Define to 1 if you have the <inttypes.h> header file. */
 #undef HAVE_INTTYPES_H
 
+/* Define to 1 if the system has the type `long long'. */
+#undef HAVE_LONG_LONG
+
 /* Define to 1 if you have the <memory.h> header file. */
 #undef HAVE_MEMORY_H
 
 /* Define to 1 if you have the `mmap' function. */
 #undef HAVE_MMAP
 
-/* Support mmx instructions */
+/* Define to 1 to support Multimedia Extensions */
 #undef HAVE_MMX
+
+/* Define to 1 to support Memory Protection Extensions */
+#undef HAVE_MPX
 
 /* Define to 1 if you have the `posix_fadvise' function. */
 #undef HAVE_POSIX_FADVISE
@@ -45,22 +106,40 @@
 /* Define to 1 if you have the `posix_madvise' function. */
 #undef HAVE_POSIX_MADVISE
 
-/* Support SSE (Streaming SIMD Extensions) instructions */
+/* Define to 1 to support Prefetch Vector Data Into Caches WT1 */
+#undef HAVE_PREFETCHWT1
+
+/* Define if you have POSIX threads libraries and header files. */
+#undef HAVE_PTHREAD
+
+/* Have PTHREAD_PRIO_INHERIT. */
+#undef HAVE_PTHREAD_PRIO_INHERIT
+
+/* Define to 1 to support Digital Random Number Generator */
+#undef HAVE_RDRND
+
+/* Define to 1 to support Secure Hash Algorithm Extension */
+#undef HAVE_SHA
+
+/* Define to 1 to support Streaming SIMD Extensions */
 #undef HAVE_SSE
 
-/* Support SSE2 (Streaming SIMD Extensions 2) instructions */
+/* Define to 1 to support Streaming SIMD Extensions */
 #undef HAVE_SSE2
 
-/* Support SSE3 (Streaming SIMD Extensions 3) instructions */
+/* Define to 1 to support Streaming SIMD Extensions 3 */
 #undef HAVE_SSE3
 
-/* Support SSSE4.1 (Streaming SIMD Extensions 4.1) instructions */
+/* Define to 1 to support Streaming SIMD Extensions 4.1 */
 #undef HAVE_SSE4_1
 
-/* Support SSSE4.2 (Streaming SIMD Extensions 4.2) instructions */
+/* Define to 1 to support Streaming SIMD Extensions 4.2 */
 #undef HAVE_SSE4_2
 
-/* Support SSSE3 (Supplemental Streaming SIMD Extensions 3) instructions */
+/* Define to 1 to support AMD Streaming SIMD Extensions 4a */
+#undef HAVE_SSE4a
+
+/* Define to 1 to support Supplemental Streaming SIMD Extensions 3 */
 #undef HAVE_SSSE3
 
 /* Define to 1 if you have the <stdint.h> header file. */
@@ -68,6 +147,9 @@
 
 /* Define to 1 if you have the <stdlib.h> header file. */
 #undef HAVE_STDLIB_H
+
+/* Define to 1 if the system has the type `std::shared_mutex'. */
+#undef HAVE_STD__SHARED_MUTEX
 
 /* Define to 1 if the system has the type `std::wstring'. */
 #undef HAVE_STD__WSTRING
@@ -81,14 +163,8 @@
 /* Define to 1 if you have the <sys/stat.h> header file. */
 #undef HAVE_SYS_STAT_H
 
-/* Define to 1 if you have the <sys/time.h> header file. */
-#undef HAVE_SYS_TIME_H
-
 /* Define to 1 if you have the <sys/types.h> header file. */
 #undef HAVE_SYS_TYPES_H
-
-/* Define to 1 if you have the <thread> header file. */
-#undef HAVE_THREAD
 
 /* Define to 1 if the system has the type `uint16_t'. */
 #undef HAVE_UINT16_T
@@ -105,84 +181,33 @@
 /* Define to 1 if you have the <unistd.h> header file. */
 #undef HAVE_UNISTD_H
 
-/* Define to 1 if you have the <unordered_map> header file. */
-#undef HAVE_UNORDERED_MAP
+/* Define to 1 if the system has the type `unsigned long long'. */
+#undef HAVE_UNSIGNED_LONG_LONG
 
-/* Define to 1 if you have the <unordered_set> header file. */
-#undef HAVE_UNORDERED_SET
+/* Define to 1 or 0, depending whether the compiler supports simple visibility
+   declarations. */
+#undef HAVE_VISIBILITY
 
-/* Define to the sub-directory in which libtool stores uninstalled libraries.
-   */
+/* Define to 1 to support eXtended Operations Extensions */
+#undef HAVE_XOP
+
+/* Define to the sub-directory where libtool stores uninstalled libraries. */
 #undef LT_OBJDIR
 
 /* libosmscout uses special gcc compiler features to export symbols */
 #undef OSMSCOUT_EXPORT_SYMBOLS
 
-/* math function atanh(double) is available */
-#undef OSMSCOUT_HAVE_ATANH
-
-/* standard library has support for atomic */
-#undef OSMSCOUT_HAVE_ATOMIC
-
-/* int16_t is available */
-#undef OSMSCOUT_HAVE_INT16_T
-
-/* int32_t is available */
-#undef OSMSCOUT_HAVE_INT32_T
-
-/* int64_t is available */
-#undef OSMSCOUT_HAVE_INT64_T
-
-/* int8_t is available */
-#undef OSMSCOUT_HAVE_INT8_T
-
 /* libmarisa detected */
 #undef OSMSCOUT_HAVE_LIB_MARISA
 
-/* math function log2(double) is available */
-#undef OSMSCOUT_HAVE_LOG2
-
-/* math function lround(double) is available */
-#undef OSMSCOUT_HAVE_LROUND
-
-/* standard library has support for mutex */
-#undef OSMSCOUT_HAVE_MUTEX
+/* std::shared_mutex is available */
+#undef OSMSCOUT_HAVE_SHARED_MUTEX
 
 /* SSE2 processor extension available */
 #undef OSMSCOUT_HAVE_SSE2
 
-/* system header <stdint.h> is available */
-#undef OSMSCOUT_HAVE_STDINT_H
-
 /* std::wstring is available */
 #undef OSMSCOUT_HAVE_STD_WSTRING
-
-/* system header <thread> is available */
-#undef OSMSCOUT_HAVE_THREAD
-
-/* uint16_t is available */
-#undef OSMSCOUT_HAVE_UINT16_T
-
-/* uint32_t is available */
-#undef OSMSCOUT_HAVE_UINT32_T
-
-/* uint64_t is available */
-#undef OSMSCOUT_HAVE_UINT64_T
-
-/* uint8_t is available */
-#undef OSMSCOUT_HAVE_UINT8_T
-
-/* system header <unordered_map> is available */
-#undef OSMSCOUT_HAVE_UNORDERED_MAP
-
-/* system header <unordered_set> is available */
-#undef OSMSCOUT_HAVE_UNORDERED_SET
-
-/* libosmscout needs to include <assert.h> */
-#undef OSMSCOUT_REQUIRES_ASSERTH
-
-/* libosmscout needs to include <math.h> */
-#undef OSMSCOUT_REQUIRES_MATHH
 
 /* Define to the address where bug reports for this package should be sent. */
 #undef PACKAGE_BUGREPORT
@@ -201,6 +226,10 @@
 
 /* Define to the version of this package. */
 #undef PACKAGE_VERSION
+
+/* Define to necessary symbol if this constant uses a non-standard name on
+   your system. */
+#undef PTHREAD_CREATE_JOINABLE
 
 /* The size of `wchar_t', as computed by sizeof. */
 #undef SIZEOF_WCHAR_T
@@ -221,6 +250,3 @@
 
 /* Define for large files, on AIX-style hosts. */
 #undef _LARGE_FILES
-
-/* Define to `unsigned int' if <sys/types.h> does not define. */
-#undef size_t

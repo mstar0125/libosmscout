@@ -2,12 +2,17 @@ AM_CPPFLAGS = $(LIB_CXXFLAGS) \
               -I$(top_srcdir)/include \
               $(LIBOSMSCOUTMAP_CFLAGS) \
               $(LIBOSMSCOUT_CFLAGS) \
-              $(LIBQTGUI_CFLAGS)
+              -stdlib=libc++
+
+AM_OBJCXXFLAGS = -std=c++11 -fobjc-arc -stdlib=libc++ -lc++
 
 lib_LTLIBRARIES = libosmscoutmapiosx.la
-libosmscoutmapqt_la_LDFLAGS  = -no-undefined \
+libosmscoutmapiosx_la_LDFLAGS  = -no-undefined \
                                $(LIBOSMSCOUTMAP_LIBS) \
                                $(LIBOSMSCOUT_LIBS) \
-                               $(LIBQTGUI_LIBS)
+                               -framework Foundation \
+                               -framework Cocoa \
+                               -framework AppKit \
+                               -framework CoreData
 
-libosmscoutmapqt_la_SOURCES = osmscout/MapPainterIOS.cpp
+libosmscoutmapiosx_la_SOURCES = osmscout/MapPainterIOS.mm

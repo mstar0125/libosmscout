@@ -21,117 +21,110 @@
 
 #include <algorithm>
 
-#include <osmscout/DataFile.h>
-
 #include <osmscout/system/Assert.h>
 
 #include <osmscout/util/Geometry.h>
 #include <osmscout/util/StopClock.h>
 #include <osmscout/util/String.h>
 
-#include <osmscout/import/RawNode.h>
-#include <osmscout/import/RawRelation.h>
 #include <osmscout/import/RawWay.h>
+
+#include <osmscout/import/GenRelAreaDat.h>
+#include <osmscout/import/Preprocess.h>
 
 namespace osmscout {
 
-  void WayAreaDataGenerator::GetWayTypes(const TypeConfig& typeConfig,
-                                         std::set<TypeId>& types) const
+  static const uint32_t rawWayBlockSize=100000;
+  static const uint32_t nodeBlockSize=250000;
+
+  const char* WayAreaDataGenerator::WAYAREA_TMP="wayarea.tmp";
+
+  WayAreaDataGenerator::Distribution::Distribution()
+  : nodeCount(0),
+    wayCount(0),
+    areaCount(0)
   {
-    for (std::vector<TypeInfo>::const_iterator type=typeConfig.GetTypes().begin();
-        type!=typeConfig.GetTypes().end();
-        type++) {
-      if (type->GetId()==typeIgnore) {
-        continue;
-      }
-
-      if (type->GetIgnore()) {
-        continue;
-      }
-
-      if (type->CanBeArea()) {
-        types.insert(type->GetId());
-      }
-    }
+    // no code
   }
 
-  std::string WayAreaDataGenerator::GetDescription() const
+  void WayAreaDataGenerator::GetDescription(const ImportParameter& /*parameter*/,
+                                            ImportModuleDescription& description) const
   {
-    return "Generate 'wayarea.tmp'";
+    description.SetName("WayAreaDataGenerator");
+    description.SetDescription("Resolves raw ways to areas");
+
+    description.AddRequiredFile(Preprocess::DISTRIBUTION_DAT);
+    description.AddRequiredFile(CoordDataFile::COORD_DAT);
+    description.AddRequiredFile(Preprocess::RAWWAYS_DAT);
+    description.AddRequiredFile(RelAreaDataGenerator::WAYAREABLACK_DAT);
+
+    description.AddProvidedTemporaryFile(WAYAREA_TMP);
   }
 
   bool WayAreaDataGenerator::ReadWayBlacklist(const ImportParameter& parameter,
                                               Progress& progress,
-                                              BlacklistSet& wayBlacklist)
+                                              BlacklistSet& wayBlacklist) const
   {
     FileScanner scanner;
 
-    if (!scanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
-                                      "wayareablack.dat"),
-                      FileScanner::Sequential,
-                      true)) {
-      progress.Error("Cannot open 'wayareablack.dat'");
-      return false;
-    }
+    try {
+      scanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
+                                   RelAreaDataGenerator::WAYAREABLACK_DAT),
+                   FileScanner::Sequential,
+                   true);
 
-    while (!scanner.IsEOF()) {
-      OSMId id;
+      while (!scanner.IsEOF()) {
+        OSMId id;
 
-      scanner.ReadNumber(id);
+        scanner.ReadNumber(id);
 
-      if (scanner.HasError()) {
-        return false;
+        if (scanner.HasError()) {
+          return false;
+        }
+
+        wayBlacklist.insert(id);
       }
 
-      wayBlacklist.insert(id);
+      scanner.Close();
+    }
+    catch (IOException& e) {
+      progress.Error(e.GetDescription());
+      return false;
     }
 
-    return scanner.Close();
+    return true;
   }
 
-  bool WayAreaDataGenerator::GetWays(const ImportParameter& parameter,
-                                     Progress& progress,
-                                     const TypeConfig& typeConfig,
-                                     std::set<TypeId>& types,
-                                     std::set<TypeId>& slowFallbackTypes,
-                                     const BlacklistSet& blacklist,
-                                     FileScanner& scanner,
-                                     std::vector<std::list<RawWayRef> >& areas)
+  bool WayAreaDataGenerator::GetAreas(const ImportParameter& parameter,
+                                      Progress& progress,
+                                      const TypeConfig& typeConfig,
+                                      TypeInfoSet& types,
+                                      const BlacklistSet& blacklist,
+                                      FileScanner& scanner,
+                                      std::vector<std::list<RawWayRef> >& areas)
   {
-    uint32_t         wayCount=0;
-    size_t           collectedWaysCount=0;
-    size_t           typesWithWays=0;
-    std::set<TypeId> currentTypes(types);
+    uint32_t    wayCount=0;
+    size_t      collectedWaysCount=0;
+    size_t      typesWithWays=0;
+    TypeInfoSet currentTypes(types);
 
-    if (!scanner.GotoBegin()) {
-      progress.Error("Error while positioning at start of file");
-      return false;
-    }
+    scanner.GotoBegin();
 
-    if (!scanner.Read(wayCount)) {
-      progress.Error("Error while reading number of data entries in file");
-      return false;
-    }
+    scanner.Read(wayCount);
 
     for (uint32_t w=1; w<=wayCount; w++) {
-      RawWayRef way=new RawWay();
+      RawWayRef way=std::make_shared<RawWay>();
 
       progress.SetProgress(w,wayCount);
 
-      if (!way->Read(scanner)) {
-        progress.Error(std::string("Error while reading data entry ")+
-            NumberToString(w)+" of "+
-            NumberToString(wayCount)+
-            " in file '"+
-            scanner.GetFilename()+"'");
-        return false;
-      }
+      way->Read(typeConfig,
+                scanner);
 
       if (!way->IsArea()) {
         continue;
       }
 
-      if (currentTypes.find(way->GetType())==currentTypes.end()) {
+      if (!currentTypes.IsSet(way->GetType())) {
         continue;
       }
 
@@ -143,52 +136,33 @@ namespace osmscout {
         continue;
       }
 
-      if (areas[way->GetType()].empty()) {
+      if (areas[way->GetType()->GetIndex()].empty()) {
         typesWithWays++;
       }
 
-      areas[way->GetType()].push_back(way);
+      areas[way->GetType()->GetIndex()].push_back(way);
 
       collectedWaysCount++;
 
-      if (collectedWaysCount>parameter.GetRawWayBlockSize()) {
-        for (size_t i=0; i<areas.size(); i++) {
-          if (!areas[i].empty() &&
-              areas[i].size()>parameter.GetRawWayBlockSize()) {
-            progress.Warning("Too many objects for type "+
-                             typeConfig.GetTypeInfo(i).GetName()+
-                             ", mark it for low memory fall back");
-
-            collectedWaysCount-=areas[i].size();
-            areas[i].clear();
-
-            typesWithWays--;
-            types.erase(i);
-            currentTypes.erase(i);
-            slowFallbackTypes.insert(i);
-          }
-        }
-      }
-
       while (collectedWaysCount>parameter.GetRawWayBlockSize() &&
           typesWithWays>1) {
-        size_t victimType=areas.size();
+        TypeInfoRef victimType;
 
         // Find the type with the smallest amount of ways loaded
-        for (size_t i=0; i<areas.size(); i++) {
-          if (!areas[i].empty() &&
-              (victimType>=areas.size() ||
-               (areas[i].size()<areas[victimType].size()))) {
-            victimType=i;
+        for (auto &type : currentTypes) {
+          if (!areas[type->GetIndex()].empty() &&
+              (!victimType ||
+               (areas[type->GetIndex()].size()<areas[victimType->GetIndex()].size()))) {
+            victimType=type;
           }
         }
 
-        if (victimType<areas.size()) {
-          collectedWaysCount-=areas[victimType].size();
-          areas[victimType].clear();
+        if (victimType) {
+          collectedWaysCount-=areas[victimType->GetIndex()].size();
+          areas[victimType->GetIndex()].clear();
 
           typesWithWays--;
-          currentTypes.erase(victimType);
+          currentTypes.Remove(victimType);
         }
       }
 
@@ -197,189 +171,94 @@ namespace osmscout {
       }
     }
 
-    for (std::set<TypeId>::const_iterator type=currentTypes.begin();
-         type!=currentTypes.end();
-         ++type) {
-      types.erase(*type);
-    }
+    types.Remove(currentTypes);
 
-    progress.SetAction("Collected "+NumberToString(collectedWaysCount)+" ways for "+NumberToString(currentTypes.size())+" types");
+    progress.SetAction("Collected "+NumberToString(collectedWaysCount)+" ways for "+NumberToString(currentTypes.Size())+" types");
 
     return true;
   }
 
-  bool WayAreaDataGenerator::WriteWay(const ImportParameter& parameter,
-                                      Progress& progress,
-                                      const TypeConfig& typeConfig,
-                                      FileWriter& writer,
-                                      uint32_t& writtenWayCount,
-                                      const CoordDataFile::CoordResultMap& coordsMap,
-                                      const RawWay& rawWay)
+  bool WayAreaDataGenerator::WriteArea(const ImportParameter& parameter,
+                                       Progress& progress,
+                                       const TypeConfig& typeConfig,
+                                       FileWriter& writer,
+                                       uint32_t& writtenWayCount,
+                                       const CoordDataFile::ResultMap& coordsMap,
+                                       const RawWay& rawWay)
   {
-    std::vector<Tag> tags(rawWay.GetTags());
-    Area             area;
-    OSMId            wayId=rawWay.GetId();
-    Area::Ring       ring;
+    Area       area;
+    OSMId      wayId=rawWay.GetId();
+    Area::Ring ring;
 
-    if (!ring.attributes.SetTags(progress,
-                                 typeConfig,
-                                 tags)) {
-      return true;
-    }
+    ring.SetFeatures(rawWay.GetFeatureValueBuffer());
 
-    ring.SetType(rawWay.GetType());
-    ring.ring=Area::outerRingId;
-    ring.ids.resize(rawWay.GetNodeCount());
+    ring.MarkAsOuterRing();
     ring.nodes.resize(rawWay.GetNodeCount());
 
     bool success=true;
     for (size_t n=0; n<rawWay.GetNodeCount(); n++) {
-      CoordDataFile::CoordResultMap::const_iterator coord=coordsMap.find(rawWay.GetNodeId(n));
+      CoordDataFile::ResultMap::const_iterator coord=coordsMap.find(rawWay.GetNodeId(n));
 
       if (coord==coordsMap.end()) {
         progress.Error("Cannot resolve node with id "+
                        NumberToString(rawWay.GetNodeId(n))+
-                       " for Way "+
+                       " for area "+
                        NumberToString(wayId));
         success=false;
         break;
       }
 
-      ring.ids[n]=coord->second.point.GetId();
-
-      ring.nodes[n]=coord->second.point.GetCoords();
+      ring.nodes[n].Set(coord->second.GetSerial(),
+                        coord->second.GetCoord());
     }
 
     if (!success) {
       return true;
     }
 
+    if (!IsValidToWrite(ring.nodes)) {
+      progress.Error("Area coordinates are not dense enough to be written for area "+
+                     NumberToString(wayId));
+      return false;
+    }
+
     if (parameter.GetStrictAreas() &&
         !AreaIsSimple(ring.nodes)) {
-      progress.Error("Area "+NumberToString(wayId)+" of type '"+typeConfig.GetTypeInfo(area.GetType()).GetName()+"' is not simple");
+      progress.Error("Area "+NumberToString(wayId)+" of type '"+ring.GetType()->GetName()+"' is not simple");
       return true;
     }
 
     area.rings.push_back(ring);
 
-    if (!writer.Write(wayId)) {
-      return false;
-    }
-
-    if (!area.Write(writer)) {
-      return false;
-    }
+    writer.Write((uint8_t)osmRefWay);
+    writer.Write(wayId);
+    area.WriteImport(typeConfig,
+                     writer);
 
     writtenWayCount++;
 
     return true;
   }
 
-  bool WayAreaDataGenerator::HandleLowMemoryFallback(const ImportParameter& parameter,
-                                                     Progress& progress,
-                                                     const TypeConfig& typeConfig,
-                                                     FileScanner& scanner,
-                                                     std::set<TypeId>& types,
-                                                     const BlacklistSet& blacklist,
-                                                     FileWriter& writer,
-                                                     uint32_t& writtenWayCount,
-                                                     const CoordDataFile& coordDataFile)
-  {
-    uint32_t wayCount=0;
-    size_t   collectedWaysCount=0;
-
-    if (!scanner.GotoBegin()) {
-      progress.Error("Error while positioning at start of file");
-      return false;
-    }
-
-    if (!scanner.Read(wayCount)) {
-      progress.Error("Error while reading number of data entries in file");
-      return false;
-    }
-
-    for (uint32_t w=1; w<=wayCount; w++) {
-      RawWayRef way=new RawWay();
-
-      progress.SetProgress(w,wayCount);
-
-      if (!way->Read(scanner)) {
-        progress.Error(std::string("Error while reading data entry ")+
-            NumberToString(w)+" of "+
-            NumberToString(wayCount)+
-            " in file '"+
-            scanner.GetFilename()+"'");
-        return false;
-      }
-
-      if (!way->IsArea()) {
-        continue;
-      }
-
-      if (types.find(way->GetType())==types.end()) {
-        continue;
-      }
-
-      if (way->GetNodeCount()<3) {
-        continue;
-      }
-
-      if (blacklist.find(way->GetId())!=blacklist.end()) {
-        continue;
-      }
-
-      collectedWaysCount++;
-
-      std::set<OSMId>               nodeIds;
-      CoordDataFile::CoordResultMap coordsMap;
-
-      for (size_t n=0; n<way->GetNodeCount(); n++) {
-        nodeIds.insert(way->GetNodeId(n));
-      }
-
-      if (!coordDataFile.Get(nodeIds,coordsMap)) {
-        std::cerr << "Cannot read nodes!" << std::endl;
-        return false;
-      }
-
-      nodeIds.clear();
-
-      if (!WriteWay(parameter,
-                    progress,
-                    typeConfig,
-                    writer,
-                    writtenWayCount,
-                    coordsMap,
-                    way)) {
-        return false;
-      }
-    }
-
-    progress.SetAction("Collected "+NumberToString(collectedWaysCount)+" ways for "+NumberToString(types.size())+" types");
-
-    return true;
-  }
-
-  bool WayAreaDataGenerator::Import(const ImportParameter& parameter,
-                                    Progress& progress,
-                                    const TypeConfig& typeConfig)
+  bool WayAreaDataGenerator::Import(const TypeConfigRef& typeConfig,
+                                    const ImportParameter& parameter,
+                                    Progress& progress)
   {
     progress.SetAction("Generate wayarea.tmp");
 
-    std::set<TypeId> wayTypes;
-    std::set<TypeId> slowFallbackTypes;
+    BlacklistSet              wayBlacklist; //! Set of ways that should not be handled
 
-    BlacklistSet     wayBlacklist; //! Map of ways, that should be handled
+    CoordDataFile             coordDataFile;
 
-    CoordDataFile    coordDataFile("coord.dat");
-    FileScanner      scanner;
-    FileWriter       wayWriter;
-    uint32_t         rawWayCount=0;
+    FileScanner               scanner;
+    uint32_t                  rawWayCount=0;
+    std::vector<RawWayRef>    rawWays;
+    std::set<OSMId>           nodeIds;
 
-    uint32_t         writtenWayCount=0;
+    FileWriter                areaWriter;
+    uint32_t                  writtenWayCount=0;
 
-    GetWayTypes(typeConfig,
-                wayTypes);
+    rawWays.reserve(rawWayBlockSize*rawWayBlockSize/5);
 
     //
     // load blacklist of wayId as a result from multipolygon relation parsing
@@ -399,126 +278,115 @@ namespace osmscout {
       return false;
     }
 
-    if (!scanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
-                                      "rawways.dat"),
-                      FileScanner::Sequential,
-                      parameter.GetRawWayDataMemoryMaped())) {
-      progress.Error("Cannot open 'rawways.dat'");
-      return false;
-    }
+    progress.SetAction("Processing raw ways as areas");
 
-    if (!scanner.Read(rawWayCount)) {
-      progress.Error("Error while reading number of data entries in file");
-      return false;
-    }
+    try {
+      scanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
+                                   Preprocess::RAWWAYS_DAT),
+                   FileScanner::Sequential,
+                   parameter.GetRawWayDataMemoryMaped());
 
-    if (!wayWriter.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
-                                     "wayarea.tmp"))) {
-      progress.Error("Cannot create 'wayarea.tmp'");
-      return false;
-    }
+      scanner.Read(rawWayCount);
 
-    wayWriter.Write(writtenWayCount);
+      areaWriter.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
+                                      WAYAREA_TMP));
 
-    /* ------ */
+      areaWriter.Write(writtenWayCount);
 
-    size_t iteration=1;
-    while (!wayTypes.empty()) {
-      std::vector<std::list<RawWayRef> > areasByType(typeConfig.GetTypes().size());
+      for (uint32_t w=1; w<=rawWayCount; w++) {
+        RawWayRef way=std::make_shared<RawWay>();
 
-      //
-      // Load type data
-      //
+        progress.SetProgress(w,
+                             rawWayCount);
 
-      progress.SetAction("Collecting way data by type");
+        way->Read(*typeConfig,
+                  scanner);
 
-      if (!GetWays(parameter,
-                   progress,
-                   typeConfig,
-                   wayTypes,
-                   slowFallbackTypes,
-                   wayBlacklist,
-                   scanner,
-                   areasByType)) {
-        return false;
-      }
+        if (!way->IsArea()) {
+          continue;
+        }
 
-      progress.SetAction("Collecting node ids");
+        if (way->GetType()->GetIgnore()) {
+          continue;
+        }
 
-      std::set<OSMId>               nodeIds;
-      CoordDataFile::CoordResultMap coordsMap;
+        if (way->GetNodeCount()<3) {
+          continue;
+        }
 
-      for (size_t type=0; type<areasByType.size(); type++) {
-        for (std::list<RawWayRef>::const_iterator w=areasByType[type].begin();
-             w!=areasByType[type].end();
-             ++w) {
-          RawWayRef areas(*w);
+        if (wayBlacklist.find(way->GetId())!=wayBlacklist.end()) {
+          continue;
+        }
 
-          for (size_t n=0; n<areas->GetNodeCount(); n++) {
-            nodeIds.insert(areas->GetNodeId(n));
+        for (size_t n=0; n<way->GetNodeCount(); n++) {
+          nodeIds.insert(way->GetNodeId(n));
+        }
+
+        rawWays.push_back(way);
+
+        if (rawWays.size()>=rawWayBlockSize ||
+            nodeIds.size()>=nodeBlockSize) {
+          CoordDataFile::ResultMap coordsMap;
+
+          if (!coordDataFile.Get(nodeIds,
+                                 coordsMap)) {
+            std::cerr << "Cannot read nodes!" << std::endl;
+            return false;
           }
+
+          nodeIds.clear();
+
+          for (const auto& rawWay : rawWays) {
+            WriteArea(parameter,
+                      progress,
+                      *typeConfig,
+                      areaWriter,
+                      writtenWayCount,
+                      coordsMap,
+                      *rawWay);
+          }
+
+          rawWays.clear();
         }
       }
 
-      if (!nodeIds.empty()) {
-        progress.SetAction("Loading "+NumberToString(nodeIds.size())+" nodes");
-        if (!coordDataFile.Get(nodeIds,coordsMap)) {
+      if (rawWays.size() != 0) {
+        CoordDataFile::ResultMap coordsMap;
+
+        if (!coordDataFile.Get(nodeIds,
+                               coordsMap)) {
           std::cerr << "Cannot read nodes!" << std::endl;
           return false;
         }
 
-        nodeIds.clear();
-      }
-
-      progress.SetAction("Writing ways");
-
-      for (size_t type=0; type<areasByType.size(); type++) {
-        for (std::list<RawWayRef>::const_iterator w=areasByType[type].begin();
-             w!=areasByType[type].end();
-             ++w) {
-          RawWayRef rawWay(*w);
-
-          WriteWay(parameter,
-                   progress,
-                   typeConfig,
-                   wayWriter,
-                   writtenWayCount,
-                   coordsMap,
-                   *rawWay);
+        for (const auto& rawWay : rawWays) {
+          WriteArea(parameter,
+                    progress,
+                    *typeConfig,
+                    areaWriter,
+                    writtenWayCount,
+                    coordsMap,
+                    *rawWay);
         }
-
-        areasByType[type].clear();
       }
 
-      iteration++;
+      progress.Info(NumberToString(rawWayCount) + " raw way(s) read, "+
+                    NumberToString(writtenWayCount) + " areas(s) written");
+
+      /* -------*/
+
+      scanner.Close();
+
+      areaWriter.SetPos(0);
+      areaWriter.Write(writtenWayCount);
+      areaWriter.Close();
     }
+    catch (IOException& e) {
+      progress.Error(e.GetDescription());
 
-    if (!slowFallbackTypes.empty()) {
-      progress.SetAction("Handling low memory fall back");
+      scanner.CloseFailsafe();
+      areaWriter.CloseFailsafe();
 
-      HandleLowMemoryFallback(parameter,
-                              progress,
-                              typeConfig,
-                              scanner,
-                              slowFallbackTypes,
-                              wayBlacklist,
-                              wayWriter,
-                              writtenWayCount,
-                              coordDataFile);
-    }
-
-    /* -------*/
-
-    if (!scanner.Close()) {
-      progress.Error("Cannot close file 'rawways.dat'");
-      return false;
-    }
-
-    wayWriter.SetPos(0);
-    wayWriter.Write(writtenWayCount);
-
-
-    if (!wayWriter.Close()) {
       return false;
     }
 

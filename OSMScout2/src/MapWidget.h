@@ -22,6 +22,9 @@
 
 #include <QQuickPaintedItem>
 
+#include <osmscout/GeoCoord.h>
+#include <osmscout/util/GeoBox.h>
+
 #include "DBThread.h"
 #include "SearchLocationModel.h"
 
@@ -32,19 +35,22 @@ class MapWidget : public QQuickPaintedItem
   Q_PROPERTY(double lon READ GetLon)
 
 private:
-  double                  lon;
-  double                  lat;
-  osmscout::Magnification magnification;
+  osmscout::GeoCoord           center;
+  double                       angle;
+  osmscout::Magnification      magnification;
 
   // Drag and drop
-  double                  startLon,startLat;
-  int                     startX,startY;
+  int                          startX;
+  int                          startY;
+  osmscout::MercatorProjection startProjection;
 
   // Controlling rerendering...
-  bool                    requestNewMap;
+  bool                         mouseDragging;
+  bool                         dbInitialized;
+  bool                         hasBeenPainted;
 
 signals:
-  void TriggerMapRenderingSignal();
+  void TriggerMapRenderingSignal(const RenderMapRequest& request);
   void latChanged();
   void lonChanged();
 
@@ -57,6 +63,12 @@ public slots:
   void right();
   void up();
   void down();
+  void rotateLeft();
+  void rotateRight();
+
+  void toggleDaylight();
+  void reloadStyle();
+
   void showCoordinates(double lat, double lon);
   void showLocation(Location* location);
 
@@ -71,12 +83,12 @@ public:
 
   inline double GetLat() const
   {
-      return lat;
+      return center.GetLat();
   }
 
   inline double GetLon() const
   {
-      return lon;
+      return center.GetLon();
   }
 
   void mousePressEvent(QMouseEvent* event);

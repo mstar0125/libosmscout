@@ -1,0 +1,6 @@
+Makefile
+include/Makefile
+src/Makefile
+
+include/osmscout/MapFeatures.h
+parser/OSS

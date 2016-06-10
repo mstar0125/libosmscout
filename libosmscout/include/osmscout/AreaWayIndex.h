@@ -20,16 +20,19 @@
   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307  USA
 */
 
+#include <memory>
+#include <mutex>
+#include <unordered_set>
 #include <vector>
 
-#include <osmscout/TypeSet.h>
+#include <osmscout/TypeConfig.h>
 
 #include <osmscout/util/FileScanner.h>
-#include <osmscout/util/HashSet.h>
 
 namespace osmscout {
 
   /**
+    \ingroup Database
     AreaWayIndex allows you to find ways and way relations in
     a given area.
 
@@ -37,67 +40,72 @@ namespace osmscout {
     */
   class OSMSCOUT_API AreaWayIndex
   {
+  public:
+    static const char* AREA_WAY_IDX;
+
   private:
     struct TypeData
     {
-      uint32_t   indexLevel;
+      TypeInfoRef type;
+      uint32_t    indexLevel;
 
-      uint8_t    dataOffsetBytes;
-      FileOffset bitmapOffset;
+      uint8_t     dataOffsetBytes;
+      FileOffset  bitmapOffset;
 
-      uint32_t   cellXStart;
-      uint32_t   cellXEnd;
-      uint32_t   cellYStart;
-      uint32_t   cellYEnd;
-      uint32_t   cellXCount;
-      uint32_t   cellYCount;
+      uint32_t    cellXStart;
+      uint32_t    cellXEnd;
+      uint32_t    cellYStart;
+      uint32_t    cellYEnd;
+      uint32_t    cellXCount;
+      uint32_t    cellYCount;
 
-      double     cellWidth;
-      double     cellHeight;
+      double      cellWidth;
+      double      cellHeight;
 
-      double     minLon;
-      double     maxLon;
-      double     minLat;
-      double     maxLat;
-
+      double      minLon;
+      double      maxLon;
+      double      minLat;
+      double      maxLat;
 
       TypeData();
+
+      FileOffset GetDataOffset() const;
+      FileOffset GetCellOffset(size_t x, size_t y) const;
     };
 
   private:
-    std::string           filepart;       //! name of the data file
-    std::string           datafilename;   //! Full path and name of the data file
-    mutable FileScanner   scanner;        //! Scanner instance for reading this file
+    std::string           datafilename;   //!< Full path and name of the data file
+    mutable FileScanner   scanner;        //!< Scanner instance for reading this file
 
     std::vector<TypeData> wayTypeData;
 
+    mutable std::mutex    lookupMutex;
+
   private:
     bool GetOffsets(const TypeData& typeData,
-                    double minlon,
-                    double minlat,
-                    double maxlon,
-                    double maxlat,
-                    size_t maxWayCount,
-                    OSMSCOUT_HASHSET<FileOffset>& offsets,
-                    size_t currentSize,
-                    bool& sizeExceeded) const;
+                    const GeoBox& boundingBox,
+                    std::unordered_set<FileOffset>& offsets) const;
 
   public:
     AreaWayIndex();
+    virtual ~AreaWayIndex();
 
     void Close();
-    bool Load(const std::string& path);
+    bool Open(const TypeConfigRef& typeConfig,
+              const std::string& path);
 
-    bool GetOffsets(double minlon,
-                    double minlat,
-                    double maxlon,
-                    double maxlat,
-                    const std::vector<TypeSet>& wayTypes,
-                    size_t maxWayCount,
-                    std::vector<FileOffset>& offsets) const;
+    inline bool IsOpen() const
+    {
+      return scanner.IsOpen();
+    }
 
-    void DumpStatistics();
+    bool GetOffsets(const GeoBox& boundingBox,
+                    const TypeInfoSet& types,
+                    std::vector<FileOffset>& offsets,
+                    TypeInfoSet& loadedTypes) const;
   };
+
+  typedef std::shared_ptr<AreaWayIndex> AreaWayIndexRef;
 }
 
 #endif

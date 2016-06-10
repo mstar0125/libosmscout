@@ -4,7 +4,8 @@ nobase_include_HEADERS= osmscout/private/Config.h \
                         osmscout/oss/Parser.h \
                         osmscout/MapFeatures.h \
                         osmscout/MapPainter.h \
+                        osmscout/MapParameter.h \
                         osmscout/StyleConfig.h \
-                        osmscout/StyleConfigLoader.h
-                     
-
+                        osmscout/TiledDataCache.h \
+                        osmscout/MapService.h \
+                        osmscout/MapPainterNoOp.h

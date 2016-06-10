@@ -22,8 +22,9 @@
 #include <iomanip>
 
 #include <osmscout/Database.h>
+#include <osmscout/MapService.h>
+
 #include <osmscout/MapPainterSVG.h>
-#include <osmscout/StyleConfigLoader.h>
 
 /*
   Example for the nordrhein-westfalen.osm (to be executed in the Demos top
@@ -38,9 +39,10 @@ int main(int argc, char* argv[])
 {
   std::string   map;
   std::string   style;
-  double        latTop,latBottom,lonLeft,lonRight;
+  double        lat,lon;
   double        zoom;
   size_t        width;
+  size_t        height;
   std::string   output;
 
   if (argc!=10) {
@@ -54,22 +56,22 @@ int main(int argc, char* argv[])
   map=argv[1];
   style=argv[2];
 
-  if (sscanf(argv[3],"%lf",&latTop)!=1) {
+  if (!osmscout::StringToNumber(argv[3],width)) {
+    std::cerr << "width is not numeric!" << std::endl;
+    return 1;
+  }
+
+  if (!osmscout::StringToNumber(argv[4],height)) {
+    std::cerr << "height is not numeric!" << std::endl;
+    return 1;
+  }
+
+  if (sscanf(argv[5],"%lf",&lon)!=1) {
     std::cerr << "lon is not numeric!" << std::endl;
     return 1;
   }
 
-  if (sscanf(argv[4],"%lf",&lonLeft)!=1) {
-    std::cerr << "lat is not numeric!" << std::endl;
-    return 1;
-  }
-
-  if (sscanf(argv[5],"%lf",&latBottom)!=1) {
-    std::cerr << "lon is not numeric!" << std::endl;
-    return 1;
-  }
-
-  if (sscanf(argv[6],"%lf",&lonRight)!=1) {
+  if (sscanf(argv[6],"%lf",&lat)!=1) {
     std::cerr << "lat is not numeric!" << std::endl;
     return 1;
   }
@@ -79,28 +81,23 @@ int main(int argc, char* argv[])
     return 1;
   }
 
-  if (!osmscout::StringToNumber(argv[8],width)) {
-    std::cerr << "width is not numeric!" << std::endl;
-    return 1;
-  }
-
-  output=argv[9];
+  output=argv[8];
 
   osmscout::DatabaseParameter databaseParameter;
 
-  databaseParameter.SetDebugPerformance(true);
+  osmscout::DatabaseRef       database(new osmscout::Database(databaseParameter));
+  osmscout::MapServiceRef     mapService(new osmscout::MapService(database));
 
-  osmscout::Database          database(databaseParameter);
 
-  if (!database.Open(map.c_str())) {
+  if (!database->Open(map.c_str())) {
     std::cerr << "Cannot open database" << std::endl;
 
     return 1;
   }
 
-  osmscout::StyleConfig styleConfig(database.GetTypeConfig());
+  osmscout::StyleConfigRef styleConfig(new osmscout::StyleConfig(database->GetTypeConfig()));
 
-  if (!osmscout::LoadStyleConfig(style.c_str(),styleConfig)) {
+  if (!styleConfig->Load(style)) {
     std::cerr << "Cannot open style" << std::endl;
   }
 
@@ -114,52 +111,27 @@ int main(int argc, char* argv[])
   osmscout::MapParameter        drawParameter;
   osmscout::AreaSearchParameter searchParameter;
   osmscout::MapData             data;
-  osmscout::MapPainterSVG       painter;
+  osmscout::MapPainterSVG       painter(styleConfig);
 
   drawParameter.SetFontName("sans-serif");
   drawParameter.SetFontSize(2.0);
   drawParameter.SetDebugPerformance(true);
 
-  projection.Set(std::min(lonLeft,lonRight),
-                 std::min(latTop,latBottom),
-                 std::max(lonLeft,lonRight),
-                 std::max(latTop,latBottom),
-                 zoom,
-                 width);
+  projection.Set(lon,
+                 lat,
+                 osmscout::Magnification(zoom),
+                 width,
+                 height);
 
-  osmscout::TypeSet              nodeTypes;
-  std::vector<osmscout::TypeSet> wayTypes;
-  osmscout::TypeSet              areaTypes;
-
-  styleConfig.GetNodeTypesWithMaxMag(projection.GetMagnification(),
-                                     nodeTypes);
-
-  styleConfig.GetWayTypesByPrioWithMaxMag(projection.GetMagnification(),
-                                          wayTypes);
-
-  styleConfig.GetAreaTypesWithMaxMag(projection.GetMagnification(),
-                                     areaTypes);
-
-  database.GetObjects(nodeTypes,
-                      wayTypes,
-                      areaTypes,
-                      projection.GetLonMin(),
-                      projection.GetLatMin(),
-                      projection.GetLonMax(),
-                      projection.GetLatMax(),
-                      projection.GetMagnification(),
-                      searchParameter,
-                      data.nodes,
-                      data.ways,
-                      data.areas);
-
-  searchParameter.SetMaximumNodes(std::numeric_limits<size_t>::max());
-  searchParameter.SetMaximumWays(std::numeric_limits<size_t>::max());
-  searchParameter.SetMaximumAreas(std::numeric_limits<size_t>::max());
   searchParameter.SetMaximumAreaLevel(6);
 
-  painter.DrawMap(styleConfig,
-                  projection,
+  std::list<osmscout::TileRef> tiles;
+
+  mapService->LookupTiles(projection,tiles);
+  mapService->LoadMissingTileData(searchParameter,*styleConfig,tiles);
+  mapService->ConvertTilesToMapData(tiles,data);
+
+  painter.DrawMap(projection,
                   drawParameter,
                   data,
                   stream);

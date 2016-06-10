@@ -20,15 +20,19 @@
   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307  USA
 */
 
+#include <memory>
+#include <mutex>
 #include <vector>
 
-#include <osmscout/TypeSet.h>
+#include <osmscout/TypeConfig.h>
 
 #include <osmscout/util/FileScanner.h>
 
 namespace osmscout {
 
   /**
+    \ingroup Database
+
     AreaWayIndex allows you to find ways and way relations in
     a given area.
 
@@ -36,6 +40,9 @@ namespace osmscout {
     */
   class OSMSCOUT_API AreaNodeIndex
   {
+  public:
+    static const char* AREA_NODE_IDX;
+
   private:
     struct TypeData
     {
@@ -60,42 +67,42 @@ namespace osmscout {
       double     maxLat;
 
       TypeData();
+
+      FileOffset GetDataOffset() const;
+      FileOffset GetCellOffset(size_t x, size_t y) const;
     };
 
   private:
-    std::string           filepart;       //! name of the data file
-    std::string           datafilename;   //! Full path and name of the data file
-    mutable FileScanner   scanner;        //! Scanner instance for reading this file
+    std::string           datafilename;   //!< Full path and name of the data file
+    mutable FileScanner   scanner;        //!< Scanner instance for reading this file
 
     std::vector<TypeData> nodeTypeData;
 
+    mutable std::mutex    lookupMutex;
+
   private:
     bool GetOffsets(const TypeData& typeData,
-                    double minlon,
-                    double minlat,
-                    double maxlon,
-                    double maxlat,
-                    size_t maxNodeCount,
-                    std::vector<FileOffset>& offsets,
-                    size_t currentSize,
-                    bool& sizeExceeded) const;
+                    const GeoBox& boundingBox,
+                    std::vector<FileOffset>& offsets) const;
 
   public:
     AreaNodeIndex();
 
     void Close();
-    bool Load(const std::string& path);
+    bool Open(const std::string& path);
 
-    bool GetOffsets(double minlon,
-                    double minlat,
-                    double maxlon,
-                    double maxlat,
-                    const TypeSet& nodeTypes,
-                    size_t maxNodeCount,
-                    std::vector<FileOffset>& nodeOffsets) const;
+    inline bool IsOpen() const
+    {
+      return scanner.IsOpen();
+    }
 
-    void DumpStatistics();
+    bool GetOffsets(const GeoBox& boundingBox,
+                    const TypeInfoSet& requestedTypes,
+                    std::vector<FileOffset>& offsets,
+                    TypeInfoSet& loadedTypes) const;
   };
+
+  typedef std::shared_ptr<AreaNodeIndex> AreaNodeIndexRef;
 }
 
 #endif

@@ -52,10 +52,12 @@ namespace osmscout {
     };
 
   public:
-    std::string GetDescription() const;
-    bool Import(const ImportParameter& parameter,
-                Progress& progress,
-                const TypeConfig& typeConfig);
+    void GetDescription(const ImportParameter& parameter,
+                        ImportModuleDescription& description) const;
+
+    bool Import(const TypeConfigRef& typeConfig,
+                const ImportParameter& parameter,
+                Progress& progress);
   };
 }
 

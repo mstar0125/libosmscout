@@ -11,20 +11,21 @@
 #include <cmath>
 
 #include "osmscout/MapPainterIOS.h"
+#include "osmscout/util/Tiling.h"
 #include "OSMScout.h"
 
 namespace osmscout {
     
-    OSMScoutCPP::OSMScoutCPP(const char *cDir) : database(databaseParameter),vehicle(vehicleCar),router(routerParameter, vehicleCar),description(NULL),map(cDir),styleConfig(NULL),isMapPainterConfigured(false),loadedMagnification(0),loadedLatMax(0),loadedLonMax(0),loadedLatMin(0),loadedLonMin(0){
+    OSMScoutCpp::OSMScoutCpp(const char *cDir) : database(new Database(databaseParameter)),map(cDir),styleConfig(NULL),isMapPainterConfigured(false),loadedMagnification(0),loadedLatMax(0),loadedLonMax(0),loadedLatMin(0),loadedLonMin(0),
+        mapService(new MapService(database)),dpi(96.0){
     }
     
-    OSMScoutCPP::~OSMScoutCPP(){
-        database.Close();
-        router.Close();
+    OSMScoutCpp::~OSMScoutCpp(){
+        database->Close();
     }
 
-    bool OSMScoutCPP::initDraw(size_t dpi) {
-        if (!database.IsOpen() && !database.Open(map.c_str())) {
+    bool OSMScoutCpp::initDraw(double initDpi) {
+        if (!database->IsOpen() && !database->Open(map.c_str())) {
             std::cerr << "Cannot open database" << std::endl;
             
             return false;
@@ -33,15 +34,16 @@ namespace osmscout {
         if (!styleConfig){
             std::string style = map.c_str();
             style += "/standard.oss";
-            styleConfig=new StyleConfig(database.GetTypeConfig());
-            if (!LoadStyleConfig(style.c_str(),*styleConfig)) {
+            styleConfig=StyleConfigRef(new StyleConfig(database->GetTypeConfig()));
+            if (!styleConfig->Load(style)) {
                 std::cerr << "Cannot open style" << std::endl;
                 return false;
             }
         }
         
         if(!isMapPainterConfigured){
-            mapPainter = new osmscout::MapPainterIOS();
+            dpi = initDpi;
+            mapPainter = new osmscout::MapPainterIOS(styleConfig);
             drawParameter.SetFontName("GillSans");
             drawParameter.SetFontSize(1.5);
             std::list<std::string> paths;
@@ -49,86 +51,45 @@ namespace osmscout {
             paths.push_back([path UTF8String]);
             drawParameter.SetIconPaths(paths);
             drawParameter.SetPatternPaths(paths);
-            drawParameter.SetDPI(dpi);
             drawParameter.SetRenderSeaLand(true);
             drawParameter.SetDebugPerformance(false);
-            searchParameter.SetMaximumNodes(30000);
-            drawBreaker = new MyBreaker();
+            drawBreaker = std::shared_ptr<MyBreaker>(new MyBreaker());
             drawParameter.SetBreaker(drawBreaker);
+            drawParameter.SetDropNotVisiblePointLabels(false);
             searchParameter.SetBreaker(drawBreaker);
             isMapPainterConfigured = true;
         }
         return true;
     }
     
-    void OSMScoutCPP::drawMap(CGContextRef paintCG, double lat, double lon, double zoom, size_t width, size_t height){
+    void OSMScoutCpp::drawMap(CGContextRef paintCG, size_t x, size_t y, double zoom, size_t width, size_t height){
         assert(isMapPainterConfigured);
-        projection.Set(lon, lat, zoom, (width+1), (height+1));
+        Magnification mag(zoom);
+        projection.Set(x, y, mag, dpi, (width+1), (height+1));
+        GeoBox boundingBox;
         
-        TypeSet              nodeTypes;
-        std::vector<TypeSet> wayTypes;
-        TypeSet              areaTypes;
+        std::list<osmscout::TileRef> tiles;
+        mapService->LookupTiles(projection,tiles);
+        mapService->LoadMissingTileData(searchParameter,*styleConfig,tiles);
+        mapService->ConvertTilesToMapData(tiles,data);
+        if (drawParameter.GetRenderSeaLand()) {
+            mapService->GetGroundTiles(boundingBox,
+                                       mag,
+                                       data.groundTiles);
+        }
         
-        styleConfig->GetNodeTypesWithMaxMag(projection.GetMagnification(), nodeTypes);
-        styleConfig->GetWayTypesByPrioWithMaxMag(projection.GetMagnification(), wayTypes);
-        styleConfig->GetAreaTypesWithMaxMag(projection.GetMagnification(), areaTypes);
-        
-        double lon1,lat1,lon2,lat2;
-        projection.GetDimensions(lon1, lat1, lon2, lat2);
-        if(projection.GetMagnification() == loadedMagnification &&
-           !(lon2>loadedLonMax ||
-             lon1<loadedLonMin ||
-             lat2>loadedLatMax ||
-             lat1<loadedLatMin)){
-               std::cout<<"DrawMap at ("<<lon<<","<<lat<<") using cached data"<<std::endl;
-           } else {
-               loadedLonMin = lon1;
-               loadedLatMin = lat1;
-               loadedLonMax = lon2;
-               loadedLatMax = lat2;
-               double deltaLon = loadedLonMax - loadedLonMin;
-               loadedLonMin -= 2*deltaLon;
-               loadedLonMax += 2*deltaLon;
-               double deltaLat = loadedLatMax - loadedLatMin;
-               loadedLatMin -= 2*deltaLat;
-               loadedLatMax += 2*deltaLat;
-               loadedMagnification = projection.GetMagnification();
-               std::cout<<"DrawMap at ("<<lon<<","<<lat<<") loading data for ("<<loadedLonMin<<","<<loadedLatMin<<"),(" <<loadedLonMax<<","<<loadedLatMax<<")"<<std::endl;
-               database.FlushCache();
-               database.GetObjects(nodeTypes,
-                                   wayTypes,
-                                   areaTypes,
-                                   loadedLonMin,
-                                   loadedLatMin,
-                                   loadedLonMax,
-                                   loadedLatMax,
-                                   loadedMagnification,
-                                   searchParameter,
-                                   data.nodes,
-                                   data.ways,
-                                   data.areas);
-               
-               if (drawParameter.GetRenderSeaLand()) {
-                   database.GetGroundTiles(loadedLonMin,
-                                           loadedLatMin,
-                                           loadedLonMax,
-                                           loadedLatMax,
-                                           loadedMagnification,
-                                           data.groundTiles);
-               }
-           }
         mapPainter->DrawMap(*styleConfig, projection, drawParameter, data, paintCG);
     }
     
     
-    void OSMScoutCPP::abortDrawing(){
+    void OSMScoutCpp::abortDrawing(){
         if(drawBreaker){
             std::cout<<"abortDrawing !"<<std::endl;
             drawBreaker->Break();
         }
     }
     
-    void OSMScoutCPP::drawingBreakerReset(){
+    void OSMScoutCpp::drawingBreakerReset(){
         if(drawBreaker){
             std::cout<<"drawingBreakerReset"<<std::endl;
             drawBreaker->Reset();
@@ -139,16 +100,16 @@ namespace osmscout {
 }
 
 @interface OSMScout ()
-@property (nonatomic, readwrite, assign) osmscout::OSMScoutCPP *osmScout;
+@property (nonatomic, readwrite, assign) osmscout::OSMScoutCpp *osmScout;
 @end
 
 @implementation OSMScout
-@synthesize osmScout = _osmScoutCPP;
+@synthesize osmScout = _osmScoutCpp;
 
 static OSMScout* osmScoutInstance = nil;
 static NSString* osmScoutRootPath = @"";
 
-+(OSMScout *)OSMScoutWithPath:(NSString *)path dpi:(size_t)dpi {
++(OSMScout *)OSMScoutWithPath:(NSString *)path dpi:(double)dpi {
     if(!osmScoutInstance){
         osmScoutRootPath = [path copy];
         osmScoutInstance = [[self alloc] initWithPath:osmScoutRootPath dpi:dpi];
@@ -158,30 +119,27 @@ static NSString* osmScoutRootPath = @"";
     return osmScoutInstance;
 }
 
--(id)initWithPath:(NSString *)path dpi:(size_t)dpi {
+-(id)initWithPath:(NSString *)path dpi:(double)dpi {
     if((self = [super init])){
-        _osmScoutCPP = new osmscout::OSMScoutCPP([path UTF8String]);
-        _osmScoutCPP->initDraw(dpi);
+        _osmScoutCpp = new osmscout::OSMScoutCpp([path UTF8String]);
+        _osmScoutCpp->initDraw(dpi);
     }
     return self;
 }
 -(void)dealloc{
-    delete _osmScoutCPP;
-#if !__has_feature(objc_arc)
-    [super dealloc];
-#endif
+    delete _osmScoutCpp;
 }
 
--(void)drawMapTo: (CGContextRef)cg lat:(CLLocationDegrees)lat lon:(CLLocationDegrees)lon zoom: (double) zoom width: (CGFloat) width height: (CGFloat) height {
-    _osmScoutCPP->drawMap(cg, lat, lon, zoom, width, height);
+-(void)drawMapTo: (CGContextRef)cg x:(NSUInteger)x y:(NSUInteger)y zoom: (double) zoom width: (CGFloat) width height: (CGFloat) height {
+    _osmScoutCpp->drawMap(cg, x, y, zoom, width, height);
 }
 
 -(void)abortDrawing {
-    _osmScoutCPP->abortDrawing();
+    _osmScoutCpp->abortDrawing();
 }
 
 -(void)drawingBreakerReset {
-    _osmScoutCPP->drawingBreakerReset();
+    _osmScoutCpp->drawingBreakerReset();
 }
 
 

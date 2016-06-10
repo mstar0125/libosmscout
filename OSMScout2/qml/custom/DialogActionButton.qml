@@ -1,11 +1,14 @@
 import QtQuick 2.2
 
+import net.sf.libosmscout.map 1.0
+
 Rectangle {
   id: dialogActionButton
   
   property color contentColor: "lightblue"
   property color contentHoverColor: Qt.darker(contentColor, 1.1)
   property color borderColor: Qt.darker(contentColor, 1.1)
+  property color textColor: "black"
 
   property alias text: label.text
   
@@ -37,7 +40,8 @@ Rectangle {
   
   Text {
     id: label
+    font.pixelSize: Theme.textFontSize
     anchors.centerIn: parent
-    color: "black"
+    color: textColor
   }
 }

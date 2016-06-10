@@ -22,6 +22,7 @@
 
 #include <ostream>
 #include <map>
+#include <unordered_map>
 #include <set>
 
 #include <osmscout/MapSVGFeatures.h>
@@ -32,8 +33,6 @@
 
 #include <osmscout/private/MapSVGImportExport.h>
 
-#include <osmscout/util/HashMap.h>
-
 #include <osmscout/MapPainter.h>
 
 namespace osmscout {
@@ -43,7 +42,7 @@ namespace osmscout {
   private:
     CoordBufferImpl<Vertex2D>        *coordBuffer;
 #if defined(OSMSCOUT_MAP_SVG_HAVE_LIB_PANGO)
-    typedef OSMSCOUT_HASHMAP<size_t,PangoFontDescription*>  FontMap;          //! Map type for mapping  font sizes to font
+    typedef std::unordered_map<size_t,PangoFontDescription*>  FontMap;          //! Map type for mapping  font sizes to font
 
     PangoFontMap                     *pangoFontMap;
     PangoContext                     *pangoContext;
@@ -52,13 +51,14 @@ namespace osmscout {
      std::map<FillStyle,std::string> fillStyleNameMap;
      std::map<LineStyle,std::string> lineStyleNameMap;
      std::ostream                    stream;
-     const TypeConfig                *typeConfig;
+     TypeConfigRef                   typeConfig;
 
   private:
     std::string GetColorValue(const Color& color);
 
 #if defined(OSMSCOUT_MAP_SVG_HAVE_LIB_PANGO)
-    PangoFontDescription* GetFont(const MapParameter& parameter,
+    PangoFontDescription* GetFont(const Projection& projection,
+                                  const MapParameter& parameter,
                                   double fontSize);
 #endif
 
@@ -91,7 +91,13 @@ namespace osmscout {
                  const MapParameter& parameter,
                  IconStyle& style);
 
-    void GetTextDimension(const MapParameter& parameter,
+    void GetFontHeight(const Projection& projection,
+                       const MapParameter& parameter,
+                       double fontSize,
+                       double& height);
+
+    void GetTextDimension(const Projection& projection,
+                          const MapParameter& parameter,
                           double fontSize,
                           const std::string& text,
                           double& xOff,
@@ -159,12 +165,11 @@ namespace osmscout {
                   const AreaData& area);
 
   public:
-    MapPainterSVG();
+    MapPainterSVG(const StyleConfigRef& styleConfig);
     virtual ~MapPainterSVG();
 
 
-    bool DrawMap(const StyleConfig& styleConfig,
-                 const Projection& projection,
+    bool DrawMap(const Projection& projection,
                  const MapParameter& parameter,
                  const MapData& data,
                  std::ostream& stream);

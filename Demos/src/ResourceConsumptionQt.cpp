@@ -24,8 +24,9 @@
 #include <QApplication>
 
 #include <osmscout/Database.h>
+#include <osmscout/MapService.h>
+
 #include <osmscout/MapPainterQt.h>
-#include <osmscout/StyleConfigLoader.h>
 
 #include <osmscout/util/StopClock.h>
 
@@ -47,6 +48,8 @@ void DumpHelp()
 {
   std::cerr << "ResourceConsumptionQt <map directory> <style-file> <width> <height> [<lat> <lon> <zoom>]..." << std::endl;
 }
+
+static const double DPI=96.0;
 
 int main(int argc, char* argv[])
 {
@@ -133,32 +136,28 @@ int main(int argc, char* argv[])
   databaseParameter.SetAreaAreaIndexCacheSize(0);
   databaseParameter.SetAreaNodeIndexCacheSize(0);
 
-  databaseParameter.SetNodeCacheSize(0);
-  databaseParameter.SetWayCacheSize(0);
-  databaseParameter.SetAreaCacheSize(0);
+  osmscout::DatabaseRef   database(new osmscout::Database(databaseParameter));
+  osmscout::MapServiceRef mapService(new osmscout::MapService(database));
 
-  osmscout::Database          database(databaseParameter);
-
-  if (!database.Open(map.c_str())) {
+  if (!database->Open(map.c_str())) {
     std::cerr << "Cannot open database" << std::endl;
 
     return 1;
   }
 
-  database.DumpStatistics();
+  database->DumpStatistics();
 
-  osmscout::StyleConfig styleConfig(database.GetTypeConfig());
+  osmscout::StyleConfigRef styleConfig(new osmscout::StyleConfig(database->GetTypeConfig()));
 
-  if (!osmscout::LoadStyleConfig(style.c_str(),styleConfig)) {
+  if (!styleConfig->Load(style)) {
     std::cerr << "Cannot open style" << std::endl;
   }
-
 
   osmscout::MercatorProjection  projection;
   osmscout::MapParameter        drawParameter;
   osmscout::AreaSearchParameter searchParameter;
   osmscout::MapData             data;
-  osmscout::MapPainterQt        mapPainter;
+  osmscout::MapPainterQt        mapPainter(styleConfig);
 
   for (std::vector<Action>::const_iterator action=actions.begin();
        action!=actions.end();
@@ -168,44 +167,24 @@ int main(int argc, char* argv[])
 
     projection.Set(action->lon,
                    action->lat,
-                   action->magnification,
+                   osmscout::Magnification(action->magnification),
+                   DPI,
                    width,
                    height);
 
-    osmscout::TypeSet              nodeTypes;
-    std::vector<osmscout::TypeSet> wayTypes;
-    osmscout::TypeSet              areaTypes;
-
-    styleConfig.GetNodeTypesWithMaxMag(projection.GetMagnification(),
-                                       nodeTypes);
-
-    styleConfig.GetWayTypesByPrioWithMaxMag(projection.GetMagnification(),
-                                            wayTypes);
-
-    styleConfig.GetAreaTypesWithMaxMag(projection.GetMagnification(),
-                                       areaTypes);
-
     osmscout::StopClock dbTimer;
 
-    database.GetObjects(nodeTypes,
-                        wayTypes,
-                        areaTypes,
-                        projection.GetLonMin(),
-                        projection.GetLatMin(),
-                        projection.GetLonMax(),
-                        projection.GetLatMax(),
-                        projection.GetMagnification(),
-                        searchParameter,
-                        data.nodes,
-                        data.ways,
-                        data.areas);
+    std::list<osmscout::TileRef> tiles;
+
+    mapService->LookupTiles(projection,tiles);
+    mapService->LoadMissingTileData(searchParameter,*styleConfig,tiles);
+    mapService->ConvertTilesToMapData(tiles,data);
 
     dbTimer.Stop();
 
     osmscout::StopClock renderTimer;
 
-    mapPainter.DrawMap(styleConfig,
-                       projection,
+    mapPainter.DrawMap(projection,
                        drawParameter,
                        data,
                        painter);
@@ -213,17 +192,11 @@ int main(int argc, char* argv[])
     renderTimer.Stop();
 
     std::cout << "# DB access time " << dbTimer << " render time: " << renderTimer << std::endl;
-    database.DumpStatistics();
+    database->DumpStatistics();
   }
 
   delete painter;
   delete pixmap;
-
-  std::cout << "# Press return to flush caches" << std::endl;
-
-  std::cin.get();
-
-  database.FlushCache();
 
   std::cout << "# Press return to end application" << std::endl;
 

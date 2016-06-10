@@ -26,12 +26,16 @@
 
 #include <osmscout/MapPainter.h>
 
-#if defined(OSMSCOUT_MAP_OPENGL_HAVE_GL_GLUT_H)
-#  include <GL/glut.h>
-#elif defined(OSMSCOUT_MAP_OPENGL_HAVE_GLUT_GLUT_H)
-#  include <GLUT/glut.h>
+#if defined(__APPLE__) && defined(__MACH__)
+  #include <GLUT/glut.h>
 #else
-#  error "no glut.h"
+  #if defined(OSMSCOUT_MAP_OPENGL_HAVE_GL_GLUT_H)
+    #include <GL/glut.h>
+  #elif defined(OSMSCOUT_MAP_OPENGL_HAVE_GLUT_GLUT_H)
+    #include <GLUT/glut.h>
+  #else
+    #error "no glut.h"
+  #endif
 #endif
 
 namespace osmscout {
@@ -50,7 +54,13 @@ namespace osmscout {
     bool HasPattern(const MapParameter& parameter,
                     const FillStyle& style);
 
-    void GetTextDimension(const MapParameter& parameter,
+    void GetFontHeight(const Projection& projection,
+                       const MapParameter& parameter,
+                       double fontSize,
+                       double& height);
+
+    void GetTextDimension(const Projection& projection,
+                          const MapParameter& parameter,
                           double fontSize,
                           const std::string& text,
                           double& xOff,
@@ -109,11 +119,10 @@ namespace osmscout {
                   const AreaData& area);
 
   public:
-    MapPainterOpenGL();
+    MapPainterOpenGL(const StyleConfigRef& styleConfig);
     virtual ~MapPainterOpenGL();
 
-    bool DrawMap(const StyleConfig& styleConfig,
-                 const Projection& projection,
+    bool DrawMap(const Projection& projection,
                  const MapParameter& parameter,
                  const MapData& data);
   };

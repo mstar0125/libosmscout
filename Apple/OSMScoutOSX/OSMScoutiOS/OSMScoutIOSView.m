@@ -13,16 +13,17 @@
 
 // This should reference OSM data generated with the OSMScout Import tool
 // used when targeting the iPhone simulator 
-#define OSMSCOUTDATA @"/Users/vlad/Desktop/France"
+#define OSMSCOUTDATA @"/Users/mac/Desktop/libosmscout/Apple/andorra"
 // The center of the displayed map
-#define LATITUDE 43.694417
-#define LONGITUDE 7.279332
+#define LATITUDE 42.506285
+#define LONGITUDE 1.521801
 // The zoom level
 #define ZOOM 16
 
 -(void)defaults {
-    [self setCenterCoordinate:CLLocationCoordinate2DMake(LATITUDE, LONGITUDE)];
-    [self setRegion:MKCoordinateRegionMakeWithDistance(self.centerCoordinate, 2000, 2000)];
+    CLLocationCoordinate2D centerCoordinate = CLLocationCoordinate2DMake(LATITUDE, LONGITUDE);
+    MKCoordinateSpan span = MKCoordinateSpanMake(0, 360/pow(2, ZOOM)*self.frame.size.width/256);
+    [self setRegion:MKCoordinateRegionMake(centerCoordinate, span) animated:NO];
     self.delegate = self;
     OSMScoutMKTileOverlay *overlay = [[OSMScoutMKTileOverlay alloc] initWithURLTemplate: nil];
 #if TARGET_IPHONE_SIMULATOR
@@ -31,13 +32,7 @@
     NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
     overlay.path = [paths objectAtIndex:0];
 #endif
-    overlay.canReplaceMapContent = YES;
-    overlay.minimumZ = 1;
-    overlay.maximumZ = 21;
-    overlay.geometryFlipped = YES;
-    [self insertOverlay:overlay atIndex:0 level:MKOverlayLevelAboveLabels];
     tileOverlay = overlay;
-    
     [self insertOverlay:tileOverlay atIndex:0 level:MKOverlayLevelAboveLabels];
 }
 

@@ -24,13 +24,24 @@
 
 #include <osmscout/system/Types.h>
 
+#include <osmscout/util/Number.h>
+
 namespace osmscout {
 
+  /**
+   * \ingroup Geometry
+   *
+   * Representation of a pixel on a display or a plane.
+   * Coordinates are non-negative, values are decimal.
+   */
   struct OSMSCOUT_API Pixel
   {
     uint32_t x;
     uint32_t y;
 
+    /**
+     * The default constructor creates an uninitialized instance (for performance reasons).
+     */
     inline Pixel()
     {
       // no code
@@ -52,14 +63,32 @@ namespace osmscout {
       return y<other.y ||
       (y==other.y && x<other.x);
     }
+
+    /**
+     * Returns a unique number based on the coordinates of the pixel. The bits of the coordinates
+     * are projected onto one number by interleaving the bits of the coordinates. Coordinates close
+     * in 2D space are thus likely clos ein one dimensional space, too.
+     */
+    inline uint64_t GetId() const
+    {
+      return InterleaveNumbers(x,y);
+    }
   };
 
-  struct OSMSCOUT_API Vertex2D
+  /**
+   * \ingroup Geometry
+   * Two dimensional coordinate (floating point values,
+   * negative coordinates possible).
+   */
+  class OSMSCOUT_API Vertex2D
   {
   private:
     double coords[2];
 
   public:
+    /**
+     * The default constructor creates an uninitialized instance (for performance reasons).
+     */
     inline Vertex2D()
     {
       // no code
@@ -118,7 +147,12 @@ namespace osmscout {
     }
   };
 
-  struct OSMSCOUT_API Vertex3D
+  /**
+   * \ingroup Geometry
+   * Three dimensional coordinate (floating point values,
+   * negative coordinates possible).
+   */
+  class OSMSCOUT_API Vertex3D
   {
   private:
     double x;
@@ -126,6 +160,9 @@ namespace osmscout {
     double z;
 
   public:
+    /**
+     * The default constructor creates an uninitialized instance (for performance reasons).
+     */
     inline Vertex3D()
     {
       // no code

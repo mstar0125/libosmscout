@@ -20,15 +20,18 @@
   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307  USA
 */
 
+#include <memory>
+#include <unordered_map>
+
+#include <osmscout/Tag.h>
 #include <osmscout/TypeConfig.h>
 
 #include <osmscout/util/FileScanner.h>
 #include <osmscout/util/FileWriter.h>
-#include <osmscout/util/Reference.h>
 
 namespace osmscout {
 
-  class RawRelation : public Referencable
+  class RawRelation
   {
   public:
     enum MemberType {
@@ -46,16 +49,14 @@ namespace osmscout {
 
   private:
     OSMId               id;
-    TypeId              type;
+    FeatureValueBuffer  featureValueBuffer;
 
   public:
-    std::vector<Tag>    tags;
     std::vector<Member> members;
 
   public:
     inline RawRelation()
-    : id(0),
-      type(typeIgnore)
+    : id(0)
     {
       // no code
     }
@@ -65,19 +66,49 @@ namespace osmscout {
       return id;
     }
 
-    inline TypeId GetType() const
+    inline TypeInfoRef GetType() const
     {
-      return type;
+      return featureValueBuffer.GetType();
+    }
+
+    inline size_t GetFeatureCount() const
+    {
+      return featureValueBuffer.GetType()->GetFeatureCount();
+    }
+
+    inline bool HasFeature(size_t idx) const
+    {
+      return featureValueBuffer.HasFeature(idx);
+    }
+
+    inline const FeatureInstance& GetFeature(size_t idx) const
+    {
+      return featureValueBuffer.GetType()->GetFeature(idx);
+    }
+
+    inline FeatureValue* GetFeatureValue(size_t idx) const
+    {
+      return featureValueBuffer.GetValue(idx);
+    }
+
+    inline const FeatureValueBuffer& GetFeatureValueBuffer() const
+    {
+      return featureValueBuffer;
     }
 
     void SetId(OSMId id);
-    void SetType(TypeId type);
+    void SetType(const TypeInfoRef& type);
 
-    bool Read(FileScanner& scanner);
-    bool Write(FileWriter& writer) const;
+    void Parse(Progress& progress,
+               const TypeConfig& typeConfig,
+               const TagMap& tags);
+    void Read(const TypeConfig& typeConfig,
+              FileScanner& scanner);
+    void Write(const TypeConfig& typeConfig,
+               FileWriter& writer) const;
   };
 
-  typedef Ref<RawRelation> RawRelationRef;
+  typedef std::shared_ptr<RawRelation> RawRelationRef;
 }
 
 #endif

@@ -1,4 +1,7 @@
-bin_PROGRAMS = LocationLookup \
+bin_PROGRAMS = DumpOSS \
+               LocationDescription \
+               LocationLookup \
+               ReverseLocationLookup \
                PerformanceTest \
                ResourceConsumption \
                Routing \
@@ -33,9 +36,23 @@ if OSMSCOUT_HAVE_LIB_MARISA
 bin_PROGRAMS += LookupText
 endif
 
+DumpOSS_SOURCES = DumpOSS.cpp
+DumpOSS_CXXFLAGS = $(LIBOSMSCOUTMAP_CFLAGS) \
+                   $(LIBOSMSCOUT_CFLAGS)
+DumpOSS_LDADD = $(LIBOSMSCOUTMAP_LIBS) \
+                $(LIBOSMSCOUT_LIBS)
+
 LocationLookup_SOURCES = LocationLookup.cpp
 LocationLookup_CXXFLAGS = $(LIBOSMSCOUT_CFLAGS)
 LocationLookup_LDADD = $(LIBOSMSCOUT_LIBS)
+
+LocationDescription_SOURCES = LocationDescription.cpp
+LocationDescription_CXXFLAGS = $(LIBOSMSCOUT_CFLAGS)
+LocationDescription_LDADD = $(LIBOSMSCOUT_LIBS)
+
+ReverseLocationLookup_SOURCES = ReverseLocationLookup.cpp
+ReverseLocationLookup_CXXFLAGS = $(LIBOSMSCOUT_CFLAGS)
+ReverseLocationLookup_LDADD = $(LIBOSMSCOUT_LIBS)
 
 DrawMapAgg_SOURCES = DrawMapAgg.cpp
 DrawMapAgg_CXXFLAGS = $(LIBOSMSCOUTMAPAGG_CFLAGS) \
@@ -86,10 +103,13 @@ LookupPOI_CXXFLAGS = $(LIBOSMSCOUT_CFLAGS)
 LookupPOI_LDADD = $(LIBOSMSCOUT_LIBS)
 
 PerformanceTest_SOURCES = PerformanceTest.cpp
-PerformanceTest_CXXFLAGS = $(LIBOSMSCOUTMAPCAIRO_CFLAGS) \
+PerformanceTest_CXXFLAGS = -fPIC \
+                           $(LIBOSMSCOUTMAPCAIRO_CFLAGS) \
+                           $(LIBOSMSCOUTMAPQT_CFLAGS) \
                            $(LIBOSMSCOUTMAP_CFLAGS) \
                            $(LIBOSMSCOUT_CFLAGS)
 PerformanceTest_LDADD = $(LIBOSMSCOUTMAPCAIRO_LIBS) \
+                        $(LIBOSMSCOUTMAPQT_LIBS) \
                         $(LIBOSMSCOUTMAP_LIBS) \
                         $(LIBOSMSCOUT_LIBS)
 

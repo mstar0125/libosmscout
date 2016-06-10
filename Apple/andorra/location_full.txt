@@ -1,0 +1,1415 @@
+ + Andorra Area 111213
+   = Juberri Node 724
+   = Mas d’Alins Node 823
+   = Fontaneda Node 1048
+   = Aubinyà Node 1173
+   = Aixirivall Node 1339
+   = Sant Julià de Lòria Node 1722
+   = Nagol Node 1956
+   = Llumeneres Node 1971
+   = Bixessarri Node 2373
+   = Aixàs Node 2393
+   = Aixovall Node 2420
+   = Certers Node 2540
+   * Sant Esteve de Bissisarri Area 150945
+   * Sant Martí Area 151251
+   * Husa Imperial Hotel Area 151614
+   * Sant Bartomeu Area 151938
+   * Parking comunal Area 151968
+   * centre esportiu de Sant Julia de Loria Area 152195
+   * Iglesia de Sant Julià i Sant Germà Area 152278
+   * Museu del Tabac Area 152331
+   * Sant Cerni de Nagol Area 158580
+   * Mare de Déu de les Neus Area 158664
+   * Sant Pere d'Aixirivall Area 158769
+   * Sant Romà d'Auvinyà Area 159721
+   * Sant Esteve de Mas d'Alins Area 200818
+   * Aparcament clients Area 201027
+   * Sant Esteve de Juberri Area 201517
+   * Naturlandia Area 203554
+   * la Rabassa Node 803
+   * Aparcament clients Node 905
+   * Hotel Coma Bella Node 941
+   * Area Autocaravanas  River Centre Comercial  Node 1102
+   * Hotel Sant Eloi Node 1286
+   * McDonald's Node 1319
+   * Pizzeria Uruguayana Node 1561
+   * Art i Pa Node 1636
+   * Pizzeria Angelo Node 1851
+   * Hotel Imperial Node 1876
+   * Bar Restaurant Xenius Node 1909
+   * Santuari de la Mare de Déu de Canòlic Node 2324
+   * Via ferrada Tossal Gran d'Aixovall Node 2455
+   - Camí d'Auvinyà
+     = Way 21255
+   - Carrer Carvajal de Hué
+     = Way 43470
+   - Carrer Francesc Carat
+     = Way 39483
+     = Way 42921
+   - Carrer de Loira
+     = Way 43422
+     = Way 43532
+   - Carretera Secundaria de la Rabassa
+     = Way 21898
+     = Way 26473
+   - Carretera d'Os de Civís
+     = Way 85187
+   - Carretera de Canòlich
+     = Way 17058
+   - Carretera de Collada de la Gallina
+     = Way 16293
+     = Way 16813
+     = Way 16963
+   - Carretera de Fontaneda
+     = Way 26297
+     = Way 26662
+     = Way 26709
+     = Way 37021
+   - Carretera de Mas d'Alins
+     = Way 6927
+     = Way 9061
+   - Carretera de la Rabassa
+     = Way 39572
+   - Marge i Terres No.2
+     = Way 12926
+   - Marge i Terres No.3
+     = Way 13345
+   - Plaça Major
+     = Way 39070
+       @ 4 Node 1561
+   - Plaça de la Germandat
+     = Area 152042
+       @ 7 Area 152145
+   - Pont de Faucellers
+     = Way 25932
+   - Tarteres del Mig Carretera 2
+     = Way 13262
+   - Terme Camp dels Mare de Deu
+     = Way 13826
+   - Termes de Tarteres
+     = Way 20344
+   - Terra Hortells tambe Caubella
+     = Way 13763
+   - avinguda Rocafort
+     = Way 43860
+   - carrer Casa Comuna
+     = Way 39268
+   - carrer Francesc Escudé
+     = Way 43617
+   - carrer de les Escoles
+     = Way 39356
+   - carretera General 1
+     = Way 59472
+     = Way 61334
+     = Way 62335
+   + Canillo Area 106127
+     = Meritxell Node 13104
+     = Prats Node 13317
+     = les Bordes d'Envalira Node 13737
+     = el Forn Node 14500
+     = Sant Joan de Caselles Node 14915
+     = l’Aldosa de Canillo Node 16532
+     = els Plans Node 16571
+     = Ransol Node 16762
+     = Soldeu Node 17135
+     = Sant Pere Node 17315
+     = el Tarter Node 17541
+     * Sant Serni Area 63322
+     * Càmping Casal Area 63413
+     * Càmping Pla Area 63546
+     * La Cantina dels Racons Area 63747
+     * Càmping Santa Creu Area 64984
+     * Sant Joan de Caselles Area 67027
+     * Museu de la Moto Area 67077
+     * Aparcament Aina Area 67188
+     * Apartahotel els Meners Area 67242
+     * Casa de colònies Aina Area 67295
+     * Càmping Janramon Area 67398
+     * El Saler Area 69479
+     * Placeta del Solat Area 69504
+     * Segle XX Area 69625
+     * Ermita de Sant Jaume Area 69652
+     * Borda De L'Hortó Area 69908
+     * Sant Pere del Tarter Area 70973
+     * Himalaia Soldeu Area 74567
+     * Piolets Area 74621
+     * BP Area 82838
+     * Sant Miquel de Prats Area 82873
+     * Santuari de Nostra Senyora de Maritxell Area 83975
+     * Santuari vell de Meritxell Area 84037
+     * L'Ermita Area 84086
+     * Refugi de Llosada Area 91696
+     * Toll Bullidor Node 10587
+     * Tosa de la Llosada Node 10678
+     * C. de les Solanelles Node 10796
+     * la Sangria Node 13018
+     * L'era del Rossell Node 13069
+     * Sector d'escalada de les Cascades del Torrent d'Urina Node 13188
+     * Cascada del Riu d'Urina Node 13251
+     * Roc de les Bruixes Node 13332
+     * el Forn Node 13360
+     * Portella Node 13430
+     * Tossa Dels Espiolets Node 13486
+     * Confort Node 13712
+     * Via ferrada Canal del Grau Node 14440
+     * Bona Estada Node 14517
+     * Grandvalira (Sector de Canillo) Node 14572
+     * Estructures Autogeneradores Node 14650
+     * Burger Roc Node 14705
+     * Font d'Argent Node 14751
+     * Ca la Padrina Node 14774
+     * Roc del Castell Node 14797
+     * Riba Escorxada Node 14963
+     * El Mercal Del Pi Node 14987
+     * Jardí de Riba Node 15021
+     * els Espiolets Node 15062
+     * Gall De Bosc Node 15102
+     * Espiolets Node 15124
+     * Steak House Node 15152
+     * Obac de Soldeu Node 15173
+     * Obac d'Envalira Node 15197
+     * Obac de Canillo Node 16450
+     * Obac del Tarter Node 16507
+     * bp Node 16622
+     * Camí de l'Obac Node 16642
+     * Grandvalira (Sector del Tarter) Node 16683
+     * La Dorada El Tarter Node 16733
+     * Grandvalira (Sector de Soldeu) Node 16858
+     * Sporthotel Village Node 16898
+     * Hotel Sport Node 16926
+     * Hotel Bruxelles Node 16947
+     * Bruxellles Restaurant Node 16972
+     * Hotel Naudi Node 17021
+     * Hotel Piolets Node 17057
+     * Hotel Himalaya Node 17080
+     * Hotel Himalaia Soldeu Node 17104
+     * Snackbar El Clos Node 17151
+     * Hotel Nordic Node 17248
+     * Hotel Del Tarter Node 17270
+     * l'Abarset Node 17296
+     * Mountain Tarter Hostel Node 17410
+     * Chalet Casale Node 17442
+     * Dylan's Node 17465
+     * Hotel Euro Esqui Node 17491
+     * Hotel Del Clos Node 17517
+     * Hotel Piolets et Spa Node 17560
+     * Estació esquí Parador Canaro Node 17590
+     * Restaurant Hotel Parador Canaro Node 17630
+     * Hotel Parador Canaro Node 17671
+     * la Soldanella Node 17701
+     * la Coma Node 17733
+     * Somriu Hotel Vall Ski Node 17750
+     * Hotel Roc de Sant Miquel Node 17790
+     * Esso Node 17824
+     * Hotel Sport Hermitage Node 17846
+     * Port Dret Node 17915
+     * Coll de Colts Node 17967
+     * Tosa d'Incles Node 18467
+     * Pleta dels Borrencs Node 18499
+     * Clot Sord Node 19097
+     * Obac d'Incles Node 19152
+     * Pont de la Baladosa Node 19175
+     * Picnic del Travenc Node 19233
+     * Tosa de Juclar Node 19261
+     * La Planada Node 19586
+     * Planells de Caraup Node 19702
+     * Pleta de la Cabana Sorda Node 19730
+     * Solana de Juclar Node 19796
+     * Obaga de Juclar Node 19842
+     * la Tosa de les Mussoles Node 20501
+     - Cami de la Costa de les Gerederes
+       = Way 289479
+       = Way 292588
+     - Cami de les Bordes de Mereig
+       = Way 321919
+     - Camí de l'Obac d'Incles
+       = Way 416769
+     - Carrer Major
+       = Way 327761
+     - Carrer Perdut
+       = Way 328062
+     - Carrer Prat del Riu
+       = Way 325697
+     - Carretera d'Entor
+       = Way 393836
+       = Way 393880
+       = Way 393921
+     - Carretera de Montaup
+       = Way 326928
+       = Way 329337
+       = Way 350595
+       = Way 351996
+       = Way 352041
+     - Carretera de Prats
+       = Way 327201
+     - Carretera de la Vall d'Incles
+       = Way 415097
+       = Way 419051
+       = Way 419138
+     - Carretera del Forn
+       = Way 323841
+     - Ctra. del Plans de Ransol
+       = Way 362048
+       = Way 362429
+     - Pont de Molleres
+       = Way 288948
+   + La Massana Area 107423
+     = Sispony Node 7534
+     = Anyós Node 7551
+     = el Cortalet Node 7620
+     = el Bosquet Node 7641
+     = Super Pal Node 9063
+     = Pal Node 9082
+     = Escàs Node 9104
+     = el Pui Node 9817
+     = l'Aldosa de la Massana Node 9993
+     = Xixerella Node 12492
+     = Puiol del Piu Node 14038
+     = Mas de Ribafeta Node 14304
+     = Erts Node 14329
+     = Arinsal Node 16071
+     * Sant Andreu del Prat Area 16179
+     * St. Gothard Area 17170
+     * Hotel Palomé Area 17284
+     * Sant Climent Area 20284
+     * Parking Area 28126
+     * ELF Gasstaation Area 28728
+     * Restaurant del Prat Gran Area 30352
+     * Parking, Hotel Rutllan Area 30481
+     * Parc Prat Gran Area 30820
+     * Outdoor pool, Hotel Rutllan Area 31209
+     * parking garalla Area 31457
+     * free parking Area 32925
+     * Iglesia de Sant Iscle y Santa Victòria Area 32992
+     * parking Heliport Area 33578
+     * La Massana outdoor swimming pool Area 33775
+     * free parking Area 34176
+     * Iglesia de Sant Ermengol Area 34695
+     * Sant Antoni de la Grella Area 119696
+     * Vallnord: Sector Pal Node 7477
+     * Sant Cristofol d'Anyos Node 7567
+     * Hotel Burna Node 7599
+     * parquing Comú de La Massana Node 9160
+     * Pizzeria Angelo Node 9198
+     * Fleca Font Node 9310
+     * Morabank Node 9339
+     * Farmacia Garalla Node 9384
+     * Cafe BonDia Node 9470
+     * Tourist Information Node 9545
+     * Les Fontetes Node 9596
+     * Hotel Font Node 9627
+     * Hotel Magic Node 9694
+     * Hotel Rutllan Node 9715
+     * Hotel Magic Ski Node 9775
+     * Hotel Marco Polo Node 9859
+     * Crédit Andorra Node 9885
+     * Plaça del Poble Node 9930
+     * Parking Comunal de l'Aldosa Node 9956
+     * Residential de l'Aldosa Node 10025
+     * Correos español Node 10101
+     * Centre d'autoaprenentatge de llengua Catalá Node 10161
+     * Iron Museum Node 10233
+     * Camping Xixerella Node 12465
+     * Resedencia Daina Node 14003
+     * Hotel Xalet Besoli Node 14061
+     * Llum d'Oli Node 14089
+     * Bar El Bosc Node 14109
+     * Apartments St. Moritz Node 14171
+     * Hotel Solana Node 14258
+     * Restaurant Panoramix Node 15683
+     * Vallnord: Sector Arinsal Node 15812
+     * Hotel Princesa Parc Node 15894
+     * Hotel Arinsal Node 15923
+     * Hola Andorra self catering ski chalet Node 15946
+     * Hotel Xalet Verdu Node 15993
+     * Surf Node 16088
+     * Restaurant/Bar Ciscos Node 16111
+     * Restaurant/Bar Mollies Node 16142
+     * Hotel Ayma Node 16197
+     * Hotel Patagonia Node 16260
+     * Pla de l'Estany Node 18146
+     - Arinsal - Percanela - les Fonts - Pla de l'Estany - Arinsal
+       = Way 384651
+       = Way 385685
+     - Avinguda Sant Antoni
+       = Way 241890
+       = Way 243893
+       = Way 244118
+       = Way 244163
+       = Way 246919
+       = Way 247051
+     - Avinguda del Ravell
+       = Way 244500
+       = Way 244657
+       = Way 244972
+       = Way 245477
+       = Way 245608
+       = Way 276956
+       = Way 315382
+       = Way 316060
+         @ 9 Area 30352
+         @ 3 Node 9715
+     - Avinguda el Travès
+       = Way 245705
+     - Cami Ral
+       = Way 197656
+       = Way 243772
+       = Way 246124
+       = Way 247279
+     - Cami Superior
+       = Way 156983
+       = Way 186434
+     - Cami de Padern
+       = Way 197819
+     - Cami de Santa Caterina
+       = Way 249066
+     - Cami de les Gravades
+       = Way 247531
+     - Cami de les Molleres
+       = Way 247569
+       = Way 247606
+       = Way 248950
+     - Cami del Barranc de la font del Mosquit
+       = Way 241373
+       = Way 242815
+     - Cami del Pou
+       = Way 197893
+     - Cami del Solanell
+       = Way 242720
+       = Way 243088
+     - Camí de Padern
+       = Way 195944
+     - Carratera dels Plans
+       = Way 242577
+     - Carrer Cal Giberga
+       = Way 247720
+     - Carrer Coma Del Colat
+       = Way 245876
+     - Carrer Dr Vilanova
+       = Way 241838
+     - Carrer Guillem Areny
+       = Way 241282
+     - Carrer Josep Areny
+       = Way 246814
+     - Carrer Major
+       = Way 193522
+       = Way 243534
+     - Carrer Sant Romà
+       = Way 315960
+     - Carrer de Josep Rossel
+       = Way 242013
+       = Way 243408
+     - Carrer de la Pleta de l'Aldosa
+       = Way 250304
+     - Carrer de les Entrades
+       = Way 241720
+     - Carrer de les Escoles
+       = Way 243126
+     - Carrer de les Palanques
+       = Way 243335
+       = Way 247343
+       = Way 248893
+     - Carrer del Pui
+       = Way 245053
+     - Carrer dels Hortals
+       = Way 244384
+     - Carrer dels Ocells
+       = Way 246883
+     - Carrer dels Plans
+       = Way 240718
+     - Carrer el Travès
+       = Way 249271
+     - Carretera Coll d'Ordino
+       = Way 279857
+     - Carretera Comes de Banyàs
+       = Way 277050
+     - Carretera General 3
+       = Way 277586
+     - Carretera Mas Ribafeta
+       = Way 314632
+     - Carretera Sant Cristofol
+       = Way 195631
+       = Way 197494
+       = Way 197973
+     - Carretera d'Arinsal
+       = Way 344331
+       = Way 344373
+     - Carretera d'Erts
+       = Way 313148
+       = Way 315889
+         @ s/n Area 17284
+     - Carretera de Beixalis
+       = Way 200460
+       = Way 200657
+       = Way 200706
+       = Way 200969
+     - Carretera de Sispony
+       = Way 193594
+       = Way 197285
+     - Carretera de l'Aldosa
+       = Way 247812
+       = Way 277424
+     - Carretera de la Creu Blanca
+       = Way 200879
+       = Way 202656
+       = Way 247869
+     - Carretera de la Gonarda
+       = Way 249736
+     - Carretera de les Agudes
+       = Way 194130
+     - Carretera de les Boigues
+       = Way 249434
+     - Carretera de les Moles
+       = Way 197420
+     - Carretera dels Cortals
+       = Way 191490
+     - Carretera dels Plans
+       = Way 242332
+     - Carretera l'Escaladella
+       = Way 314304
+     - Carretera les Feixes
+       = Way 315142
+     - Cerretera del Collet dels Colls
+       = Way 277182
+     - Els Formantals Parc
+       = Way 314999
+     - Les Canadilles
+       = Way 194195
+     - Massana Parc
+       = Way 277022
+     - Peu del Carrer
+       = Way 243627
+     - Plaça de les Fontetes
+       = Area 31295
+     - Pont d'Anyos
+       = Way 197566
+       = Way 197711
+     - Pont de Lisboa
+       = Way 194838
+       = Way 194993
+     - Pont de Sant Antoni
+       = Way 160729
+     - Pont de Sant Antoni de la Grella
+       = Way 161206
+     - Pont de Santa Caterina
+       = Way 250234
+     - Pont de les Palanques
+       = Way 247383
+     - Prat Sobirans
+       = Way 344057
+       = Way 344169
+     - Prat del Ruiders
+       = Way 344717
+       = Way 344808
+     - Urb Sorribes
+       = Way 198783
+     - Urb. Besillosa i Costes Teixidor
+       = Way 241586
+     - Urb. Borda Rutllan
+       = Way 241043
+       = Way 242087
+     - Urb. El Salze
+       = Way 242160
+     - Urb. Girault
+       = Way 242267
+     - Urb. l'Oriosos
+       = Way 202435
+     - Urbanització Giberga
+       = Way 249638
+       = Way 250150
+   + Ordino Area 108770
+     = Segudet Node 12874
+     = Sornás Node 14404
+     = Ansalonga Node 14421
+     = el Vilar Node 16321
+     = la Cortinada Node 16348
+     = Mas d'en Soler Node 16370
+     = Arans Node 16394
+     = Llorts Node 18987
+     = les Salines Node 19487
+     = el Serrat Node 20161
+     * Vall de Sorteny Area 13144
+     * Vall d'Ordino Golf Club Area 26033
+     * Rocòdrom d'Ordino Area 28940
+     * Iglesia de Sant Cornell y Sant Cebrià de Ordino Area 29105
+     * Santa Bàrbara Area 29332
+     * Hotel Ordino Node 12674
+     * Hotel la Coma Node 12712
+     * Crèdit Andorrà Node 12735
+     * Casa d'Areny-Plandolit Node 12778
+     * Hotel Babot Node 12891
+     * Lloc de Repos de Redort Node 12921
+     * Hotel Bringué Node 20133
+     * l'Anella d'Ordino Node 20695
+     * Vallnord: Sector Arcalís Node 20723
+     * Pleta de les Planes Node 20993
+     * Portella Rialb Node 21077
+     - Cami Peu de la Grau
+       = Way 281435
+     - Cami Ral
+       = Way 279222
+       = Way 320958
+       = Way 348141
+       = Way 348166
+       = Way 348192
+     - Cami de Redort
+       = Way 285580
+     - Cami de Santa Bàrbara
+       = Way 279434
+       = Way 279524
+       = Way 281093
+       = Way 281133
+     - Cami de Segudet
+       = Way 282401
+     - Cami de la Gonarda
+       = Way 278234
+     - Camí Ral d'Ordino
+       = Way 410202
+     - Carrer Antoni Fiter i Rossell
+       = Way 281880
+       = Way 282288
+     - Carrer Major
+       = Way 281658
+     - Carrer Manual Digest
+       = Way 282235
+     - Carrer de Sornás
+       = Way 318133
+     - Carrer de l'Anglada
+       = Way 279588
+     - Carrer del Puiet
+       = Way 282200
+     - Carrer del Turer
+       = Way 282909
+     - Carretera General
+       = Way 469887
+     - Carretera General 3
+       = Way 277654
+       = Way 277748
+       = Way 277832
+       = Way 277877
+       = Way 278480
+       = Way 278545
+       = Way 278642
+       = Way 279326
+       = Way 279774
+       = Way 318520
+       = Way 318617
+       = Way 346422
+       = Way 346682
+       = Way 387938
+       = Way 388189
+       = Way 407757
+       = Way 408063
+       = Way 410540
+       = Way 410958
+       = Way 433289
+       = Way 434538
+       = Way 470528
+       = Way 475435
+       = Way 475495
+       = Way 475770
+       = Way 475814
+       = Way 475959
+       = Way 476003
+     - Carretera de Segudet
+       = Way 282778
+     - Carretera de Sorteny
+       = Way 451405
+       = Way 453375
+     - Carretera de l'Aldosa
+       = Way 277699
+     - La Placeta
+       = Area 29184
+       = Way 281752
+     - La Ruta del Ferro
+       = Way 348361
+     - Pista de Sorteny
+       = Way 452944
+     - Pont d'Ansalonga
+       = Way 320524
+     - Travessia d'Ordino
+       = Way 281561
+     - el Buners d'Ordino
+       = Way 279067
+     - la Callisa
+       = Way 278923
+       = Way 282037
+     - la Carrera Nova
+       = Way 278952
+       = Way 282337
+       = Way 282638
+       = Way 282744
+   + Andorra la Vella Area 164653
+     = la Margineda Node 2797
+     * Sant Vicenç d'Enclar Area 118408
+     * Berenador de La Comella Area 139047
+     * Alberg La Comella Node 3343
+     - Avinguda Fiter i Rossell
+       = Way 142752
+     - Carrer Tossalet i Vinyols
+       = Way 77406
+     - Carrer de i'Aern
+       = Way 77239
+     - Carrer dels Castanyers
+       = Way 77284
+     - Carretera de la Comella
+       = Way 92469
+     - Carretera de la Margineda
+       = Way 77043
+     - Carretera dels Vilars
+       = Way 159730
+     - Passeig Rel del Solà
+       = Way 140862
+     - Passeig del Rec del Solà
+       = Way 127611
+     - Pont de Madrid
+       = Way 79043
+       = Way 79087
+     - Tunèl del Pont Pla
+       = Way 159264
+     - Túnel de les Dos Valires
+       = Way 195111
+     - carretera General 1
+       = Way 62335
+     + Andorra la Vella Area 139299
+       * Andorra Park Area 126276
+       * Aparcament comunal El Trillà Area 128540
+       * Placa del Poble Area 129153
+       * Esglesia Sant Esteve de Andorra la Vella Area 129199
+       * L'Orri Area 129286
+       * Sant Andreu Area 129837
+       * Hesperia Andorra la Vella Area 130245
+       * Hotel Màgic Area 130449
+       * El Pasture Area 130508
+       * Aparcament comunal Dr. Mitjavila Area 130619
+       * Mercure Andorra Area 131399
+       * Hotel Novotel Andorra Area 132585
+       * Aparcament Comunal Parc Central Area 133594
+       * Aparcament comunal Fener 1 Area 134417
+       * Aparcament comunal Fener2 Area 134474
+       * Aparcament comunal Bonavista Area 134637
+       * Aparcament comunal Anti Cami Ral Area 135247
+       * Càmping Valira Area 135487
+       * Estadi Comunal d'Andorra la Vella Area 135569
+       * Poliesportiu d'Andorra Area 136367
+       * Pavelló Joan Alay Area 136498
+       * Aparcament Comunal Tobira Area 136601
+       * Aparcament Comunal Prada Casadet Area 136661
+       * Parking l'Aigüeta Area 136724
+       * Parc Central Area 137094
+       * Fuel Area 137683
+       * McDonald's Area 137908
+       * public parking Area 137985
+       * Centre esportiu dels Serradells Area 138721
+       * Bar Restaurant Valira Node 3234
+       * Hotel President Node 3265
+       * Hotel Bellpí Node 3290
+       * Lycée Comte de Foix Node 3313
+       * Apartament comunal Prat de la Creu Node 3378
+       * Oficina Nacional de Turisme Node 3498
+       * Restaurante L'Aigüeta Node 3535
+       * El Bon Café Node 3653
+       * Burger King Node 3792
+       * Barric Antic Hostel & Pub Node 4246
+       * L'arroseria Node 4307
+       * Aparcament comunal Prat de la Creu Node 4348
+       * L'Alternativa Node 4420
+       * Festa Brava Node 4445
+       * Hotel Carlton Plaza Node 4491
+       * Andorra Park Node 4555
+       * Andorre-la-Vieille Node 4615
+       * Salvador Dali sculpture Node 4643
+       * Sàlvia d’or Node 4676
+       * Oficina Turisme Node 4788
+       * Crèdit Andorrà Node 4813
+       * MoraBanc Node 4871
+       * La Piazza Node 4892
+       * Granja Node 4911
+       * Lizzaran Node 4927
+       * Gran Farmàcia Node 4960
+       * Banc Sabadell Node 4987
+       * Husa Cèntric Hotel Node 5088
+       * Farmàcia Galeano 2 Node 5152
+       * Hotel Plaza Node 5181
+       * Hotel Valmar Node 5256
+       * Pitiusa Node 5310
+       * Farmacia Node 5488
+       * El Japo Node 5506
+       * El Refugi Alpí Node 5562
+       * La Mossegada Node 5590
+       * Fresc Co Node 5615
+       * L'Escenari de pizzes Node 5645
+       * Bar Restaurant Nou Node 5675
+       - Avinguda Carlemany
+         = Way 137253
+       - Avinguda Consell d'Europa
+         = Way 138046
+         = Way 138103
+         = Way 138752
+         = Way 138857
+         = Way 139454
+       - Avinguda Consell de la Terra
+         = Way 139253
+       - Avinguda Doctor Mitjavila
+         = Way 137970
+         = Way 138964
+           @ 1 Area 130245
+           @ 3-9 Area 130449
+       - Avinguda Fiter i Rossell
+         = Way 141598
+       - Avinguda Meritxell
+         = Way 132078
+         = Way 132379
+         = Way 133473
+         = Way 135527
+         = Way 135569
+         = Way 135650
+         = Way 137868
+         = Way 137908
+           @ 23-25 Node 4491
+           @ 68 Node 4676
+           @ 80 Node 4813
+           @ 96 Node 4871
+           @ 86 Node 4927
+           @ 83 Node 4960
+           @ 85 Node 4987
+           @ 87-89 Node 5088
+           @ 65 Node 5506
+           @ 73 Node 5562
+       - Avinguda Prat de la Creu
+         = Way 101390
+         = Way 101565
+         = Way 129443
+         = Way 131287
+         = Way 134310
+         = Way 135002
+         = Way 137745
+       - Avinguda de Salou
+         = Way 94022
+       - Avinguda de Tarragona
+         = Way 100499
+         = Way 100741
+         = Way 100869
+         = Way 101037
+         = Way 101124
+         = Way 101935
+         = Way 102552
+         = Way 102745
+         = Way 102850
+           @ 50 Area 137616
+           @ 44-46 Area 138346
+           @ 50-78 Node 3535
+           @ 53 Node 3653
+       - Avinguda del Fener
+         = Way 134908
+         = Way 137052
+       - Avinguda del Princep Benlloch
+         = Way 128243
+         = Way 130611
+       - Baixada del Molì
+         = Way 94617
+         = Way 101469
+       - Baixada del Molí
+         = Way 100666
+         = Way 100706
+         = Way 100919
+         = Way 100959
+         = Way 100999
+         = Way 101328
+         = Way 101434
+       - C
+         = Way 138356
+       - Cap del Carrer
+         = Way 132133
+         = Way 132279
+       - Carrer Babot Camp
+         = Way 138544
+       - Carrer Bisbe Príncep Iglésias
+         = Way 133059
+       - Carrer Bonaventura Armengol
+         = Way 134219
+         = Way 134264
+         = Way 135380
+       - Carrer Bonaventura Riberaygua
+         = Way 102674
+         = Way 135249
+       - Carrer Callueta
+         = Way 135055
+       - Carrer Camp Bastida
+         = Way 90634
+       - Carrer Ciutat de Consuegra
+         = Way 135685
+       - Carrer Ciutat de Valls
+         = Way 128061
+       - Carrer Closes de Guillemó
+         = Way 133691
+       - Carrer Doctor Nequí
+         = Way 130713
+       - Carrer Doctor Vilanova
+         = Way 101773
+         = Way 101854
+         = Way 101893
+         = Way 130987
+       - Carrer Dr. Molines
+         = Way 132985
+       - Carrer Dr. Vilanova
+         = Way 131184
+         = Way 132013
+       - Carrer Esteve Dolsa Pujol
+         = Way 102042
+         = Way 102136
+       - Carrer Fiter i Rossell
+         = Way 132784
+         = Way 132933
+       - Carrer Font del Pujal
+         = Way 128015
+       - Carrer Gil Torres
+         = Way 93796
+         = Way 94465
+       - Carrer Josep Rossell i Calva
+         = Way 138607
+       - Carrer La Llacuna
+         = Way 132217
+         = Way 132318
+         = Way 132553
+           @ 7 Node 4445
+       - Carrer Maria Plà
+         = Way 134523
+         = Way 135870
+           @ 19-21 Node 5181
+       - Carrer Mestre Xavier Plana
+         = Way 127893
+       - Carrer Mossèn Enric Marfany
+         = Way 130892
+       - Carrer Mossèn Tremosa
+         = Way 132443
+       - Carrer Parc Guillemó
+         = Way 133641
+       - Carrer Pau Casals
+         = Way 138310
+       - Carrer Pere d'Urg
+         = Way 134432
+       - Carrer Pompeu Fabra
+         = Way 132889
+       - Carrer Prada Casadet
+         = Way 131097
+       - Carrer Prada Motxilla
+         = Way 94506
+       - Carrer Roc de l'Aldias
+         = Way 127962
+         = Way 129402
+       - Carrer Roger Bernat III
+         = Way 134067
+       - Carrer Roureda de Sansa
+         = Way 94297
+       - Carrer Sant Andreu
+         = Way 141354
+       - Carrer Sant Salvador
+         = Way 135789
+         = Way 136568
+       - Carrer Verge del Pilar
+         = Way 134780
+       - Carrer de Joan Maragall
+         = Way 135464
+       - Carrer de l'Aigüeta
+         = Way 135113
+         = Way 135741
+       - Carrer de l'Alzinaret
+         = Way 130758
+         = Way 133172
+       - Carrer de la Borda
+         = Way 135999
+       - Carrer de la Closa
+         = Way 91895
+       - Carrer de la Creu Grossa
+         = Way 133770
+       - Carrer de la Grau
+         = Way 101609
+       - Carrer de la Grella
+         = Way 139062
+       - Carrer de la Roda
+         = Way 132851
+           @ s.n. Area 131399
+       - Carrer de la Sardana
+         = Way 103013
+         = Way 135172
+       - Carrer de la Tobira
+         = Way 129630
+       - Carrer de la Vall
+         = Way 130209
+         = Way 130424
+       - Carrer de la Vinyeta
+         = Way 131493
+       - Carrer del Carubell
+         = Way 130539
+       - Carrer del Pui
+         = Way 130074
+       - Carrer del Puial
+         = Way 129549
+       - Carrer del Tossal
+         = Way 129954
+       - Carrer del Valira
+         = Way 139325
+       - Carrer dels Canals
+         = Way 133211
+         = Way 133394
+         = Way 141163
+         = Way 141538
+       - Carretera de la Comella
+         = Way 92469
+       - Passage de l'Algüeta
+         = Way 135930
+       - Passatge del Tossal
+         = Way 130150
+       - Passeig Rel del Solà
+         = Way 140862
+       - Placa del Poble
+         = Way 131408
+       - Placeta Na Maria Pla
+         = Way 134826
+       - Plaça Guillemó
+         = Area 127446
+         = Way 130833
+           @ 8 Node 4420
+       - Plaça Príncep Benlloch
+         = Area 127507
+       - Plaça Rebés
+         = Area 128922
+         = Way 131446
+       - Plaça de la Sardana
+         = Way 134484
+       - Plaça la Rotonda
+         = Area 131482
+       - Pont de Paris
+         = Way 138271
+         = Way 138376
+         = Way 138409
+         = Way 138447
+         = Way 138488
+       - Rambla Molines
+         = Way 131236
+         = Way 131374
+         = Way 131976
+       - Tunèl del Pont Pla
+         = Way 159264
+       - Vial de la Uniò
+         = Way 136478
+         = Way 137160
+         = Way 140010
+         = Way 140075
+         = Way 140140
+     + Santa Coloma Area 157741
+       * Viena Area 135972
+       * Església de Santa Coloma Area 157013
+       - Avinguda d'Enclar
+         = Way 87751
+       - Avinguda de Salou
+         = Way 89293
+       - Avinguda de Santa Coloma
+         = Way 91186
+       - Cami Ral
+         = Way 87938
+       - Cami riu Valira
+         = Way 88653
+         = Way 91012
+       - Carrer Camp Pauet
+         = Way 90599
+       - Carrer Mossèn Lluis Pujol
+         = Way 89108
+           @ 8-12 Area 135799
+       - Carrer Prat Salit
+         = Way 88527
+         = Way 88614
+         = Way 88745
+       - Carrer Roureda Tapada
+         = Way 88797
+       - Carrer de Cedre
+         = Way 89016
+         = Way 89396
+       - Carrer de la Tartera
+         = Way 87559
+       - Carrer del Barrers
+         = Way 87828
+       - Passatge de Cedre
+         = Way 89257
+       - el Contrapàs
+         = Way 89077
+   + Escaldes-Engordany Area 199557
+     = Les Escaldes Node 6015
+     = Engolasters Node 6227
+     = Engordany Node 6248
+     = els Vilars Node 6267
+     * Aparcament clients Area 124789
+     * Camp del Serrat Area 124842
+     * Iglesia de Sant Romà dels Vilars Area 125464
+     * Hospital de Nostra Senyora de Meritxell Area 130682
+     * Caldea-Inuu Area 130893
+     * Museu del Perfum Area 133910
+     * Parc de la Mola Area 140127
+     * Espel Area 140542
+     * Sant Pere Màrtir Area 140748
+     * Borda Estall Area 172281
+     * Canal de la Bova Node 2886
+     * Canal del Pletiu Node 3876
+     * Hotel Princep Node 5233
+     * Don Denis Node 5354
+     * La Plazzeta Node 5396
+     * Les Closes Node 5417
+     * La Tagliatella Node 5440
+     * And Burger Zero Node 5769
+     * Cheese's Art Node 5794
+     * Panorama Node 5947
+     * Fenix Node 6037
+     * Farmàcia de les Escoles Node 6061
+     * tourist information Node 6095
+     * Cosmos Node 6124
+     * Metropolis Node 6140
+     * Hotel Ibis Node 6304
+     * Agulles d'Engolasters Node 6389
+     - Avinguda Carlemany
+       = Way 143613
+       = Way 144657
+         @ 93 Node 5417
+         @ 91 Node 5440
+     - Avinguda Consell d'Europa
+       = Way 140358
+     - Avinguda Coprincep de Gaulle
+       = Way 144604
+       = Way 144739
+       = Way 145466
+     - Avinguda Fiter i Rossell
+       = Way 142183
+       = Way 142245
+       = Way 142293
+         @ 13 Area 130682
+     - Avinguda Sant Jaume
+       = Way 149548
+     - Avinguda de les Escoles
+       = Way 144547
+       = Way 145362
+       = Way 149329
+     - Avinguda de les Nacions Unides
+       = Way 139396
+       = Way 139667
+     - Avinguda del Fener
+       = Way 136778
+     - Avinguda del Pessebre
+       = Way 142342
+       = Way 142498
+     - Avinguda del Pont de la Tosca
+       = Way 150213
+     - Cami del Pui
+       = Way 149703
+     - Cami dels Vilars
+       = Way 143001
+     - Camí de la Vinya
+       = Way 149843
+     - Carre Esteve Albert
+       = Way 141766
+     - Carrer Ciutat de Sabadell
+       = Way 137442
+       = Way 137700
+     - Carrer François Mitterrand
+       = Way 140638
+     - Carrer Isabelle Sandy
+       = Way 137548
+     - Carrer Josep Viladomat
+       = Way 141961
+       = Way 142053
+     - Carrer Mossén Guillem Adellach
+       = Way 144788
+     - Carrer Paraires
+       = Way 139565
+       = Way 140225
+     - Carrer Pare Enric Graner
+       = Way 143569
+     - Carrer Prat Gran
+       = Way 144220
+     - Carrer Sant Antoni
+       = Way 137510
+     - Carrer Santa Anna
+       = Way 144117
+     - Carrer d'Engordany
+       = Area 140458
+       = Way 144839
+       = Way 144876
+       = Way 144912
+     - Carrer de Can Diunange
+       = Way 143444
+       = Way 151178
+       = Way 151293
+       = Way 151406
+       = Way 160173
+     - Carrer de Coll de Jou
+       = Way 150925
+       = Way 150983
+       = Way 151138
+     - Carrer de Parnal
+       = Way 144349
+       = Way 144511
+     - Carrer de Roca Corba
+       = Way 151217
+       = Way 151254
+       = Way 160077
+     - Carrer de l'Anglata
+       = Way 149777
+     - Carrer de l'obac
+       = Way 143660
+     - Carrer de l'Étang Salé
+       = Way 142391
+     - Carrer de la Constituciò
+       = Way 144059
+       = Way 144260
+       = Way 145014
+       = Way 145134
+       = Way 145202
+       = Way 145294
+     - Carrer de les Teulades
+       = Way 142961
+     - Carrer del Picó
+       = Way 143708
+     - Carrer del Prat Gran
+       = Way 144471
+     - Carrer dels Escalls
+       = Way 141697
+     - Carretera d'Engolasters
+       = Way 161424
+     - Carretera de la Comella
+       = Way 105828
+       = Way 105876
+       = Way 136192
+     - Carretera dels Vilars
+       = Way 150667
+       = Way 150711
+       = Way 150752
+       = Way 150846
+       = Way 150885
+     - Passatge Arnaldeta de Caboet
+       = Way 139939
+     - Plaça Coprínceps
+       = Area 140620
+     - Pont de Sassanat
+       = Way 105386
+     - Urbanització Comes de Guem
+       = Way 149936
+     - Urbanització Ermengol Sera
+       = Way 150540
+   + Encamp Area 213031
+     = Vila Node 7821
+     = les Bons Node 8673
+     = Grau Roig Node 8942
+     = Pas de la Casa Node 12306
+     * Àrea de descans Area 89181
+     * Església Sant Pere del Pas de la Casa Area 98983
+     * Camping International Area 120547
+     * Museu d'Art Sacre Area 120667
+     * Sant Miquel i Sant Joan de la Mosquera Area 120701
+     * Santa Eulàlia Area 120868
+     * Sant Marc i Santa Maria Area 122080
+     * Museo Nacional de la Automòbil Area 122446
+     * Llac i Cel Area 125194
+     * la Dama del Llac Area 125221
+     * Santa Romà de les Bons Area 165756
+     * Museu Etnogràfic Casa Cristo Area 166591
+     * les Pardines Area 169146
+     * Església de Sant Jaume dels Cortals Area 169295
+     * El Piolet Area 182736
+     * Cap dels Agols Node 3946
+     * Pleta de les Bacives Node 3992
+     * Cretes de Gargantillar Node 6491
+     * Circ de Pessons Node 6542
+     * Carena de Pessons Node 6567
+     * Coma Estremera Node 6753
+     * Els Collels Node 6777
+     * Cepsa Node 6936
+     * BP Node 6951
+     * Restaurant Refugi del Llac de Pessons Node 7171
+     * Bosc dels Collels Node 7227
+     * Bosc del Peu dels Pessons Node 7254
+     * Onix Node 7851
+     * Comtes de Foix Node 7865
+     * Sol y Montanya Node 7889
+     * Sol y Muntanya Node 7949
+     * Restaurant Benito Node 7973
+     * La Flambada del raco Node 8021
+     * Farmacia D Encamp Node 8051
+     * Ganja Bar Valira Node 8116
+     * El Croco Grill Node 8183
+     * Restaurant La Pantera Node 8390
+     * Bar El Cyrano Node 8421
+     * Borda del Tremat Node 8535
+     * La Solana Apartaments Node 8577
+     * Grandvalira (Sector d'Encamp) Node 8626
+     * Capella de Sant Jaume dels Cortals Node 8756
+     * Collada D'Enradort Node 8800
+     * Cubil Node 8866
+     * Grandvalira (Sector de Grau Roig) Node 8890
+     * Torre dels Moros (Castell de les Bons) Node 10349
+     * Esso Node 10456
+     * Solanelles Node 10714
+     * Cortals Node 10760
+     * Total Node 11050
+     * Esso Node 11065
+     * Elf Node 11079
+     * Total Node 11092
+     * Refugi Fra Miguel Node 11107
+     * Pic Maia Node 11134
+     * Apartaments Paradis Blanc Node 11304
+     * Pasta Rapid Node 11339
+     * Apartaments Frontera Blanca Node 11360
+     * El Gargantua Node 11397
+     * Hôtel Himalaia Pas Node 11419
+     * Grandalla Node 11470
+     * Lake Placid Node 11489
+     * Cibercafé Node 11616
+     * Burger King Node 11636
+     * Ramón Borra Node 11671
+     * Lizarrán Node 11693
+     * La Perla Negra Node 11712
+     * Gran Duc Node 11760
+     * Farmàcia de les Pistes Node 11778
+     * Hôtel Le Sporting Node 11811
+     * Alaska Apartments Node 11871
+     * Apartments Crest Node 11898
+     * Màgic Pas Node 11942
+     * Farmàcia de Pas Node 11971
+     * Hotel Llac Negre Node 12051
+     * Hotel Meta Node 12077
+     * McDonald's Node 12105
+     * Centre de Autoaprenentatge Node 12174
+     * Oficina de Turisme d'Encamp - Pas de la Casa Node 12210
+     * Pla de les Pedres Node 13556
+     * Pla de les Pedres - Andorre Node 13618
+     - Avinguda Coprincep Épiscopal
+       = Way 163469
+       = Way 163809
+       = Way 164240
+     - Avinguda Princep Benlloch
+       = Way 210881
+     - Avinguda d'Encamp
+       = Way 267428
+     - Avinguda de François Mitterrand
+       = Way 212208
+       = Way 215489
+     - Avinguda de Joan Martí
+       = Way 207415
+       = Way 210174
+       = Way 211091
+       = Way 211724
+     - Avinguda del Consell General
+       = Way 267876
+       = Way 268654
+       = Way 269555
+       = Way 270615
+       = Way 270736
+       = Way 270871
+         @ 19 Area 98886
+     - Cami Bordes de Ramonet
+       = Way 162814
+     - Cami de l'Arena
+       = Way 211416
+     - Camí de les Pardines (peatonal)
+       = Way 207494
+     - Carrer Bearn
+       = Way 267160
+     - Carrer Bernat III
+       = Way 268763
+     - Carrer Comtes de Foix
+       = Way 268449
+     - Carrer Major
+       = Way 267549
+       = Way 268800
+     - Carrer Mirador d'Encamp
+       = Way 211268
+     - Carrer Para Urgell
+       = Way 267602
+     - Carrer Pareatges
+       = Way 268377
+     - Carrer Solana
+       = Way 266632
+     - Carrer d'Englolaster
+       = Way 211355
+     - Carrer de Catalunya
+       = Way 266576
+       = Way 267311
+     - Carrer de Sant Jordi
+       = Way 270049
+     - Carrer de la Ciutat Pubilla
+       = Way 219210
+     - Carrer de la Plana
+       = Way 213459
+     - Carrer de la Vena
+       = Way 208712
+       = Way 208755
+     - Carrer de les Abelletes
+       = Way 268321
+     - Carrer del Catorze de Març
+       = Way 218911
+       = Way 219058
+       = Way 219103
+     - Carrer del Predal
+       = Way 211516
+       = Way 211931
+     - Carrer dels Ajustants
+       = Way 212675
+     - Carrer dels Avellaners
+       = Way 212556
+     - Carrere Balcó del Solà
+       = Way 212050
+     - Carrere de la Molina
+       = Way 209662
+       = Way 210760
+     - Carretera de Beixalis
+       = Way 210396
+     - Carretera de Vila-Beixalis
+       = Way 203219
+     - Carretera de les Riberaigües
+       = Way 206544
+       = Way 207030
+       = Way 207283
+     - Carretera dels Cortals d'Encamp
+       = Way 215862
+       = Way 222905
+       = Way 255167
+     - Passeig Bordes de Ramonet
+       = Way 163344
+     - Passeig de Mojocar
+       = Way 218957
+     - Plaça dels Coprinceps
+       = Area 99256
+     - Port d'Envalira
+       = Way 231020
+       = Way 262557
+       = Way 262616
+       = Way 262728
+       = Way 262803
+       = Way 262864
+       = Way 262933
+       = Way 263006
+       = Way 263142
+       = Way 263344
+       = Way 263412
+       = Way 264212
+       = Way 264368
+       = Way 264565
+       = Way 265159
+       = Way 265446
+       = Way 265528
+       = Way 265774
+       = Way 265851
+       = Way 265991
+       = Way 266076
+       = Way 266149
+       = Way 266803
+       = Way 266910
+       = Way 267051
+       = Way 269223
+       = Way 270005
+       = Way 302689
+       = Way 302886
+     - Túnel d'Envalira
+       = Way 263606
+ + Sant Julià de Lòria Area 165070
+ + L'Hospitalet-près-l'Andorre Area 110800
+ + El Vilar Area 62342

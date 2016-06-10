@@ -19,11 +19,29 @@
 
 #include <osmscout/AreaNodeIndex.h>
 
-#include <iostream>
+#include <algorithm>
+
+#include <osmscout/util/File.h>
+#include <osmscout/util/Geometry.h>
+#include <osmscout/util/Logger.h>
+#include <osmscout/util/StopClock.h>
 
 #include <osmscout/system/Math.h>
 
 namespace osmscout {
+
+  const char* AreaNodeIndex::AREA_NODE_IDX="areanode.idx";
+
+
+  FileOffset AreaNodeIndex::TypeData::GetDataOffset() const
+  {
+    return indexOffset+cellXCount*cellYCount*(FileOffset)dataOffsetBytes;
+  }
+
+  FileOffset AreaNodeIndex::TypeData::GetCellOffset(size_t x, size_t y) const
+  {
+    return indexOffset+((y-cellYStart)*cellXCount+x-cellXStart)*dataOffsetBytes;
+  }
 
   AreaNodeIndex::TypeData::TypeData()
   : indexLevel(0),
@@ -45,95 +63,95 @@ namespace osmscout {
   }
 
   AreaNodeIndex::AreaNodeIndex()
-  : filepart("areanode.idx")
   {
     // no code
   }
 
   void AreaNodeIndex::Close()
   {
-    if (scanner.IsOpen()) {
-      scanner.Close();
+    try {
+      if (scanner.IsOpen()) {
+        scanner.Close();
+      }
+    }
+    catch (IOException& e) {
+      log.Error() << e.GetDescription();
+      scanner.CloseFailsafe();
     }
   }
 
-  bool AreaNodeIndex::Load(const std::string& path)
+  bool AreaNodeIndex::Open(const std::string& path)
   {
-    datafilename=path+"/"+filepart;
+    datafilename=AppendFileToDir(path,AREA_NODE_IDX);
 
-    if (!scanner.Open(datafilename,FileScanner::LowMemRandom,true)) {
-      std::cerr << "Cannot open file '" << datafilename << "'" << std::endl;
-      return false;
-    }
+    try {
+      scanner.Open(datafilename,FileScanner::FastRandom,true);
 
-    uint32_t indexEntries;
+      uint32_t indexEntries;
 
-    scanner.Read(indexEntries);
+      scanner.Read(indexEntries);
 
-    for (size_t i=0; i<indexEntries; i++) {
-      TypeId type;
+      for (size_t i=0; i<indexEntries; i++) {
+        TypeId type;
 
-      scanner.ReadNumber(type);
+        scanner.ReadNumber(type);
 
-      if (type>=nodeTypeData.size()) {
-        nodeTypeData.resize(type+1);
+        if (type>=nodeTypeData.size()) {
+          nodeTypeData.resize(type+1);
+        }
+
+        scanner.ReadFileOffset(nodeTypeData[type].indexOffset);
+        scanner.Read(nodeTypeData[type].dataOffsetBytes);
+
+        scanner.ReadNumber(nodeTypeData[type].indexLevel);
+
+        scanner.ReadNumber(nodeTypeData[type].cellXStart);
+        scanner.ReadNumber(nodeTypeData[type].cellXEnd);
+        scanner.ReadNumber(nodeTypeData[type].cellYStart);
+        scanner.ReadNumber(nodeTypeData[type].cellYEnd);
+
+        nodeTypeData[type].cellXCount=nodeTypeData[type].cellXEnd-nodeTypeData[type].cellXStart+1;
+        nodeTypeData[type].cellYCount=nodeTypeData[type].cellYEnd-nodeTypeData[type].cellYStart+1;
+
+        nodeTypeData[type].cellWidth=cellDimension[nodeTypeData[type].indexLevel].width;
+        nodeTypeData[type].cellHeight=cellDimension[nodeTypeData[type].indexLevel].height;
+
+        nodeTypeData[type].minLon=nodeTypeData[type].cellXStart*nodeTypeData[type].cellWidth-180.0;
+        nodeTypeData[type].maxLon=(nodeTypeData[type].cellXEnd+1)*nodeTypeData[type].cellWidth-180.0;
+        nodeTypeData[type].minLat=nodeTypeData[type].cellYStart*nodeTypeData[type].cellHeight-90.0;
+        nodeTypeData[type].maxLat=(nodeTypeData[type].cellYEnd+1)*nodeTypeData[type].cellHeight-90.0;
       }
 
-      scanner.ReadFileOffset(nodeTypeData[type].indexOffset);
-      scanner.Read(nodeTypeData[type].dataOffsetBytes);
-
-      scanner.ReadNumber(nodeTypeData[type].indexLevel);
-
-      scanner.ReadNumber(nodeTypeData[type].cellXStart);
-      scanner.ReadNumber(nodeTypeData[type].cellXEnd);
-      scanner.ReadNumber(nodeTypeData[type].cellYStart);
-      scanner.ReadNumber(nodeTypeData[type].cellYEnd);
-
-      nodeTypeData[type].cellXCount=nodeTypeData[type].cellXEnd-nodeTypeData[type].cellXStart+1;
-      nodeTypeData[type].cellYCount=nodeTypeData[type].cellYEnd-nodeTypeData[type].cellYStart+1;
-
-      nodeTypeData[type].cellWidth=360.0/pow(2.0,(int)nodeTypeData[type].indexLevel);
-      nodeTypeData[type].cellHeight=180.0/pow(2.0,(int)nodeTypeData[type].indexLevel);
-
-      nodeTypeData[type].minLon=nodeTypeData[type].cellXStart*nodeTypeData[type].cellWidth-180.0;
-      nodeTypeData[type].maxLon=(nodeTypeData[type].cellXEnd+1)*nodeTypeData[type].cellWidth-180.0;
-      nodeTypeData[type].minLat=nodeTypeData[type].cellYStart*nodeTypeData[type].cellHeight-90.0;
-      nodeTypeData[type].maxLat=(nodeTypeData[type].cellYEnd+1)*nodeTypeData[type].cellHeight-90.0;
+      return !scanner.HasError();
     }
-
-    return !scanner.HasError() && scanner.Close();
+    catch (IOException& e) {
+      log.Error() << e.GetDescription();
+      return false;
+    }
   }
 
   bool AreaNodeIndex::GetOffsets(const TypeData& typeData,
-                                 double minlon,
-                                 double minlat,
-                                 double maxlon,
-                                 double maxlat,
-                                 size_t maxNodeCount,
-                                 std::vector<FileOffset>& offsets,
-                                 size_t currentSize,
-                                 bool& sizeExceeded) const
+                                 const GeoBox& boundingBox,
+                                 std::vector<FileOffset>& offsets) const
   {
     if (typeData.indexOffset==0) {
       // No data for this type available
       return true;
     }
 
-    if (maxlon<typeData.minLon ||
-        minlon>=typeData.maxLon ||
-        maxlat<typeData.minLat ||
-        minlat>=typeData.maxLat) {
+    if (boundingBox.GetMaxLon()<typeData.minLon ||
+        boundingBox.GetMinLon()>=typeData.maxLon ||
+        boundingBox.GetMaxLat()<typeData.minLat ||
+        boundingBox.GetMinLat()>=typeData.maxLat) {
       // No data available in given bounding box
       return true;
     }
 
-    OSMSCOUT_HASHSET<FileOffset> newOffsets;
+    uint32_t             minxc=(uint32_t)floor((boundingBox.GetMinLon()+180.0)/typeData.cellWidth);
+    uint32_t             maxxc=(uint32_t)floor((boundingBox.GetMaxLon()+180.0)/typeData.cellWidth);
 
-    uint32_t             minxc=(uint32_t)floor((minlon+180.0)/typeData.cellWidth);
-    uint32_t             maxxc=(uint32_t)floor((maxlon+180.0)/typeData.cellWidth);
-
-    uint32_t             minyc=(uint32_t)floor((minlat+90.0)/typeData.cellHeight);
-    uint32_t             maxyc=(uint32_t)floor((maxlat+90.0)/typeData.cellHeight);
+    uint32_t             minyc=(uint32_t)floor((boundingBox.GetMinLat()+90.0)/typeData.cellHeight);
+    uint32_t             maxyc=(uint32_t)floor((boundingBox.GetMaxLat()+90.0)/typeData.cellHeight);
 
     minxc=std::max(minxc,typeData.cellXStart);
     maxxc=std::min(maxxc,typeData.cellXEnd);
@@ -141,31 +159,23 @@ namespace osmscout {
     minyc=std::max(minyc,typeData.cellYStart);
     maxyc=std::min(maxyc,typeData.cellYEnd);
 
-    FileOffset dataOffset=typeData.indexOffset+
-                          typeData.cellXCount*typeData.cellYCount*(FileOffset)typeData.dataOffsetBytes;
+    FileOffset dataOffset=typeData.GetDataOffset();
 
     // For each row
     for (size_t y=minyc; y<=maxyc; y++) {
-      FileOffset initialCellDataOffset=0;
-      size_t     cellDataOffsetCount=0;
-      FileOffset cellIndexOffset=typeData.indexOffset+
-                                 ((y-typeData.cellYStart)*typeData.cellXCount+
-                                  minxc-typeData.cellXStart)*typeData.dataOffsetBytes;
+      std::lock_guard<std::mutex> guard(lookupMutex);
+      FileOffset                  initialCellDataOffset=0;
+      size_t                      cellDataOffsetCount=0;
+      FileOffset                  cellIndexOffset=typeData.GetCellOffset(minxc,y);
 
-      if (!scanner.SetPos(cellIndexOffset)) {
-        std::cerr << "Cannot go to type cell index position " << cellIndexOffset << std::endl;
-        return false;
-      }
+      scanner.SetPos(cellIndexOffset);
 
       // For each column in row
       for (size_t x=minxc; x<=maxxc; x++) {
         FileOffset cellDataOffset;
 
-        if (!scanner.ReadFileOffset(cellDataOffset,
-                                    typeData.dataOffsetBytes)) {
-          std::cerr << "Cannot read cell data position" << std::endl;
-          return false;
-        }
+        scanner.ReadFileOffset(cellDataOffset,
+                               typeData.dataOffsetBytes);
 
         if (cellDataOffset==0) {
           continue;
@@ -187,10 +197,7 @@ namespace osmscout {
 
       assert(initialCellDataOffset>=cellIndexOffset);
 
-      if (!scanner.SetPos(initialCellDataOffset)) {
-        std::cerr << "Cannot go to cell data position " << initialCellDataOffset << std::endl;
-        return false;
-      }
+      scanner.SetPos(initialCellDataOffset);
 
       // For each data cell in row found
       for (size_t i=0; i<cellDataOffsetCount; i++) {
@@ -198,15 +205,7 @@ namespace osmscout {
         FileOffset lastOffset=0;
 
 
-        if (!scanner.ReadNumber(dataCount)) {
-          std::cerr << "Cannot read cell data count" << std::endl;
-          return false;
-        }
-
-        if (currentSize+newOffsets.size()+dataCount>maxNodeCount) {
-          sizeExceeded=true;
-          return true;
-        }
+        scanner.ReadNumber(dataCount);
 
         for (size_t d=0; d<dataCount; d++) {
           FileOffset objectOffset;
@@ -215,60 +214,50 @@ namespace osmscout {
 
           objectOffset+=lastOffset;
 
-          newOffsets.insert(objectOffset);
+          offsets.push_back(objectOffset);
 
           lastOffset=objectOffset;
         }
       }
     }
 
-    offsets.insert(offsets.end(),newOffsets.begin(),newOffsets.end());
-
     return true;
   }
 
-  bool AreaNodeIndex::GetOffsets(double minlon,
-                                 double minlat,
-                                 double maxlon,
-                                 double maxlat,
-                                 const TypeSet& nodeTypes,
-                                 size_t maxNodeCount,
-                                 std::vector<FileOffset>& nodeOffsets) const
+  bool AreaNodeIndex::GetOffsets(const GeoBox& boundingBox,
+                                 const TypeInfoSet& requestedTypes,
+                                 std::vector<FileOffset>& offsets,
+                                 TypeInfoSet& loadedTypes) const
   {
-    if (!scanner.IsOpen()) {
-      if (!scanner.Open(datafilename,FileScanner::LowMemRandom,true)) {
-        std::cerr << "Error while opening " << datafilename << " for reading!" << std::endl;
-        return false;
-      }
-    }
+    StopClock time;
 
-    bool sizeExceeded=false;
+    loadedTypes.Clear();
 
-    for (size_t i=0; i<nodeTypeData.size(); i++) {
-      if (nodeTypes.IsTypeSet(i)) {
-        if (!GetOffsets(nodeTypeData[i],
-                        minlon,
-                        minlat,
-                        maxlon,
-                        maxlat,
-                        maxNodeCount,
-                        nodeOffsets,
-                        nodeOffsets.size(),
-                        sizeExceeded)) {
+    offsets.reserve(std::min((size_t)10000,offsets.capacity()));
+
+    try {
+      for (TypeInfoRef type : requestedTypes) {
+        if (!GetOffsets(nodeTypeData[type->GetNodeId()],
+                        boundingBox,
+                        offsets)) {
           return false;
         }
 
-        if (sizeExceeded) {
-          break;
-        }
+        loadedTypes.Set(type);
       }
+    }
+    catch (IOException& e) {
+      log.Error() << e.GetDescription();
+      return false;
+    }
+
+    time.Stop();
+
+    if (time.GetMilliseconds()>100) {
+      log.Warn() << "Retrieving " << offsets.size() << " node offsets from area index for " << boundingBox.GetDisplayText() << " took " << time.ResultString();
     }
 
     return true;
-  }
-
-  void AreaNodeIndex::DumpStatistics()
-  {
   }
 }
 

@@ -22,16 +22,13 @@
 
 #include <osmscout/ImportFeatures.h>
 
-#include <map>
+#include <unordered_set>
 
 #include <osmscout/Area.h>
 
 #include <osmscout/CoordDataFile.h>
 #include <osmscout/NumericIndex.h>
 #include <osmscout/TurnRestriction.h>
-
-#include <osmscout/util/HashMap.h>
-#include <osmscout/util/HashSet.h>
 
 #include <osmscout/import/Import.h>
 #include <osmscout/import/RawWay.h>
@@ -40,50 +37,50 @@ namespace osmscout {
 
   class WayAreaDataGenerator : public ImportModule
   {
+  public:
+    static const char* WAYAREA_TMP;
+
   private:
-    typedef OSMSCOUT_HASHSET<OSMId>                BlacklistSet;
+    struct Distribution
+    {
+      uint32_t nodeCount;
+      uint32_t wayCount;
+      uint32_t areaCount;
 
-    typedef std::list<RawWayRef>                   WayList;
+      Distribution();
+    };
 
-    void GetWayTypes(const TypeConfig& typeConfig,
-                     std::set<TypeId>& types) const;
+    typedef std::unordered_set<OSMId> BlacklistSet;
+
+    typedef std::list<RawWayRef>      WayList;
 
     bool ReadWayBlacklist(const ImportParameter& parameter,
                           Progress& progress,
-                          BlacklistSet& wayBlacklist);
+                          BlacklistSet& wayBlacklist) const;
 
-    bool GetWays(const ImportParameter& parameter,
+    bool GetAreas(const ImportParameter& parameter,
                  Progress& progress,
                  const TypeConfig& typeConfig,
-                 std::set<TypeId>& types,
-                 std::set<TypeId>& slowFallbackTypes,
+                 TypeInfoSet& types,
                  const BlacklistSet& blacklist,
                  FileScanner& scanner,
                  std::vector<std::list<RawWayRef> >& areas);
 
-    bool WriteWay(const ImportParameter& parameter,
+    bool WriteArea(const ImportParameter& parameter,
                   Progress& progress,
                   const TypeConfig& typeConfig,
                   FileWriter& writer,
                   uint32_t& writtenWayCount,
-                  const CoordDataFile::CoordResultMap& coordsMap,
+                  const CoordDataFile::ResultMap& coordsMap,
                   const RawWay& rawWay);
 
-    bool HandleLowMemoryFallback(const ImportParameter& parameter,
-                                 Progress& progress,
-                                 const TypeConfig& typeConfig,
-                                 FileScanner& scanner,
-                                 std::set<TypeId>& types,
-                                 const BlacklistSet& blacklist,
-                                 FileWriter& writer,
-                                 uint32_t& writtenWayCount,
-                                 const CoordDataFile& coordDataFile);
-
   public:
-    std::string GetDescription() const;
-    bool Import(const ImportParameter& parameter,
-                Progress& progress,
-                const TypeConfig& typeConfig);
+    void GetDescription(const ImportParameter& parameter,
+                        ImportModuleDescription& description) const;
+
+    bool Import(const TypeConfigRef& typeConfig,
+                const ImportParameter& parameter,
+                Progress& progress);
   };
 }
 

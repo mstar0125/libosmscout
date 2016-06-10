@@ -23,6 +23,13 @@
 
 namespace osmscout {
 
+  NodeUseMap::NodeUseMap()
+  : nodeCount(0),
+    duplicateCount(0)
+  {
+    // no code
+  }
+
   NodeUseMap::~NodeUseMap()
   {
     // no code
@@ -30,7 +37,7 @@ namespace osmscout {
 
   void NodeUseMap::SetNodeUsed(Id id)
   {
-    PageId resolvedId=id-std::numeric_limits<Id>::min();
+    PageId resolvedId=id+std::numeric_limits<Id>::min();
     PageId offset=resolvedId/(4096/2);
 
     Map::iterator entry=nodeUseMap.find(offset);
@@ -46,15 +53,17 @@ namespace osmscout {
     }
     else if (entry->second[index]) {
       entry->second.set(index+1);
+      duplicateCount++;
     }
     else {
+      nodeCount++;
       entry->second.set(index);
     }
   }
 
   bool NodeUseMap::IsNodeUsedAtLeastTwice(Id id) const
   {
-    PageId resolvedId=id-std::numeric_limits<Id>::min();
+    PageId resolvedId=id+std::numeric_limits<Id>::min();
     PageId offset=resolvedId/(4096/2);
 
     Map::const_iterator entry=nodeUseMap.find(offset);
@@ -65,13 +74,23 @@ namespace osmscout {
 
     uint32_t index=(resolvedId%(4096/2))*2+1;
 
-    bool result=entry->second[index];
+    return entry->second[index];
+  }
 
-    return result;
+  size_t NodeUseMap::GetNodeUsedCount() const
+  {
+    return nodeCount;
+  }
+
+  size_t NodeUseMap::GetDuplicateCount() const
+  {
+    return duplicateCount;
   }
 
   void NodeUseMap::Clear()
   {
     nodeUseMap.clear();
+    nodeCount=0;
+    duplicateCount=0;
   }
 }

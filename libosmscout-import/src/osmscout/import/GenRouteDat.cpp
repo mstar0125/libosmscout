@@ -22,7 +22,10 @@
 #include <algorithm>
 
 #include <osmscout/ObjectRef.h>
-#include <osmscout/Router.h>
+
+#include <osmscout/CoordDataFile.h>
+
+#include <osmscout/RoutingService.h>
 
 #include <osmscout/system/Assert.h>
 #include <osmscout/system/Math.h>
@@ -31,196 +34,400 @@
 #include <osmscout/util/StopClock.h>
 #include <osmscout/util/String.h>
 
+#include <osmscout/import/GenNumericIndex.h>
+#include <osmscout/import/Preprocess.h>
+#include <osmscout/import/GenWayWayDat.h>
+
 namespace osmscout {
-
-  static uint8_t CopyFlagsForward(const Way& way)
-  {
-    uint8_t flags=0;
-
-    if (way.HasAccess()) {
-      flags|=RouteNode::hasAccess;
-    }
-
-    if (way.GetAttributes().GetAccess().CanRouteFootForward()) {
-      flags|=RouteNode::usableByFoot;
-    }
-
-    if (way.GetAttributes().GetAccess().CanRouteBicycleForward()) {
-      flags|=RouteNode::usableByBicycle;
-    }
-
-    if (way.GetAttributes().GetAccess().CanRouteCarForward()) {
-      flags|=RouteNode::usableByCar;
-    }
-
-    return flags;
-  }
-
-  static uint8_t CopyFlagsBackward(const Way& way)
-  {
-    uint8_t flags=0;
-
-    if (way.HasAccess()) {
-      flags|=RouteNode::hasAccess;
-    }
-
-    if (way.GetAttributes().GetAccess().CanRouteFootBackward()) {
-      flags|=RouteNode::usableByFoot;
-    }
-
-    if (way.GetAttributes().GetAccess().CanRouteBicycleBackward()) {
-      flags|=RouteNode::usableByBicycle;
-    }
-
-    if (way.GetAttributes().GetAccess().CanRouteCarBackward()) {
-      flags|=RouteNode::usableByCar;
-    }
-
-    return flags;
-  }
-
-  static uint8_t CopyFlags(const TypeConfig& typeConfig,
-                           const Area::Ring& ring)
-  {
-    uint8_t flags=0;
-
-    if (ring.attributes.HasAccess()) {
-      flags|=RouteNode::hasAccess;
-    }
-
-    if (typeConfig.GetTypeInfo(ring.GetType()).CanRouteFoot()) {
-      flags|=RouteNode::usableByFoot;
-    }
-
-    if (typeConfig.GetTypeInfo(ring.GetType()).CanRouteBicycle()) {
-      flags|=RouteNode::usableByBicycle;
-    }
-
-    if (typeConfig.GetTypeInfo(ring.GetType()).CanRouteCar()) {
-      flags|=RouteNode::usableByCar;
-    }
-
-    return flags;
-  }
 
   RouteDataGenerator::RouteDataGenerator()
   {
     // no code
   }
 
-  std::string RouteDataGenerator::GetDescription() const
+  void RouteDataGenerator::GetDescription(const ImportParameter& parameter,
+                                          ImportModuleDescription& description) const
   {
-    return "Generate routing graphs";
+    description.SetName("RouteDataGenerator");
+    description.SetDescription("Generate routing graph(s)");
+
+    description.AddRequiredFile(CoordDataFile::COORD_DAT);
+
+    description.AddRequiredFile(WayDataFile::WAYS_DAT);
+    description.AddRequiredFile(AreaDataFile::AREAS_DAT);
+
+    description.AddRequiredFile(WayDataFile::WAYS_IDMAP);
+
+    description.AddRequiredFile(WayWayDataGenerator::TURNRESTR_DAT);
+
+    for (const auto& router : parameter.GetRouter()) {
+      description.AddProvidedFile(router.GetDataFilename());
+      description.AddProvidedFile(router.GetVariantFilename());
+      description.AddProvidedFile(router.GetIndexFilename());
+    }
+
+    description.AddProvidedFile(RoutingService::FILENAME_INTERSECTIONS_DAT);
   }
 
-  bool RouteDataGenerator::ReadTurnRestrictionWayIds(const ImportParameter& parameter,
-                                                     Progress& progress,
-                                                     std::map<Id,FileOffset>& wayIdOffsetMap)
+  AccessFeatureValue RouteDataGenerator::GetAccess(const FeatureValueBuffer& buffer) const
+  {
+    AccessFeatureValue *accessValue=accessReader->GetValue(buffer);
+
+    if (accessValue!=NULL) {
+      return *accessValue;
+    }
+    else {
+      return AccessFeatureValue (buffer.GetType()->GetDefaultAccess());
+    }
+  }
+
+  uint8_t RouteDataGenerator::GetMaxSpeed(const Way& way) const
+  {
+    MaxSpeedFeatureValue *maxSpeedValue=maxSpeedReader->GetValue(way.GetFeatureValueBuffer());
+
+    if (maxSpeedValue!=NULL) {
+      return maxSpeedValue->GetMaxSpeed();
+    }
+    else {
+      return 0;
+    }
+  }
+
+  uint8_t RouteDataGenerator::GetGrade(const Way& way) const
+  {
+    GradeFeatureValue *gradeValue=gradeReader->GetValue(way.GetFeatureValueBuffer());
+
+    if (gradeValue!=NULL) {
+      return gradeValue->GetGrade();
+    }
+    else {
+      return 1;
+    }
+  }
+
+  uint8_t RouteDataGenerator::CopyFlags(const Area::Ring& ring) const
+  {
+    uint8_t                      flags=0;
+    AccessFeatureValue           access=GetAccess(ring.GetFeatureValueBuffer());
+    AccessRestrictedFeatureValue *accessRestrictedValue=accessRestrictedReader->GetValue(ring.GetFeatureValueBuffer());
+
+
+    if (accessRestrictedValue!=NULL) {
+      if (!accessRestrictedValue->CanAccessFoot()) {
+        flags|=RouteNode::restrictedForFoot;
+      }
+
+      if (!accessRestrictedValue->CanAccessBicycle()) {
+        flags|=RouteNode::restrictedForFoot;
+      }
+
+      if (!accessRestrictedValue->CanAccessCar()) {
+        flags|=RouteNode::restrictedForCar;
+      }
+    }
+
+    if (access.CanRouteFoot()) {
+      flags|=RouteNode::usableByFoot;
+    }
+
+    if (access.CanRouteBicycle()) {
+      flags|=RouteNode::usableByBicycle;
+    }
+
+    if (access.CanRouteCar()) {
+      flags|=RouteNode::usableByCar;
+    }
+
+    return flags;
+  }
+
+  uint8_t RouteDataGenerator::CopyFlagsForward(const Way& way) const
+  {
+    uint8_t                      flags=0;
+    AccessFeatureValue           access=GetAccess(way.GetFeatureValueBuffer());
+    AccessRestrictedFeatureValue *accessRestrictedValue=accessRestrictedReader->GetValue(way.GetFeatureValueBuffer());
+
+    if (accessRestrictedValue!=NULL) {
+      if (!accessRestrictedValue->CanAccessFoot()) {
+        flags|=RouteNode::restrictedForFoot;
+      }
+
+      if (!accessRestrictedValue->CanAccessBicycle()) {
+        flags|=RouteNode::restrictedForFoot;
+      }
+
+      if (!accessRestrictedValue->CanAccessCar()) {
+        flags|=RouteNode::restrictedForCar;
+      }
+    }
+
+    if (access.CanRouteFootForward()) {
+      flags|=RouteNode::usableByFoot;
+    }
+
+    if (access.CanRouteBicycleForward()) {
+      flags|=RouteNode::usableByBicycle;
+    }
+
+    if (access.CanRouteCarForward()) {
+      flags|=RouteNode::usableByCar;
+    }
+
+    return flags;
+  }
+
+  uint8_t RouteDataGenerator::CopyFlagsBackward(const Way& way) const
+  {
+    uint8_t            flags=0;
+    AccessFeatureValue access=GetAccess(way.GetFeatureValueBuffer());
+    AccessRestrictedFeatureValue *accessRestrictedValue=accessRestrictedReader->GetValue(way.GetFeatureValueBuffer());
+
+    if (accessRestrictedValue!=NULL) {
+      if (!accessRestrictedValue->CanAccessFoot()) {
+        flags|=RouteNode::restrictedForFoot;
+      }
+
+      if (!accessRestrictedValue->CanAccessBicycle()) {
+        flags|=RouteNode::restrictedForFoot;
+      }
+
+      if (!accessRestrictedValue->CanAccessCar()) {
+        flags|=RouteNode::restrictedForCar;
+      }
+    }
+
+    if (access.CanRouteFootBackward()) {
+      flags|=RouteNode::usableByFoot;
+    }
+
+    if (access.CanRouteBicycleBackward()) {
+      flags|=RouteNode::usableByBicycle;
+    }
+
+    if (access.CanRouteCarBackward()) {
+      flags|=RouteNode::usableByCar;
+    }
+
+    return flags;
+  }
+
+  uint16_t RouteDataGenerator::RegisterOrUseObjectVariantData(std::map<ObjectVariantData,uint16_t>& routeDataMap,
+                                                              const TypeInfoRef& type,
+                                                              uint8_t maxSpeed,
+                                                              uint8_t grade)
+  {
+    ObjectVariantData routeData;
+    uint16_t          objectVariantIndex;
+
+    routeData.type=type;
+    routeData.maxSpeed=maxSpeed;
+    routeData.grade=grade;
+
+    const auto entry=routeDataMap.find(routeData);
+
+    if (entry==routeDataMap.end()) {
+      objectVariantIndex=routeDataMap.size();
+      routeDataMap.insert(std::make_pair(routeData,objectVariantIndex));
+    }
+    else {
+      objectVariantIndex=entry->second;
+    }
+
+    return objectVariantIndex;
+  }
+
+  bool RouteDataGenerator::IsAnyRoutable(Progress& progress,
+                                         const std::list<ObjectFileRef>& objects,
+                                         const std::unordered_map<FileOffset,WayRef>& waysMap,
+                                         const std::unordered_map<FileOffset,AreaRef>&  areasMap,
+                                         VehicleMask vehicles) const
+  {
+    for (const auto& ref : objects) {
+      if (ref.GetType()==refWay) {
+        const auto& wayEntry=waysMap.find(ref.GetFileOffset());
+
+        if (wayEntry==waysMap.end()) {
+          progress.Error("Error while loading way at offset "+
+                         NumberToString(ref.GetFileOffset()) +
+                         " (Internal error?)");
+          continue;
+        }
+
+        if (GetAccess(*wayEntry->second).CanRoute(vehicles)) {
+          return true;
+        }
+
+      }
+      else if (ref.GetType()==refArea) {
+        const auto& areaEntry=areasMap.find(ref.GetFileOffset());
+
+        if (areaEntry==areasMap.end()) {
+          progress.Error("Error while loading areaEntry at offset "+
+                         NumberToString(ref.GetFileOffset()) +
+                         " (Internal error?)");
+          continue;
+        }
+
+        if (areaEntry->second->GetType()->CanRoute()) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  bool RouteDataGenerator::ReadTurnRestrictionIds(const ImportParameter& parameter,
+                                                  Progress& progress,
+                                                  std::map<OSMId,FileOffset>& wayIdOffsetMap,
+                                                  std::map<OSMId,Id>& nodeIdMap)
   {
     FileScanner scanner;
     uint32_t    restrictionCount=0;
 
     progress.Info("Reading turn restriction way ids");
 
-    if (!scanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
-                                      "turnrestr.dat"),
-                      FileScanner::Sequential,
-                      true)) {
-      progress.Error("Cannot open '"+scanner.GetFilename()+"'");
-      return false;
-    }
+    try {
+      scanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
+                                   WayWayDataGenerator::TURNRESTR_DAT),
+                   FileScanner::Sequential,
+                   true);
 
-    if (!scanner.Read(restrictionCount)) {
-      progress.Error("Error while reading number of data entries in file");
-      return false;
-    }
+      scanner.Read(restrictionCount);
 
-    for (uint32_t r=1; r<=restrictionCount; r++) {
-      progress.SetProgress(r,restrictionCount);
+      for (uint32_t r=1; r<=restrictionCount; r++) {
+        progress.SetProgress(r,restrictionCount);
 
-      TurnRestrictionRef restriction=new TurnRestriction();
+        TurnRestrictionRef restriction=std::make_shared<TurnRestriction>();
 
-      if (!restriction->Read(scanner)) {
-        progress.Error(std::string("Error while reading data entry ")+
-                       NumberToString(r)+" of "+
-                       NumberToString(restrictionCount)+
-                       " in file '"+
-                       scanner.GetFilename()+"'");
-        return false;
+        restriction->Read(scanner);
+
+        wayIdOffsetMap.insert(std::make_pair(restriction->GetFrom(),0));
+        wayIdOffsetMap.insert(std::make_pair(restriction->GetTo(),0));
+
+        nodeIdMap.insert(std::make_pair(restriction->GetVia(),0));
       }
 
-      wayIdOffsetMap.insert(std::make_pair(restriction->GetFrom(),0));
-      wayIdOffsetMap.insert(std::make_pair(restriction->GetTo(),0));
+      scanner.Close();
     }
-
-    if (!scanner.Close()) {
-      progress.Error("Cannot close file 'turnrestr.dat'");
+    catch (IOException& e) {
+      progress.Error(e.GetDescription());
       return false;
     }
 
     return true;
   }
 
-  bool RouteDataGenerator::ResolveWayIdsToFileOffsets(const ImportParameter& parameter,
-                                                      Progress& progress,
-                                                      std::map<Id,FileOffset>& wayIdOffsetMap)
+  bool RouteDataGenerator::ResolveWayIds(const ImportParameter& parameter,
+                                         Progress& progress,
+                                         std::map<OSMId,FileOffset>& wayIdOffsetMap)
   {
     FileScanner scanner;
     uint32_t    wayCount=0;
+    uint32_t    resolveCount=0;
 
     progress.Info("Resolving turn restriction way ids to way file offsets");
 
-    if (!scanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
-                                      "ways.idmap"),
-                      FileScanner::Sequential,
-                      parameter.GetWayDataMemoryMaped())) {
-      progress.Error("Cannot open '"+scanner.GetFilename()+"'");
+    try {
+      scanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
+                                   WayDataFile::WAYS_IDMAP),
+                   FileScanner::Sequential,
+                   parameter.GetWayDataMemoryMaped());
 
-      return false;
-    }
+      scanner.Read(wayCount);
 
-    if (!scanner.Read(wayCount)) {
-      progress.Error("Error while reading number of data entries in file");
-      return false;
-    }
+      for (uint32_t w=1; w<=wayCount; w++) {
+        progress.SetProgress(w,wayCount);
 
-    for (uint32_t w=1; w<=wayCount; w++) {
-      progress.SetProgress(w,wayCount);
+        OSMId      wayId;
+        uint8_t    typeByte;
+        OSMRefType type;
+        FileOffset wayOffset;
 
-      Id         wayId;
-      FileOffset wayOffset;
+        scanner.Read(wayId);
+        scanner.Read(typeByte);
 
-      if (!scanner.Read(wayId) ||
-          !scanner.ReadFileOffset(wayOffset)) {
-        progress.Error(std::string("Error while reading idmap file entry ")+
-                       NumberToString(w)+" of "+
-                       NumberToString(wayCount)+
-                       " in file '"+
-                       scanner.GetFilename()+"'");
-        return false;
+        scanner.ReadFileOffset(wayOffset);
+
+        type=(OSMRefType)typeByte;
+
+        if (type!=osmRefWay) {
+          continue;
+        }
+
+        std::map<OSMId,FileOffset>::iterator idOffsetEntry;
+
+        idOffsetEntry=wayIdOffsetMap.find(wayId);
+
+        if (idOffsetEntry!=wayIdOffsetMap.end()) {
+          idOffsetEntry->second=wayOffset;
+          resolveCount++;
+        }
       }
 
-      std::map<Id,FileOffset>::iterator idOffsetEntry;
+      progress.Info(NumberToString(wayIdOffsetMap.size())+" turn restriction way(s) found, "+NumberToString(resolveCount)+" way(s) resolved");
 
+      scanner.Close();
+    }
+    catch (IOException& e) {
+      progress.Error(e.GetDescription());
+      return false;
+    }
 
-      idOffsetEntry=wayIdOffsetMap.find(wayId);
+    return true;
+  }
 
-      if (idOffsetEntry!=wayIdOffsetMap.end()) {
-        idOffsetEntry->second=wayOffset;
+  bool RouteDataGenerator::ResolveNodeIds(const ImportParameter& parameter,
+                                          Progress& progress,
+                                          std::map<OSMId,Id>& nodeIdMap)
+  {
+    progress.Info("Resolving turn restriction OSM node ids to node ids");
+
+    CoordDataFile coordDataFile;
+    uint32_t      resolveCount=0;
+
+    if (!coordDataFile.Open(parameter.GetDestinationDirectory(),
+                            parameter.GetCoordDataMemoryMaped())) {
+      progress.Error("Cannot open coord file!");
+      return false;
+    }
+
+    std::set<OSMId>          nodeIds;
+    CoordDataFile::ResultMap coordsMap;
+
+    for (const auto& entry : nodeIdMap) {
+      nodeIds.insert(entry.first);
+    }
+
+    if (!coordDataFile.Get(nodeIds,
+                           coordsMap)) {
+      progress.Error("Cannot read nodes!");
+      return false;
+    }
+
+    for (const auto& entry : coordsMap) {
+      auto nodeIdEntry=nodeIdMap.find(entry.first);
+
+      if (nodeIdEntry!=nodeIdMap.end()) {
+        nodeIdEntry->second=entry.second.GetOSMScoutId();
+        resolveCount++;
       }
     }
 
-    if (!scanner.Close()) {
-      progress.Error(std::string("Cannot close file '")+scanner.GetFilename()+"'");
+    if (!coordDataFile.Close()) {
+      progress.Error(std::string("Cannot close coord file"));
       return false;
     }
+
+    progress.Info(NumberToString(nodeIds.size())+" via node(s) found, "+NumberToString(resolveCount)+" node(s) resolved");
 
     return true;
   }
 
   bool RouteDataGenerator::ReadTurnRestrictionData(const ImportParameter& parameter,
                                                    Progress& progress,
-                                                   const std::map<Id,FileOffset>& wayIdOffsetMap,
+                                                   const std::map<OSMId,Id>& nodeIdMap,
+                                                   const std::map<OSMId,FileOffset>& wayIdOffsetMap,
                                                    ViaTurnRestrictionMap& restrictions)
   {
     FileScanner scanner;
@@ -228,77 +435,76 @@ namespace osmscout {
 
     progress.Info("Creating turn restriction data structures");
 
-    if (!scanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
-                                      "turnrestr.dat"),
-                      FileScanner::Sequential,
-                      true)) {
-      progress.Error("Cannot open '"+scanner.GetFilename()+"'");
+    try {
+      scanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
+                                   WayWayDataGenerator::TURNRESTR_DAT),
+                   FileScanner::Sequential,
+                   true);
+
+      scanner.Read(restrictionCount);
+
+      for (uint32_t r=1; r<=restrictionCount; r++) {
+        progress.SetProgress(r,restrictionCount);
+
+        TurnRestrictionRef restriction=std::make_shared<TurnRestriction>();
+
+        restriction->Read(scanner);
+
+        TurnRestrictionData                        data;
+        std::map<OSMId,FileOffset>::const_iterator idOffsetEntry;
+        std::map<OSMId,Id>::const_iterator         nodeIdEntry;
+
+
+        idOffsetEntry=wayIdOffsetMap.find(restriction->GetFrom());
+
+        if (idOffsetEntry==wayIdOffsetMap.end() || idOffsetEntry->second==0) {
+          progress.Error(std::string("Error while retrieving way offset for way id ")+
+                         NumberToString(restriction->GetFrom()));
+          continue;
+        }
+
+        data.fromWayOffset=idOffsetEntry->second;
+
+        nodeIdEntry=nodeIdMap.find(restriction->GetVia());
+
+        if (nodeIdEntry==nodeIdMap.end() || nodeIdEntry->second==0) {
+          progress.Error(std::string("Error while retrieving node id for node OSM id ")+
+                         NumberToString(restriction->GetVia()));
+          continue;
+        }
+
+        data.viaNodeId=nodeIdEntry->second;
+
+        idOffsetEntry=wayIdOffsetMap.find(restriction->GetTo());
+
+        if (idOffsetEntry==wayIdOffsetMap.end() || idOffsetEntry->second==0) {
+          progress.Error(std::string("Error while retrieving way offset for way id ")+
+                         NumberToString(restriction->GetTo()));
+          continue;
+        }
+
+        data.toWayOffset=idOffsetEntry->second;
+
+        switch (restriction->GetType()) {
+        case TurnRestriction::Allow:
+          data.type=TurnRestrictionData::Allow;
+          break;
+        case TurnRestriction::Forbit:
+          data.type=TurnRestrictionData::Forbit;
+          break;
+        }
+
+        restrictions[data.viaNodeId].push_back(data);
+      }
+
+      progress.Info(std::string("Read ")+NumberToString(restrictionCount)+" turn restrictions");
+
+      scanner.Close();
+    }
+    catch (IOException& e) {
+      progress.Error(e.GetDescription());
       return false;
     }
-
-    if (!scanner.Read(restrictionCount)) {
-      progress.Error("Error while reading number of data entries in file");
-      return false;
-    }
-
-    for (uint32_t r=1; r<=restrictionCount; r++) {
-      progress.SetProgress(r,restrictionCount);
-
-      TurnRestrictionRef restriction=new TurnRestriction();
-
-      if (!restriction->Read(scanner)) {
-        progress.Error(std::string("Error while reading data entry ")+
-                       NumberToString(r)+" of "+
-                       NumberToString(restrictionCount)+
-                       " in file '"+
-                       scanner.GetFilename()+"'");
-        return false;
-      }
-
-      TurnRestrictionData                      data;
-      std::map<Id,FileOffset>::const_iterator  idOffsetEntry;
-
-
-      idOffsetEntry=wayIdOffsetMap.find(restriction->GetFrom());
-
-      if (idOffsetEntry==wayIdOffsetMap.end()) {
-        progress.Error(std::string("Error while retrieving way offset for way id ")+
-                       NumberToString(restriction->GetFrom()));
-        return false;
-      }
-
-      data.fromWayOffset=idOffsetEntry->second;
-
-      data.viaNodeId=restriction->GetVia();
-
-      idOffsetEntry=wayIdOffsetMap.find(restriction->GetTo());
-
-      if (idOffsetEntry==wayIdOffsetMap.end()) {
-        progress.Error(std::string("Error while retrieving way offset for way id ")+
-                       NumberToString(restriction->GetTo()));
-        return false;
-      }
-
-      data.toWayOffset=idOffsetEntry->second;
-
-      switch (restriction->GetType()) {
-      case TurnRestriction::Allow:
-        data.type=TurnRestrictionData::Allow;
-        break;
-      case TurnRestriction::Forbit:
-        data.type=TurnRestrictionData::Forbit;
-        break;
-      }
-
-      restrictions[restriction->GetVia()].push_back(data);
-    }
-
-    if (!scanner.Close()) {
-      progress.Error("Cannot close file 'turnrestr.dat'");
-      return false;
-    }
-
-    progress.Info(std::string("Read ")+NumberToString(restrictionCount)+" turn restrictions");
 
     return true;
   }
@@ -307,15 +513,17 @@ namespace osmscout {
                                                 Progress& progress,
                                                 ViaTurnRestrictionMap& restrictions)
   {
-    std::map<Id,FileOffset> wayIdOffsetMap;
+    std::map<OSMId,FileOffset> wayIdOffsetMap;
+    std::map<OSMId,Id>         nodeIdMap;
 
     //
     // Just read the way ids
     //
 
-    if (!ReadTurnRestrictionWayIds(parameter,
-                                   progress,
-                                   wayIdOffsetMap)) {
+    if (!ReadTurnRestrictionIds(parameter,
+                                progress,
+                                wayIdOffsetMap,
+                                nodeIdMap)) {
       return false;
     }
 
@@ -323,9 +531,19 @@ namespace osmscout {
     // Now map way ids to file offsets
     //
 
-    if (!ResolveWayIdsToFileOffsets(parameter,
-                                    progress,
-                                    wayIdOffsetMap)) {
+    if (!ResolveWayIds(parameter,
+                       progress,
+                       wayIdOffsetMap)) {
+      return false;
+    }
+
+    //
+    // Now map node ids to file offsets
+    //
+
+    if (!ResolveNodeIds(parameter,
+                        progress,
+                        nodeIdMap)) {
       return false;
     }
 
@@ -335,6 +553,7 @@ namespace osmscout {
 
     if (!ReadTurnRestrictionData(parameter,
                                  progress,
+                                 nodeIdMap,
                                  wayIdOffsetMap,
                                  restrictions)) {
       return false;
@@ -353,20 +572,18 @@ namespace osmscout {
       return true;
     }
 
-    for (std::vector<TurnRestrictionData>::const_iterator restriction=restrictions.begin();
-         restriction!=restrictions.end();
-         ++restriction) {
-      if (restriction->fromWayOffset==from) {
-        if (restriction->type==TurnRestrictionData::Allow) {
-          if (restriction->toWayOffset==to) {
+    for (const auto& restriction : restrictions) {
+      if (restriction.fromWayOffset==from) {
+        if (restriction.type==TurnRestrictionData::Allow) {
+          if (restriction.toWayOffset==to) {
             return true;
           }
 
           // If there are allow restrictions,everything else is forbidden
           defaultReturn=false;
         }
-        else if (restriction->type==TurnRestrictionData::Forbit) {
-          if (restriction->toWayOffset==to) {
+        else if (restriction.type==TurnRestrictionData::Forbit) {
+          if (restriction.toWayOffset==to) {
             return false;
           }
 
@@ -388,132 +605,104 @@ namespace osmscout {
     FileScanner scanner;
     uint32_t    dataCount=0;
 
-    if (!scanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
-                                      "ways.dat"),
-                      FileScanner::Sequential,
-                      parameter.GetWayDataMemoryMaped())) {
-      progress.Error("Cannot open '"+scanner.GetFilename()+"'");
+    progress.Info("Scanning ways");
 
-      return false;
-    }
+    try {
+      scanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
+                                   WayDataFile::WAYS_DAT),
+                   FileScanner::Sequential,
+                   parameter.GetWayDataMemoryMaped());
 
-    if (!scanner.Read(dataCount)) {
-      progress.Error("Error while reading number of data entries in file");
-      return false;
-    }
+      scanner.Read(dataCount);
 
-    for (uint32_t d=1; d<=dataCount; d++) {
-      progress.SetProgress(d,dataCount);
+      for (uint32_t d=1; d<=dataCount; d++) {
+        progress.SetProgress(d,dataCount);
 
-      Way way;
+        Way way;
 
-      if (!way.Read(scanner)) {
-        progress.Error(std::string("Error while reading data entry ")+
-                       NumberToString(d)+" of "+
-                       NumberToString(dataCount)+
-                       " in file '"+
-                       scanner.GetFilename()+"'");
-        return false;
-      }
+        way.Read(typeConfig,
+                 scanner);
 
-      if (way.GetType()==typeIgnore) {
-        continue;
-      }
-
-      if (typeConfig.GetTypeInfo(way.GetType()).GetIgnore()) {
-        continue;
-      }
-
-      if (!(way.GetAttributes().GetAccess().CanRoute())) {
-        continue;
-      }
-
-      std::set<Id> nodeIds;
-
-      for (std::vector<Id>::const_iterator id=way.ids.begin();
-          id!=way.ids.end();
-          id++) {
-        if (*id==0) {
+        if (way.GetType()->GetIgnore()) {
           continue;
         }
 
-        if (nodeIds.find(*id)==nodeIds.end()) {
-          nodeUseMap.SetNodeUsed(*id);
-
-          nodeIds.insert(*id);
-        }
-      }
-    }
-
-    if (!scanner.Close()) {
-      progress.Error("Cannot close file 'ways.dat'");
-      return false;
-    }
-
-    if (!scanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
-                                      "areas.dat"),
-                      FileScanner::Sequential,
-                      parameter.GetWayDataMemoryMaped())) {
-      progress.Error("Cannot open '"+scanner.GetFilename()+"'");
-
-      return false;
-    }
-
-    if (!scanner.Read(dataCount)) {
-      progress.Error("Error while reading number of data entries in file");
-      return false;
-    }
-
-    for (uint32_t d=1; d<=dataCount; d++) {
-      progress.SetProgress(d,dataCount);
-
-      Area area;
-
-      if (!area.Read(scanner)) {
-        progress.Error(std::string("Error while reading data entry ")+
-                       NumberToString(d)+" of "+
-                       NumberToString(dataCount)+
-                       " in file '"+
-                       scanner.GetFilename()+"'");
-        return false;
-      }
-
-      if (area.GetType()==typeIgnore) {
-        continue;
-      }
-
-      if (typeConfig.GetTypeInfo(area.GetType()).GetIgnore()) {
-        continue;
-      }
-
-      if (!typeConfig.GetTypeInfo(area.GetType()).CanRoute()) {
-        continue;
-      }
-
-      // We currently route only on simple areas, multipolygon relations
-      if (!area.IsSimple()) {
-        continue;
-      }
-
-      std::set<Id> nodeIds;
-
-      for (std::vector<Id>::const_iterator id=area.rings.front().ids.begin();
-          id!=area.rings.front().ids.end();
-          id++) {
-        if (*id==0) {
+        if (!GetAccess(way).CanRoute()) {
           continue;
         }
 
-        if (nodeIds.find(*id)==nodeIds.end()) {
-          nodeUseMap.SetNodeUsed(*id);
+        std::set<Id> nodeIds;
 
-          nodeIds.insert(*id);
+        for (const auto& node : way.nodes) {
+          if (!node.IsRelevant()) {
+            continue;
+          }
+
+          Id id=node.GetId();
+
+          if (nodeIds.find(id)==nodeIds.end()) {
+            nodeUseMap.SetNodeUsed(id);
+            nodeIds.insert(id);
+          }
         }
       }
-    }
 
-    if (!scanner.Close()) {
-      progress.Error("Cannot close file 'areas.dat'");
+      scanner.Close();
+
+      progress.Info("Scanning areas");
+
+      scanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
+                                   AreaDataFile::AREAS_DAT),
+                   FileScanner::Sequential,
+                   parameter.GetAreaDataMemoryMaped());
+
+      scanner.Read(dataCount);
+
+      for (uint32_t d=1; d<=dataCount; d++) {
+        progress.SetProgress(d,dataCount);
+
+        Area area;
+
+        area.Read(typeConfig,
+                  scanner);
+
+        if (area.GetType()->GetIgnore()) {
+          continue;
+        }
+
+        if (!area.GetType()->CanRoute()) {
+          continue;
+        }
+
+        // We currently route only on simple areas, multipolygon relations we skip
+        if (!area.IsSimple()) {
+          continue;
+        }
+
+        std::set<Id> nodeIds;
+
+        for (const auto& node : area.rings.front().nodes) {
+          if (!node.IsRelevant()) {
+            continue;
+          }
+
+          Id id=node.GetId();
+
+          if (nodeIds.find(id)==nodeIds.end()) {
+            nodeUseMap.SetNodeUsed(id);
+
+            nodeIds.insert(id);
+          }
+        }
+      }
+
+      scanner.Close();
+
+      progress.Info("Found "+NumberToString(nodeUseMap.GetNodeUsedCount())+" possible routing nodes, "+
+                    NumberToString(nodeUseMap.GetDuplicateCount())+" at least used twice");
+    }
+    catch (IOException& e) {
+      progress.Error(e.GetDescription());
       return false;
     }
 
@@ -528,157 +717,120 @@ namespace osmscout {
   {
     FileScanner scanner;
     uint32_t    dataCount=0;
+    uint32_t    junctionWayCount=0;
+    uint32_t    junctionAreaCount=0;
 
-    if (!scanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
-                                      "ways.dat"),
-                      FileScanner::Sequential,
-                      parameter.GetWayDataMemoryMaped())) {
-      progress.Error("Cannot open '"+scanner.GetFilename()+"'");
+    progress.Info("Scanning ways");
 
-      return false;
-    }
+    try {
+      scanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
+                                   WayDataFile::WAYS_DAT),
+                   FileScanner::Sequential,
+                   parameter.GetWayDataMemoryMaped());
 
-    if (!scanner.Read(dataCount)) {
-      progress.Error("Error while reading number of data entries in file");
-      return false;
-    }
+      scanner.Read(dataCount);
 
-    for (uint32_t d=1; d<=dataCount; d++) {
-      progress.SetProgress(d,dataCount);
+      for (uint32_t d=1; d<=dataCount; d++) {
+        progress.SetProgress(d,dataCount);
 
-      Way        way;
-      FileOffset fileOffset;
+        Way        way;
+        FileOffset fileOffset;
 
-      if (!scanner.GetPos(fileOffset)) {
-        progress.Error(std::string("Error while reading file offset for data entry ")+
-                       NumberToString(d)+" of "+
-                       NumberToString(dataCount)+
-                       " in file '"+
-                       scanner.GetFilename()+"'");
-        return false;
-      }
+        fileOffset=scanner.GetPos();
 
-      if (!way.Read(scanner)) {
-        progress.Error(std::string("Error while reading data entry ")+
-                       NumberToString(d)+" of "+
-                       NumberToString(dataCount)+
-                       " in file '"+
-                       scanner.GetFilename()+"'");
-        return false;
-      }
+        way.Read(typeConfig,
+                 scanner);
 
-      if (way.GetType()==typeIgnore) {
-        continue;
-      }
-
-      if (typeConfig.GetTypeInfo(way.GetType()).GetIgnore()) {
-        continue;
-      }
-
-      if (!(way.GetAttributes().GetAccess().CanRoute())) {
-        continue;
-      }
-
-      std::set<Id> nodeIds;
-
-      for (std::vector<Id>::const_iterator id=way.ids.begin();
-          id!=way.ids.end();
-          id++) {
-        if (*id==0) {
+        if (way.GetType()->GetIgnore()) {
           continue;
         }
 
-        if (nodeIds.find(*id)==nodeIds.end()) {
-          if (nodeUseMap.IsNodeUsedAtLeastTwice(*id)) {
-            nodeObjectsMap[*id].push_back(ObjectFileRef(fileOffset,refWay));
-          }
-
-          nodeIds.insert(*id);
-        }
-      }
-    }
-
-    if (!scanner.Close()) {
-      progress.Error("Cannot close file 'ways.dat'");
-      return false;
-    }
-
-    if (!scanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
-                                      "areas.dat"),
-                      FileScanner::Sequential,
-                      parameter.GetWayDataMemoryMaped())) {
-      progress.Error("Cannot open '"+scanner.GetFilename()+"'");
-
-      return false;
-    }
-
-    if (!scanner.Read(dataCount)) {
-      progress.Error("Error while reading number of data entries in file");
-      return false;
-    }
-
-    for (uint32_t d=1; d<=dataCount; d++) {
-      progress.SetProgress(d,dataCount);
-
-      Area       area;
-      FileOffset fileOffset;
-
-      if (!scanner.GetPos(fileOffset)) {
-        progress.Error(std::string("Error while reading file offset for data entry ")+
-                       NumberToString(d)+" of "+
-                       NumberToString(dataCount)+
-                       " in file '"+
-                       scanner.GetFilename()+"'");
-        return false;
-      }
-
-      if (!area.Read(scanner)) {
-        progress.Error(std::string("Error while reading data entry ")+
-                       NumberToString(d)+" of "+
-                       NumberToString(dataCount)+
-                       " in file '"+
-                       scanner.GetFilename()+"'");
-        return false;
-      }
-
-      if (area.GetType()==typeIgnore) {
-        continue;
-      }
-
-      if (typeConfig.GetTypeInfo(area.GetType()).GetIgnore()) {
-        continue;
-      }
-
-      if (!(typeConfig.GetTypeInfo(area.GetType()).CanRoute())) {
-        continue;
-      }
-
-      // We currently route only on simple areas, multipolygon relations
-      if (!area.IsSimple()) {
-        continue;
-      }
-
-      std::set<Id> nodeIds;
-
-      for (std::vector<Id>::const_iterator id=area.rings.front().ids.begin();
-          id!=area.rings.front().ids.end();
-          id++) {
-        if (*id==0) {
+        if (!GetAccess(way).CanRoute()) {
           continue;
         }
 
-        if (nodeIds.find(*id)==nodeIds.end()) {
-          if (nodeUseMap.IsNodeUsedAtLeastTwice(*id)) {
-            nodeObjectsMap[*id].push_back(ObjectFileRef(fileOffset,refArea));
+        std::set<Id> nodeIds;
+
+        for (auto& node : way.nodes) {
+          if (!node.IsRelevant()) {
+            continue;
           }
 
-          nodeIds.insert(*id);
+          Id id=node.GetId();
+
+          if (nodeIds.find(id)==nodeIds.end()) {
+            if (nodeUseMap.IsNodeUsedAtLeastTwice(id)) {
+              nodeObjectsMap[id].push_back(ObjectFileRef(fileOffset,refWay));
+              junctionWayCount++;
+            }
+
+            nodeIds.insert(id);
+          }
         }
       }
-    }
 
-    if (!scanner.Close()) {
-      progress.Error("Cannot close file 'areas.dat'");
+      scanner.Close();
+
+      progress.Info("Scanning areas");
+
+      scanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
+                                   AreaDataFile::AREAS_DAT),
+                   FileScanner::Sequential,
+                   parameter.GetAreaDataMemoryMaped());
+
+      scanner.Read(dataCount);
+
+      for (uint32_t d=1; d<=dataCount; d++) {
+        progress.SetProgress(d,dataCount);
+
+        Area       area;
+        FileOffset fileOffset;
+
+        fileOffset=scanner.GetPos();
+
+        area.Read(typeConfig,
+                  scanner);
+
+        if (area.GetType()->GetIgnore()) {
+          continue;
+        }
+
+        if (!(area.GetType()->CanRoute())) {
+          continue;
+        }
+
+        // We currently route only on simple areas, multipolygon relations
+        if (!area.IsSimple()) {
+          continue;
+        }
+
+        std::set<Id> nodeIds;
+
+        for (auto& node : area.rings.front().nodes) {
+          if (!node.IsRelevant()) {
+            continue;
+          }
+
+          Id id=node.GetId();
+
+          if (nodeIds.find(id)==nodeIds.end()) {
+            if (nodeUseMap.IsNodeUsedAtLeastTwice(id)) {
+              nodeObjectsMap[id].push_back(ObjectFileRef(fileOffset,refArea));
+              junctionAreaCount++;
+            }
+
+            nodeIds.insert(id);
+          }
+        }
+      }
+
+      progress.Info("Found "+NumberToString(nodeObjectsMap.size())+" routing nodes, with in sum "+
+                    NumberToString(junctionWayCount)+" ways and "+NumberToString(junctionAreaCount)+" areas");
+
+      scanner.Close();
+    }
+    catch (IOException& e) {
+      progress.Error(e.GetDescription());
       return false;
     }
 
@@ -691,123 +843,172 @@ namespace osmscout {
   {
     FileWriter writer;
 
-    if (!writer.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
-                                     Router::FILENAME_INTERSECTIONS_DAT))) {
-      progress.Error("Cannot create '"+writer.GetFilename()+"'");
+    try {
+      writer.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
+                                  RoutingService::FILENAME_INTERSECTIONS_DAT));
+
+      writer.Write((uint32_t)nodeIdObjectsMap.size());
+
+      for (const auto& junction : nodeIdObjectsMap) {
+
+        writer.WriteNumber(junction.first);
+        writer.WriteNumber((uint32_t)junction.second.size());
+
+        ObjectFileRefStreamWriter objectFileRefWriter(writer);
+
+        for (const auto& object : junction.second) {
+          objectFileRefWriter.Write(object);
+        }
+      }
+
+      writer.Close();
+    }
+    catch (IOException& e) {
+      progress.Error(e.GetDescription());
       return false;
     }
 
-    writer.Write((uint32_t)nodeIdObjectsMap.size());
-
-    for (NodeIdObjectsMap::const_iterator junction=nodeIdObjectsMap.begin();
-        junction!=nodeIdObjectsMap.end();
-        ++junction) {
-
-      writer.WriteNumber(junction->first);
-      writer.WriteNumber((uint32_t)junction->second.size());
-
-      Id lastFileOffset=0;
-
-      for (std::list<ObjectFileRef>::const_iterator object=junction->second.begin();
-          object!=junction->second.end();
-          ++object) {
-        writer.Write((uint8_t)object->GetType());
-        writer.WriteNumber(object->GetFileOffset()-lastFileOffset);
-
-        lastFileOffset=object->GetFileOffset();
-      }
-    }
-
-    return writer.Close();
+    return true;
   }
 
-  bool RouteDataGenerator::LoadWays(Progress& progress,
+  bool RouteDataGenerator::LoadWays(const TypeConfig& typeConfig,
+                                    Progress& progress,
                                     FileScanner& scanner,
                                     const std::set<FileOffset>& fileOffsets,
-                                    OSMSCOUT_HASHMAP<FileOffset,WayRef>& waysMap)
+                                    std::unordered_map<FileOffset,WayRef>& waysMap)
   {
     if (fileOffsets.empty()) {
       return true;
     }
 
+    progress.Info("Loading " +NumberToString(fileOffsets.size())+" ways");
+
     FileOffset oldPos;
 
-    if (!scanner.GetPos(oldPos)) {
-      progress.Error("Error while loading current file position");
-      return false;
-    }
+    oldPos=scanner.GetPos();
 
-    for (std::set<FileOffset>::const_iterator offset=fileOffsets.begin();
-         offset!=fileOffsets.end();
-         offset++) {
-      if (!scanner.SetPos(*offset)) {
-        progress.Error("Error while moving to way at offset " + NumberToString(*offset));
-        return false;
-      }
+    for (auto offset : fileOffsets) {
+      scanner.SetPos(offset);
 
-      WayRef way=new Way();
+      WayRef way=std::make_shared<Way>();
 
-      way->Read(scanner);
+      way->Read(typeConfig,
+                scanner);
 
       if (scanner.HasError()) {
-        progress.Error("Error while loading way at offset " + NumberToString(*offset));
+        progress.Error("Error while loading way at offset " + NumberToString(offset));
         return false;
       }
 
-      waysMap[*offset]=way;
+      waysMap[offset]=way;
     }
 
-    if (!scanner.SetPos(oldPos)) {
-      progress.Error("Error while resetting current file position");
-      return false;
-    }
+    scanner.SetPos(oldPos);
 
     return true;
   }
 
-  bool RouteDataGenerator::LoadAreas(Progress& progress,
+  bool RouteDataGenerator::LoadAreas(const TypeConfig& typeConfig,
+                                     Progress& progress,
                                      FileScanner& scanner,
                                      const std::set<FileOffset>& fileOffsets,
-                                     OSMSCOUT_HASHMAP<FileOffset,AreaRef>& areasMap)
+                                     std::unordered_map<FileOffset,AreaRef>& areasMap)
   {
     if (fileOffsets.empty()) {
       return true;
     }
 
+    progress.Info("Loading " +NumberToString(fileOffsets.size())+" areas");
+
     FileOffset oldPos;
 
-    if (!scanner.GetPos(oldPos)) {
-      progress.Error("Error while loading current file position");
-      return false;
-    }
+    oldPos=scanner.GetPos();
 
-    for (std::set<FileOffset>::const_iterator offset=fileOffsets.begin();
-         offset!=fileOffsets.end();
-         offset++) {
-      if (!scanner.SetPos(*offset)) {
-        progress.Error("Error while moving to area at offset " + NumberToString(*offset));
-        return false;
-      }
+    for (auto offset : fileOffsets) {
+      scanner.SetPos(offset);
 
-      AreaRef area=new Area();
+      AreaRef area=std::make_shared<Area>();
 
-      area->Read(scanner);
+      area->Read(typeConfig,
+                 scanner);
 
       if (scanner.HasError()) {
-        progress.Error("Error while loading area at offset " + NumberToString(*offset));
+        progress.Error("Error while loading area at offset " + NumberToString(offset));
         return false;
       }
 
-      areasMap[*offset]=area;
+      areasMap[offset]=area;
     }
 
-    if (!scanner.SetPos(oldPos)) {
-      progress.Error("Error while resetting current file position");
-      return false;
-    }
+    scanner.SetPos(oldPos);
 
     return true;
   }
+
+  bool RouteDataGenerator::GetRouteNodePoint(Progress& progress,
+                                             Id id,
+                                             const std::list<ObjectFileRef>& objects,
+                                             std::unordered_map<FileOffset,WayRef>& waysMap,
+                                             std::unordered_map<FileOffset,AreaRef>& areasMap,
+                                             Point& point) const
+  {
+    for (const auto& ref : objects) {
+      if (ref.GetType()==refWay) {
+        const WayRef& way=waysMap[ref.GetFileOffset()];
+
+        if (!way) {
+          progress.Error("Error while loading way at offset "+
+                         NumberToString(ref.GetFileOffset()) +
+                         " (Internal error?)");
+          continue;
+        }
+
+        int currentNode=0;
+
+        // Find current route node in area
+        while (currentNode<(int)way->nodes.size() &&
+              way->GetId(currentNode)!=id) {
+          currentNode++;
+        }
+
+        // Make sure we found it
+        assert(currentNode<(int)way->nodes.size());
+
+        point=way->nodes[currentNode];
+
+        return true;
+      }
+      else if (ref.GetType()==refArea) {
+        const AreaRef& area=areasMap[ref.GetFileOffset()];
+
+        if (!area) {
+          progress.Error("Error while loading area at offset "+
+                         NumberToString(ref.GetFileOffset()) +
+                         " (Internal error?)");
+          continue;
+        }
+
+        int               currentNode=0;
+        const Area::Ring& ring=area->rings.front();
+
+        // Find current route node in area
+        while (currentNode<(int)ring.nodes.size() &&
+              ring.GetId(currentNode)!=id) {
+          currentNode++;
+        }
+
+        // Make sure we found it
+        assert(currentNode<(int)ring.nodes.size());
+
+        point=ring.nodes[currentNode];
+
+        return true;
+      }
+    }
+
+    return false;
+  }
+
 
   /*
   uint8_t RouteDataGenerator::CalculateEncodedBearing(const Way& way,
@@ -846,9 +1047,9 @@ namespace osmscout {
     return bearing;
   }*/
 
-  void RouteDataGenerator::CalculateAreaPaths(const TypeConfig& typeConfig,
-                                              RouteNode& routeNode,
+  void RouteDataGenerator::CalculateAreaPaths(RouteNode& routeNode,
                                               const Area& area,
+                                              uint16_t objectVariantIndex,
                                               FileOffset routeNodeOffset,
                                               const NodeIdObjectsMap& nodeObjectsMap,
                                               const NodeIdOffsetMap& nodeIdOffsetMap,
@@ -860,7 +1061,7 @@ namespace osmscout {
 
     // Find current route node in area
     while (currentNode<(int)ring.nodes.size() &&
-          ring.ids[currentNode]!=routeNode.id) {
+          ring.GetId(currentNode)!=routeNode.GetId()) {
       currentNode++;
     }
 
@@ -881,7 +1082,7 @@ namespace osmscout {
                                   ring.nodes[nextNode].GetLat());
 
     while (nextNode!=currentNode &&
-           nodeObjectsMap.find(ring.ids[nextNode])==nodeObjectsMap.end()) {
+           nodeObjectsMap.find(ring.GetId(nextNode))==nodeObjectsMap.end()) {
       int lastNode=nextNode;
       nextNode++;
 
@@ -899,9 +1100,9 @@ namespace osmscout {
 
     // Found next routing node in order
     if (nextNode!=currentNode &&
-        ring.ids[nextNode]!=routeNode.id) {
+        ring.GetId(nextNode)!=routeNode.GetId()) {
       RouteNode::Path                 path;
-      NodeIdOffsetMap::const_iterator pathNodeOffset=nodeIdOffsetMap.find(ring.ids[nextNode]);
+      NodeIdOffsetMap::const_iterator pathNodeOffset=nodeIdOffsetMap.find(ring.GetId(nextNode));
 
       if (pathNodeOffset!=nodeIdOffsetMap.end()) {
         path.offset=pathNodeOffset->second;
@@ -912,18 +1113,13 @@ namespace osmscout {
         pendingOffset.routeNodeOffset=routeNodeOffset;
         pendingOffset.index=routeNode.paths.size();
 
-        pendingOffsetsMap[ring.ids[nextNode]].push_back(pendingOffset);
+        pendingOffsetsMap[ring.GetId(nextNode)].push_back(pendingOffset);
       }
 
-      path.objectIndex=routeNode.AddObject(ObjectFileRef(area.GetFileOffset(),refArea));
-      path.type=area.GetType();
-      path.maxSpeed=0;
-      path.grade=1;
+      path.objectIndex=routeNode.AddObject(ObjectFileRef(area.GetFileOffset(),refArea),
+                                           objectVariantIndex);
       //path.bearing=CalculateEncodedBearing(way,currentNode,nextNode,true);
-      path.flags=CopyFlags(typeConfig,
-                           ring);
-      path.lat=ring.nodes[nextNode].GetLat();
-      path.lon=ring.nodes[nextNode].GetLon();
+      path.flags=CopyFlags(ring);
       path.distance=distance;
 
       routeNode.paths.push_back(path);
@@ -943,7 +1139,7 @@ namespace osmscout {
                                   ring.nodes[prevNode].GetLat());
 
     while (prevNode!=currentNode &&
-        nodeObjectsMap.find(ring.ids[prevNode])==nodeObjectsMap.end()) {
+        nodeObjectsMap.find(ring.GetId(prevNode))==nodeObjectsMap.end()) {
       int lastNode=prevNode;
       prevNode--;
 
@@ -963,9 +1159,9 @@ namespace osmscout {
 
     if (prevNode!=currentNode &&
         prevNode!=nextNode &&
-        ring.ids[prevNode]!=routeNode.id) {
+        ring.GetId(prevNode)!=routeNode.GetId()) {
       RouteNode::Path                 path;
-      NodeIdOffsetMap::const_iterator pathNodeOffset=nodeIdOffsetMap.find(ring.ids[prevNode]);
+      NodeIdOffsetMap::const_iterator pathNodeOffset=nodeIdOffsetMap.find(ring.GetId(prevNode));
 
       if (pathNodeOffset!=nodeIdOffsetMap.end()) {
         path.offset=pathNodeOffset->second;
@@ -976,18 +1172,13 @@ namespace osmscout {
         pendingOffset.routeNodeOffset=routeNodeOffset;
         pendingOffset.index=routeNode.paths.size();
 
-        pendingOffsetsMap[ring.ids[prevNode]].push_back(pendingOffset);
+        pendingOffsetsMap[ring.GetId(prevNode)].push_back(pendingOffset);
       }
 
-      path.objectIndex=routeNode.AddObject(ObjectFileRef(area.GetFileOffset(),refArea));
-      path.type=ring.GetType();
-      path.maxSpeed=0;
-      path.grade=1;
+      path.objectIndex=routeNode.AddObject(ObjectFileRef(area.GetFileOffset(),refArea),
+                                           objectVariantIndex);
       //path.bearing=CalculateEncodedBearing(way,currentNode,prevNode,false);
-      path.flags=CopyFlags(typeConfig,
-                           ring);
-      path.lat=ring.nodes[prevNode].GetLat();
-      path.lon=ring.nodes[prevNode].GetLon();
+      path.flags=CopyFlags(ring);
       path.distance=distance;
 
       routeNode.paths.push_back(path);
@@ -996,6 +1187,7 @@ namespace osmscout {
 
   void RouteDataGenerator::CalculateCircularWayPaths(RouteNode& routeNode,
                                                      const Way& way,
+                                                     uint16_t objectVariantIndex,
                                                      FileOffset routeNodeOffset,
                                                      const NodeIdObjectsMap& nodeObjectsMap,
                                                      const NodeIdOffsetMap& nodeIdOffsetMap,
@@ -1007,7 +1199,7 @@ namespace osmscout {
     // Search for current route node
 
     while (currentNode<(int)way.nodes.size() &&
-          way.ids[currentNode]!=routeNode.id) {
+          way.GetId(currentNode)!=routeNode.GetId()) {
       currentNode++;
     }
 
@@ -1016,19 +1208,19 @@ namespace osmscout {
     // In path direction
 
     int nextNode=currentNode+1;
-    if (way.GetAttributes().GetAccess().CanRouteForward()) {
+    if (GetAccess(way).CanRouteForward()) {
 
       if (nextNode>=(int)way.nodes.size()) {
         nextNode=0;
       }
 
-      distance=GetSphericalDistance(way.nodes[currentNode].GetLon(),
-                                    way.nodes[currentNode].GetLat(),
-                                    way.nodes[nextNode].GetLon(),
-                                    way.nodes[nextNode].GetLat());
+      distance=GetSphericalDistance(way.GetCoord(currentNode).GetLon(),
+                                    way.GetCoord(currentNode).GetLat(),
+                                    way.GetCoord(nextNode).GetLon(),
+                                    way.GetCoord(nextNode).GetLat());
 
       while (nextNode!=currentNode &&
-          nodeObjectsMap.find(way.ids[nextNode])==nodeObjectsMap.end()) {
+          nodeObjectsMap.find(way.GetId(nextNode))==nodeObjectsMap.end()) {
         int lastNode=nextNode;
         nextNode++;
 
@@ -1037,17 +1229,17 @@ namespace osmscout {
         }
 
         if (nextNode!=currentNode) {
-          distance+=GetSphericalDistance(way.nodes[lastNode].GetLon(),
-                                         way.nodes[lastNode].GetLat(),
-                                         way.nodes[nextNode].GetLon(),
-                                         way.nodes[nextNode].GetLat());
+          distance+=GetSphericalDistance(way.GetCoord(lastNode).GetLon(),
+                                         way.GetCoord(lastNode).GetLat(),
+                                         way.GetCoord(nextNode).GetLon(),
+                                         way.GetCoord(nextNode).GetLat());
         }
       }
 
       if (nextNode!=currentNode &&
-          way.ids[nextNode]!=routeNode.id) {
+          way.GetId(nextNode)!=routeNode.GetId()) {
         RouteNode::Path                 path;
-        NodeIdOffsetMap::const_iterator pathNodeOffset=nodeIdOffsetMap.find(way.ids[nextNode]);
+        NodeIdOffsetMap::const_iterator pathNodeOffset=nodeIdOffsetMap.find(way.GetId(nextNode));
 
         if (pathNodeOffset!=nodeIdOffsetMap.end()) {
           path.offset=pathNodeOffset->second;
@@ -1058,17 +1250,13 @@ namespace osmscout {
           pendingOffset.routeNodeOffset=routeNodeOffset;
           pendingOffset.index=routeNode.paths.size();
 
-          pendingOffsetsMap[way.ids[nextNode]].push_back(pendingOffset);
+          pendingOffsetsMap[way.GetId(nextNode)].push_back(pendingOffset);
         }
 
-        path.objectIndex=routeNode.AddObject(ObjectFileRef(way.GetFileOffset(),refWay));
-        path.type=way.GetType();
-        path.maxSpeed=way.GetMaxSpeed();
-        path.grade=way.GetGrade();
+        path.objectIndex=routeNode.AddObject(ObjectFileRef(way.GetFileOffset(),refWay),
+                                             objectVariantIndex);
         //path.bearing=CalculateEncodedBearing(way,currentNode,nextNode,true);
         path.flags=CopyFlagsForward(way);
-        path.lat=way.nodes[nextNode].GetLat();
-        path.lon=way.nodes[nextNode].GetLon();
         path.distance=distance;
 
         routeNode.paths.push_back(path);
@@ -1077,7 +1265,7 @@ namespace osmscout {
 
     // Against path direction
 
-    if (way.GetAttributes().GetAccess().CanRouteBackward()) {
+    if (GetAccess(way).CanRouteBackward()) {
       int prevNode=currentNode-1;
 
       if (prevNode<0) {
@@ -1090,7 +1278,7 @@ namespace osmscout {
                                     way.nodes[prevNode].GetLat());
 
       while (prevNode!=currentNode &&
-          nodeObjectsMap.find(way.ids[prevNode])==nodeObjectsMap.end()) {
+          nodeObjectsMap.find(way.GetId(prevNode))==nodeObjectsMap.end()) {
         int lastNode=prevNode;
         prevNode--;
 
@@ -1108,9 +1296,9 @@ namespace osmscout {
 
       if (prevNode!=currentNode &&
           prevNode!=nextNode &&
-          way.ids[prevNode]!=routeNode.id) {
+          way.GetId(prevNode)!=routeNode.GetId()) {
         RouteNode::Path                 path;
-        NodeIdOffsetMap::const_iterator pathNodeOffset=nodeIdOffsetMap.find(way.ids[prevNode]);
+        NodeIdOffsetMap::const_iterator pathNodeOffset=nodeIdOffsetMap.find(way.GetId(prevNode));
 
         if (pathNodeOffset!=nodeIdOffsetMap.end()) {
           path.offset=pathNodeOffset->second;
@@ -1121,17 +1309,13 @@ namespace osmscout {
           pendingOffset.routeNodeOffset=routeNodeOffset;
           pendingOffset.index=routeNode.paths.size();
 
-          pendingOffsetsMap[way.ids[prevNode]].push_back(pendingOffset);
+          pendingOffsetsMap[way.GetId(prevNode)].push_back(pendingOffset);
         }
 
-        path.objectIndex=routeNode.AddObject(ObjectFileRef(way.GetFileOffset(),refWay));
-        path.type=way.GetType();
-        path.maxSpeed=way.GetMaxSpeed();
-        path.grade=way.GetGrade();
+        path.objectIndex=routeNode.AddObject(ObjectFileRef(way.GetFileOffset(),refWay),
+                                             objectVariantIndex);
         //path.bearing=CalculateEncodedBearing(way,prevNode,nextNode,false);
         path.flags=CopyFlagsBackward(way);
-        path.lat=way.nodes[prevNode].GetLat();
-        path.lon=way.nodes[prevNode].GetLon();
         path.distance=distance;
 
         routeNode.paths.push_back(path);
@@ -1141,21 +1325,22 @@ namespace osmscout {
 
   void RouteDataGenerator::CalculateWayPaths(RouteNode& routeNode,
                                              const Way& way,
+                                             uint16_t objectVariantIndex,
                                              FileOffset routeNodeOffset,
                                              const NodeIdObjectsMap& nodeObjectsMap,
                                              const NodeIdOffsetMap& nodeIdOffsetMap,
                                              PendingRouteNodeOffsetsMap& pendingOffsetsMap)
   {
     for (size_t i=0; i<way.nodes.size(); i++) {
-      if (way.ids[i]==routeNode.id) {
+      if (way.GetId(i)==routeNode.GetId()) {
         // Route backward
-        if (way.GetAttributes().GetAccess().CanRouteBackward() &&
+        if (GetAccess(way).CanRouteBackward() &&
             i>0) {
           int j=i-1;
 
           // Search for previous routing node on way
           while (j>=0) {
-            if (nodeObjectsMap.find(way.ids[j])!=nodeObjectsMap.end()) {
+            if (nodeObjectsMap.find(way.GetId(j))!=nodeObjectsMap.end()) {
               break;
             }
 
@@ -1163,9 +1348,9 @@ namespace osmscout {
           }
 
           if (j>=0 &&
-              way.ids[j]!=routeNode.id) {
+              way.GetId(j)!=routeNode.GetId()) {
             RouteNode::Path                 path;
-            NodeIdOffsetMap::const_iterator pathNodeOffset=nodeIdOffsetMap.find(way.ids[j]);
+            NodeIdOffsetMap::const_iterator pathNodeOffset=nodeIdOffsetMap.find(way.GetId(j));
 
             if (pathNodeOffset!=nodeIdOffsetMap.end()) {
               path.offset=pathNodeOffset->second;
@@ -1176,19 +1361,15 @@ namespace osmscout {
               pendingOffset.routeNodeOffset=routeNodeOffset;
               pendingOffset.index=routeNode.paths.size();
 
-              pendingOffsetsMap[way.ids[j]].push_back(pendingOffset);
+              pendingOffsetsMap[way.GetId(j)].push_back(pendingOffset);
 
               path.offset=0;
             }
 
-            path.objectIndex=routeNode.AddObject(ObjectFileRef(way.GetFileOffset(),refWay));
-            path.type=way.GetType();
-            path.maxSpeed=way.GetMaxSpeed();
-            path.grade=way.GetGrade();
+            path.objectIndex=routeNode.AddObject(ObjectFileRef(way.GetFileOffset(),refWay),
+                                                 objectVariantIndex);
             //path.bearing=CalculateEncodedBearing(way,i,j,false);
             path.flags=CopyFlagsBackward(way);
-            path.lat=way.nodes[j].GetLat();
-            path.lon=way.nodes[j].GetLon();
 
             path.distance=0.0;
             for (size_t d=j;d<i; d++) {
@@ -1203,13 +1384,13 @@ namespace osmscout {
         }
 
         // Route forward
-        if (way.GetAttributes().GetAccess().CanRouteForward() &&
+        if (GetAccess(way).CanRouteForward() &&
             i+1<way.nodes.size()) {
           size_t j=i+1;
 
           // Search for next routing node on way
           while (j<way.nodes.size()) {
-            if (nodeObjectsMap.find(way.ids[j])!=nodeObjectsMap.end()) {
+            if (nodeObjectsMap.find(way.GetId(j))!=nodeObjectsMap.end()) {
               break;
             }
 
@@ -1217,9 +1398,9 @@ namespace osmscout {
           }
 
           if (j<way.nodes.size() &&
-              way.ids[j]!=routeNode.id) {
+              way.GetId(j)!=routeNode.GetId()) {
             RouteNode::Path                 path;
-            NodeIdOffsetMap::const_iterator pathNodeOffset=nodeIdOffsetMap.find(way.ids[j]);
+            NodeIdOffsetMap::const_iterator pathNodeOffset=nodeIdOffsetMap.find(way.GetId(j));
 
             if (pathNodeOffset!=nodeIdOffsetMap.end()) {
               path.offset=pathNodeOffset->second;
@@ -1231,19 +1412,15 @@ namespace osmscout {
               pendingOffset.routeNodeOffset=routeNodeOffset;
               pendingOffset.index=routeNode.paths.size();
 
-              pendingOffsetsMap[way.ids[j]].push_back(pendingOffset);
+              pendingOffsetsMap[way.GetId(j)].push_back(pendingOffset);
 
               path.offset=0;
             }
 
-            path.objectIndex=routeNode.AddObject(ObjectFileRef(way.GetFileOffset(),refWay));
-            path.type=way.GetType();
-            path.maxSpeed=way.GetMaxSpeed();
-            path.grade=way.GetGrade();
+            path.objectIndex=routeNode.AddObject(ObjectFileRef(way.GetFileOffset(),refWay),
+                                                 objectVariantIndex);
             //path.bearing=CalculateEncodedBearing(way,i,j,true);
             path.flags=CopyFlagsForward(way);
-            path.lat=way.nodes[j].GetLat();
-            path.lon=way.nodes[j].GetLon();
 
             path.distance=0.0;
             for (size_t d=i;d<j; d++) {
@@ -1270,37 +1447,33 @@ namespace osmscout {
       return;
     }
 
-    for (std::list<ObjectFileRef>::const_iterator source=objects.begin();
-        source!=objects.end();
-        source++) {
+    for (const auto& source : objects) {
 
         // TODO: Fix CanTurn
-        if (source->GetType()!=refWay) {
+        if (source.GetType()!=refWay) {
           continue;
         }
 
-      for (std::list<ObjectFileRef>::const_iterator dest=objects.begin();
-          dest!=objects.end();
-          dest++) {
+      for (const auto& dest: objects) {
         // TODO: Fix CanTurn
-        if (dest->GetType()!=refWay) {
+        if (dest.GetType()!=refWay) {
           continue;
         }
 
-        if (*source==*dest) {
+        if (source==dest) {
           continue;
         }
 
         if (!CanTurn(turnConstraints->second,
-                     source->GetFileOffset(),
-                     dest->GetFileOffset())) {
+                     source.GetFileOffset(),
+                     dest.GetFileOffset())) {
           RouteNode::Exclude exclude;
 
-          exclude.source=*source;
+          exclude.source=source;
           exclude.targetIndex=0;
 
           while (exclude.targetIndex<routeNode.paths.size() &&
-              routeNode.objects[routeNode.paths[exclude.targetIndex].objectIndex]!=*dest) {
+              routeNode.objects[routeNode.paths[exclude.targetIndex].objectIndex].object!=dest) {
             exclude.targetIndex++;
           }
 
@@ -1316,95 +1489,107 @@ namespace osmscout {
                                                 const NodeIdOffsetMap& routeNodeIdOffsetMap,
                                                 PendingRouteNodeOffsetsMap& pendingOffsetsMap,
                                                 FileWriter& routeNodeWriter,
-                                                std::vector<NodeIdObjectsMap::const_iterator>& block,
+                                                const std::vector<NodeIdObjectsMap::const_iterator>& block,
                                                 size_t blockCount)
   {
     std::map<FileOffset,RouteNodeRef> routeNodeOffsetMap;
     FileScanner                       routeScanner;
     FileOffset                        currentOffset;
 
-    if (!routeNodeWriter.GetPos(currentOffset)) {
-      progress.Error(std::string("Error while reading current file offset in file '")+
-                     routeNodeWriter.GetFilename()+"'");
-      return false;
-    }
+    currentOffset=routeNodeWriter.GetPos();
 
-    if (!routeScanner.Open(routeNodeWriter.GetFilename(),
-                           FileScanner::LowMemRandom,
-                           false)) {
-      progress.Error("Cannot open '"+routeScanner.GetFilename()+"'");
-      return false;
-    }
+    try {
+      routeScanner.Open(routeNodeWriter.GetFilename(),
+                        FileScanner::LowMemRandom,
+                        false);
 
-    for (size_t b=0; b<blockCount; b++) {
-      PendingRouteNodeOffsetsMap::iterator pendingRouteNodeEntry=pendingOffsetsMap.find(block[b]->first);
+      for (size_t b=0; b<blockCount; b++) {
+        PendingRouteNodeOffsetsMap::iterator pendingRouteNodeEntry=pendingOffsetsMap.find(block[b]->first);
 
-      if (pendingRouteNodeEntry==pendingOffsetsMap.end()) {
-        continue;
-      }
-
-      NodeIdOffsetMap::const_iterator pathNodeOffset=routeNodeIdOffsetMap.find(pendingRouteNodeEntry->first);
-
-      assert(pathNodeOffset!=routeNodeIdOffsetMap.end());
-
-      for (std::list<PendingOffset>::const_iterator pendingOffset=pendingRouteNodeEntry->second.begin();
-           pendingOffset!=pendingRouteNodeEntry->second.end();
-           ++pendingOffset) {
-        std::map<FileOffset,RouteNodeRef>::const_iterator routeNodeIter=routeNodeOffsetMap.find(pendingOffset->routeNodeOffset);
-        RouteNodeRef                                      routeNode;
-
-        if (routeNodeIter!=routeNodeOffsetMap.end()) {
-          routeNode=routeNodeIter->second;
-        }
-        else {
-          routeNode=new RouteNode();
-
-          if (!routeScanner.SetPos(pendingOffset->routeNodeOffset)) {
-            return false;
-          }
-
-          if (!routeNode->Read(routeScanner)) {
-            return false;
-          }
-
-          routeNodeOffsetMap.insert(std::make_pair(pendingOffset->routeNodeOffset,routeNode));
+        if (pendingRouteNodeEntry==pendingOffsetsMap.end()) {
+          continue;
         }
 
-        assert(pendingOffset->index<routeNode->paths.size());
+        NodeIdOffsetMap::const_iterator pathNodeOffset=routeNodeIdOffsetMap.find(pendingRouteNodeEntry->first);
 
-        routeNode->paths[pendingOffset->index].offset=pathNodeOffset->second;
+        assert(pathNodeOffset!=routeNodeIdOffsetMap.end());
+
+        for (const auto& pendingOffset : pendingRouteNodeEntry->second) {
+          std::map<FileOffset,RouteNodeRef>::const_iterator routeNodeIter=routeNodeOffsetMap.find(pendingOffset.routeNodeOffset);
+          RouteNodeRef                                      routeNode;
+
+          if (routeNodeIter!=routeNodeOffsetMap.end()) {
+            routeNode=routeNodeIter->second;
+          }
+          else {
+            routeNode=std::make_shared<RouteNode>();
+
+            routeScanner.SetPos(pendingOffset.routeNodeOffset);
+
+            routeNode->Read(routeScanner);
+
+            routeNodeOffsetMap.insert(std::make_pair(pendingOffset.routeNodeOffset,routeNode));
+          }
+
+          assert(pendingOffset.index<routeNode->paths.size());
+
+          routeNode->paths[pendingOffset.index].offset=pathNodeOffset->second;
+        }
+
+        pendingOffsetsMap.erase(pendingRouteNodeEntry);
       }
 
-      pendingOffsetsMap.erase(pendingRouteNodeEntry);
-    }
+      routeScanner.Close();
 
-    if (!routeScanner.Close()) {
+      for (const auto& routeNodeEntry : routeNodeOffsetMap) {
+        routeNodeWriter.SetPos(routeNodeEntry.first);
+
+        routeNodeEntry.second->Write(routeNodeWriter);
+      }
+
+      routeNodeWriter.SetPos(currentOffset);
+    }
+    catch (IOException& e) {
+      progress.Error(e.GetDescription());
       return false;
     }
 
-    for (std::map<FileOffset,RouteNodeRef>::const_iterator routeNodeEntry=routeNodeOffsetMap.begin();
-         routeNodeEntry!=routeNodeOffsetMap.end();
-         ++routeNodeEntry) {
-      if (!routeNodeWriter.SetPos(routeNodeEntry->first)) {
-        progress.Error(std::string("Error while setting file offset in file '")+
-                       routeNodeWriter.GetFilename()+"'");
-        return false;
+    return true;
+  }
+
+  bool RouteDataGenerator::WriteObjectVariantData(Progress& progress,
+                                                  const std::string& variantFilename,
+                                                  const std::map<ObjectVariantData,uint16_t>& routeDataMap)
+  {
+    FileWriter writer;
+
+    try {
+      writer.Open(variantFilename);
+
+      std::vector<ObjectVariantData> objectVariantData;
+
+      objectVariantData.resize(routeDataMap.size());
+
+      for (const auto& entry : routeDataMap) {
+        objectVariantData[entry.second]=entry.first;
       }
 
-      if (!routeNodeEntry->second->Write(routeNodeWriter)) {
-        progress.Error(std::string("Error while writing route node to file '")+
-                       routeNodeWriter.GetFilename()+"'");
-        return false;
+      writer.Write((uint32_t)objectVariantData.size());
+
+      for (const auto& entry : objectVariantData) {
+        entry.Write(writer);
       }
+
+      progress.Info(NumberToString(objectVariantData.size()) + " object variant(s)");
+
+      writer.Close();
     }
-
-    if (!routeNodeWriter.SetPos(currentOffset)) {
-      progress.Error(std::string("Error while setting current file offset in file '")+
-                     routeNodeWriter.GetFilename()+"'");
+    catch (IOException& e) {
+      progress.Error(e.GetDescription());
       return false;
     }
 
-    return !routeNodeWriter.HasError();
+    return true;
   }
 
   bool RouteDataGenerator::WriteRouteGraph(const ImportParameter& parameter,
@@ -1412,8 +1597,9 @@ namespace osmscout {
                                            const TypeConfig& typeConfig,
                                            const NodeIdObjectsMap& nodeObjectsMap,
                                            const ViaTurnRestrictionMap& restrictions,
-                                           Vehicle vehicle,
-                                           const std::string& filename)
+                                           VehicleMask vehicles,
+                                           const std::string& dataFilename,
+                                           const std::string& variantFilename)
   {
     FileScanner                wayScanner;
     FileScanner                areaScanner;
@@ -1421,299 +1607,311 @@ namespace osmscout {
 
     uint32_t                   handledRouteNodeCount=0;
     uint32_t                   writtenRouteNodeCount=0;
-    uint32_t                   writtenRoutePathCount=0;
+    uint32_t                   objectCount=0;
+    uint32_t                   pathCount=0;
+    uint32_t                   excludeCount=0;
     uint32_t                   simpleNodesCount=0;
 
     NodeIdOffsetMap            routeNodeIdOffsetMap;
     PendingRouteNodeOffsetsMap pendingOffsetsMap;
 
+    std::map<ObjectVariantData,uint16_t> routeDataMap;
+
     //
     // Writing route nodes
     //
 
-    if (!writer.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
-                                     filename))) {
-      progress.Error("Cannot create '"+filename+"'");
-      return false;
-    }
 
-    writer.Write(writtenRouteNodeCount);
+    try {
+      writer.Open(dataFilename);
 
-    if (!wayScanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
-                                         "ways.dat"),
-                         FileScanner::Sequential,
-                         parameter.GetWayDataMemoryMaped())) {
-      progress.Error("Cannot open '"+wayScanner.GetFilename()+"'");
-      return false;
-    }
+      writer.Write(writtenRouteNodeCount);
 
-    if (!areaScanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
-                                          "areas.dat"),
-                          FileScanner::Sequential,
-                          parameter.GetWayDataMemoryMaped())) {
-      progress.Error("Cannot open '"+areaScanner.GetFilename()+"'");
-      return false;
-    }
+      wayScanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
+                                      WayDataFile::WAYS_DAT),
+                      FileScanner::Sequential,
+                      parameter.GetWayDataMemoryMaped());
 
-    std::vector<NodeIdObjectsMap::const_iterator> block(parameter.GetRouteNodeBlockSize());
+      areaScanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
+                                       AreaDataFile::AREAS_DAT),
+                       FileScanner::Sequential,
+                       parameter.GetAreaDataMemoryMaped());
 
-    NodeIdObjectsMap::const_iterator node=nodeObjectsMap.begin();
-    while (node!=nodeObjectsMap.end()) {
+      std::vector<NodeIdObjectsMap::const_iterator> block(parameter.GetRouteNodeBlockSize());
 
-      // Fill the current block of nodes to be processed
+      NodeIdObjectsMap::const_iterator node=nodeObjectsMap.begin();
+      while (node!=nodeObjectsMap.end()) {
 
-      size_t blockCount=0;
+        // Fill the current block of nodes to be processed
 
-      progress.Info("Loading up to " + NumberToString(block.size()) + " route nodes");
-      while (blockCount<block.size() &&
-             node!=nodeObjectsMap.end()) {
-        progress.SetProgress(writtenRouteNodeCount,nodeObjectsMap.size());
+        size_t blockCount=0;
 
-        block[blockCount]=node;
+        progress.Info("Loading up to " + NumberToString(block.size()) + " route nodes");
+        while (blockCount<block.size() &&
+               node!=nodeObjectsMap.end()) {
+          block[blockCount]=node;
 
-        blockCount++;
-        node++;
-      }
+          blockCount++;
+          node++;
+        }
 
-      progress.Info("Loading intersecting ways");
+        progress.Info("Loading intersecting ways and areas");
 
-      // Collect way ids of all ways in current block and load them
+        // Collect way ids of all ways in current block and load them
 
-      std::set<FileOffset> wayOffsets;
-      std::set<FileOffset> areaOffsets;
+        std::set<FileOffset> wayOffsets;
+        std::set<FileOffset> areaOffsets;
 
-      for (size_t b=0; b<blockCount; b++) {
-        for (std::list<ObjectFileRef>::const_iterator ref=block[b]->second.begin();
-            ref!=block[b]->second.end();
-            ref++) {
-          switch (ref->GetType())
-          {
-          case refNone:
-          case refNode:
-            // Should never happen
-            assert(false);
-            break;
-          case refWay:
-            wayOffsets.insert(ref->GetFileOffset());
-            break;
-          case refArea:
-            areaOffsets.insert(ref->GetFileOffset());
-            break;
+        for (size_t b=0; b<blockCount; b++) {
+          for (const auto& ref : block[b]->second) {
+            switch (ref.GetType())
+            {
+            case refNone:
+            case refNode:
+              // Should never happen, since nodes are not routable
+              assert(false);
+              break;
+            case refWay:
+              wayOffsets.insert(ref.GetFileOffset());
+              break;
+            case refArea:
+              areaOffsets.insert(ref.GetFileOffset());
+              break;
+            }
           }
         }
-      }
 
-      OSMSCOUT_HASHMAP<FileOffset,WayRef>  waysMap;
+        std::unordered_map<FileOffset,WayRef>  waysMap;
 
-      if (!LoadWays(progress,
-                    wayScanner,
-                    wayOffsets,
-                    waysMap)) {
-        return false;
-      }
-
-      wayOffsets.clear();
-
-      OSMSCOUT_HASHMAP<FileOffset,AreaRef> areasMap;
-
-      if (!LoadAreas(progress,
-                     areaScanner,
-                     areaOffsets,
-                     areasMap)) {
-        return false;
-      }
-
-      areaOffsets.clear();
-
-      progress.Info("Storing route nodes");
-
-      for (size_t b=0; b<blockCount; b++) {
-        NodeIdObjectsMap::const_iterator node=block[b];
-        RouteNode                        routeNode;
-        FileOffset                       routeNodeOffset;
-
-        if (!writer.GetPos(routeNodeOffset)) {
+        if (!LoadWays(typeConfig,
+                      progress,
+                      wayScanner,
+                      wayOffsets,
+                      waysMap)) {
           return false;
         }
 
-        routeNode.id=node->first;
+        wayOffsets.clear();
 
-        handledRouteNodeCount++;
-        progress.SetProgress(handledRouteNodeCount,nodeObjectsMap.size());
+        std::unordered_map<FileOffset,AreaRef> areasMap;
 
-        //
-        // Find out if any of the areas/ways at the intersection is in principle
-        // routable for us. If not, we can saftly drop this node from the routing graph.
-        //
-
-        bool isRoutable=false;
-
-        for (std::list<ObjectFileRef>::const_iterator ref=node->second.begin();
-            ref!=node->second.end();
-            ref++) {
-          if (ref->GetType()==refWay) {
-            const WayRef& way=waysMap[ref->GetFileOffset()];
-
-            if (!way.Valid()) {
-              progress.Error("Error while loading way at offset "+
-                             NumberToString(ref->GetFileOffset()) +
-                             " (Internal error?)");
-              continue;
-            }
-
-            if (way->GetAttributes().GetAccess().CanRoute(vehicle)) {
-              isRoutable=true;
-            }
-
-          }
-          else if (ref->GetType()==refArea) {
-            const AreaRef& area=areasMap[ref->GetFileOffset()];
-
-            if (!area.Valid()) {
-              progress.Error("Error while loading area at offset "+
-                             NumberToString(ref->GetFileOffset()) +
-                             " (Internal error?)");
-              continue;
-            }
-
-            if (typeConfig.GetTypeInfo(area->GetType()).CanRoute()) {
-              isRoutable=true;
-            }
-          }
-        }
-
-        if (!isRoutable) {
-          continue;
-        }
-
-        //
-        // Calculate all outgoing paths
-        //
-
-        for (std::list<ObjectFileRef>::const_iterator ref=node->second.begin();
-            ref!=node->second.end();
-            ref++) {
-
-          if (ref->GetType()==refWay) {
-            const WayRef& way=waysMap[ref->GetFileOffset()];
-
-            if (!way.Valid()) {
-              progress.Error("Error while loading way at offset "+
-                             NumberToString(ref->GetFileOffset()) +
-                             " (Internal error?)");
-              continue;
-            }
-
-            if (!way->GetAttributes().GetAccess().CanRoute(vehicle)) {
-              continue;
-            }
-
-            // Circular way routing (similar to current area routing, but respecting isOneway())
-            if (way->IsCircular()) {
-              CalculateCircularWayPaths(routeNode,
-                                        *way,
-                                        routeNodeOffset,
-                                        nodeObjectsMap,
-                                        routeNodeIdOffsetMap,
-                                        pendingOffsetsMap);
-            }
-            // Normal way routing
-            else {
-              CalculateWayPaths(routeNode,
-                                *way,
-                                routeNodeOffset,
-                                nodeObjectsMap,
-                                routeNodeIdOffsetMap,
-                                pendingOffsetsMap);
-            }
-          }
-          else if (ref->GetType()==refArea) {
-            const AreaRef& area=areasMap[ref->GetFileOffset()];
-
-            if (!area.Valid()) {
-              progress.Error("Error while loading area at offset "+
-                             NumberToString(ref->GetFileOffset()) +
-                             " (Internal error?)");
-              continue;
-            }
-
-            if (!typeConfig.GetTypeInfo(area->GetType()).CanRoute()) {
-              continue;
-            }
-
-            routeNode.objects.push_back(*ref);
-
-            CalculateAreaPaths(typeConfig,
-                               routeNode,
-                               *area,
-                               routeNodeOffset,
-                               nodeObjectsMap,
-                               routeNodeIdOffsetMap,
-                               pendingOffsetsMap);
-          }
-        }
-
-        FillRoutePathExcludes(routeNode,
-                              node->second,
-                              restrictions);
-
-        routeNodeIdOffsetMap.insert(std::make_pair(node->first,routeNodeOffset));
-
-        if (routeNode.paths.size()==1) {
-          simpleNodesCount++;
-        }
-
-        if (!routeNode.Write(writer)) {
-          progress.Error(std::string("Error while writing route node to file '")+
-                         writer.GetFilename()+"'");
+        if (!LoadAreas(typeConfig,
+                       progress,
+                       areaScanner,
+                       areaOffsets,
+                       areasMap)) {
           return false;
         }
 
-        writtenRouteNodeCount++;
-        writtenRoutePathCount+=(uint32_t)routeNode.paths.size();
+        areaOffsets.clear();
+
+        progress.Info("Storing route nodes");
+
+        for (size_t b=0; b<blockCount; b++) {
+          NodeIdObjectsMap::const_iterator node=block[b];
+          FileOffset                       routeNodeOffset;
+
+          routeNodeOffset=writer.GetPos();
+
+          handledRouteNodeCount++;
+          progress.SetProgress(handledRouteNodeCount,
+                               (uint32_t)nodeObjectsMap.size());
+
+          //
+          // Find out if any of the areas/ways at the intersection is routable
+          // for us for the given vehicle (we already only loaded those objects
+          // that are routable at all).
+          // If none of the objects is routable the complete node is not routable and
+          // we can safely drop this node from the routing graph.
+          //
+
+          if (!IsAnyRoutable(progress,
+                             node->second,
+                             waysMap,
+                             areasMap,
+                             vehicles)) {
+            continue;
+          }
+
+          RouteNode routeNode;
+          Point     point;
+
+          if (!GetRouteNodePoint(progress,
+                                 node->first,
+                                 node->second,
+                                 waysMap,
+                                 areasMap,
+                                 point)) {
+            continue;
+          }
+
+          routeNode.SetPoint(point);
+
+          //
+          // Calculate all outgoing paths
+          //
+
+          for (const auto& ref : node->second) {
+            if (ref.GetType()==refWay) {
+              const WayRef& way=waysMap[ref.GetFileOffset()];
+
+              if (!way) {
+                progress.Error("Error while loading way at offset "+
+                               NumberToString(ref.GetFileOffset()) +
+                               " (Internal error?)");
+                continue;
+              }
+
+              if (!GetAccess(*way).CanRoute(vehicles)) {
+                continue;
+              }
+
+              uint16_t objectVariantIndex=RegisterOrUseObjectVariantData(routeDataMap,
+                                                                         way->GetType(),
+                                                                         GetMaxSpeed(*way),
+                                                                         GetGrade(*way));
+
+              if (way->IsCircular()) {
+                // Circular way routing (similar to current area routing, but respecting isOneway())
+                CalculateCircularWayPaths(routeNode,
+                                          *way,
+                                          objectVariantIndex,
+                                          routeNodeOffset,
+                                          nodeObjectsMap,
+                                          routeNodeIdOffsetMap,
+                                          pendingOffsetsMap);
+              }
+              else {
+                // Normal way routing
+                CalculateWayPaths(routeNode,
+                                  *way,
+                                  objectVariantIndex,
+                                  routeNodeOffset,
+                                  nodeObjectsMap,
+                                  routeNodeIdOffsetMap,
+                                  pendingOffsetsMap);
+              }
+            }
+            else if (ref.GetType()==refArea) {
+              const AreaRef& area=areasMap[ref.GetFileOffset()];
+
+              if (!area) {
+                progress.Error("Error while loading area at offset "+
+                               NumberToString(ref.GetFileOffset()) +
+                               " (Internal error?)");
+                continue;
+              }
+
+              if (!area->GetType()->CanRoute()) {
+                continue;
+              }
+
+              uint16_t objectVariantIndex=RegisterOrUseObjectVariantData(routeDataMap,
+                                                                         area->GetType(),
+                                                                         0,
+                                                                         1);
+
+              routeNode.AddObject(ref,
+                                  objectVariantIndex);
+
+              CalculateAreaPaths(routeNode,
+                                 *area,
+                                 objectVariantIndex,
+                                 routeNodeOffset,
+                                 nodeObjectsMap,
+                                 routeNodeIdOffsetMap,
+                                 pendingOffsetsMap);
+            }
+          }
+
+          FillRoutePathExcludes(routeNode,
+                                node->second,
+                                restrictions);
+
+          routeNodeIdOffsetMap.insert(std::make_pair(node->first,routeNodeOffset));
+
+          if (routeNode.paths.size()==1) {
+            simpleNodesCount++;
+          }
+
+          objectCount+=routeNode.objects.size();
+          pathCount+=routeNode.paths.size();
+          excludeCount+=routeNode.excludes.size();
+
+          routeNode.Write(writer);
+
+          writtenRouteNodeCount++;
+        }
+
+        writer.Flush();
+
+        //
+        // A route node stores the fileOffset of all other route nodes (destinations) it can route to.
+        // However if the destination route node is not yet stored, we do not have a file offset yet. Route nodes
+        // we do not have a file offset for yet, are stored in the pendingOffsetsMap map.
+        // So for every blocked store we are looking if any node in the block is in the pendingOffsetsMap, reload
+        // the requesting route node, store the new offsets and write the route node back.
+
+        if (!HandlePendingOffsets(progress,
+                                  routeNodeIdOffsetMap,
+                                  pendingOffsetsMap,
+                                  writer,
+                                  block,
+                                  blockCount)) {
+          return false;
+        }
       }
 
-      writer.Flush();
+      assert(pendingOffsetsMap.empty());
 
-      if (!HandlePendingOffsets(progress,
-                                routeNodeIdOffsetMap,
-                                pendingOffsetsMap,
-                                writer,
-                                block,
-                                blockCount)) {
-        return false;
-      }
+      writer.SetPos(0);
+      writer.Write(writtenRouteNodeCount);
+
+      progress.Info(NumberToString(writtenRouteNodeCount) + " route node(s) written");
+      progress.Info(NumberToString(simpleNodesCount)+ " route node(s) are simple and only have 1 path");
+      progress.Info(NumberToString(objectCount)+ " object(s)");
+      progress.Info(NumberToString(pathCount) + " path(s)");
+      progress.Info(NumberToString(excludeCount) + " exclude(s)");
+
+      wayScanner.Close();
+      areaScanner.Close();
+      writer.Close();
     }
-
-    assert(pendingOffsetsMap.empty());
-
-    if (!wayScanner.Close()) {
-      progress.Error("Cannot close file '"+wayScanner.GetFilename()+"'");
+    catch (IOException& e) {
+      progress.Error(e.GetDescription());
+      wayScanner.CloseFailsafe();
+      areaScanner.CloseFailsafe();
+      writer.CloseFailsafe();
       return false;
     }
 
-    writer.SetPos(0);
-    writer.Write(writtenRouteNodeCount);
-
-    progress.Info(NumberToString(writtenRouteNodeCount) + " route node(s) and " + NumberToString(writtenRoutePathCount)+ " paths written");
-    progress.Info(NumberToString(simpleNodesCount)+ " route node(s) are simple and only have 1 path");
-
-    if (!writer.Close()) {
+    if (!WriteObjectVariantData(progress,
+                                variantFilename,
+                                routeDataMap)) {
       return false;
     }
 
     return true;
   }
 
-  bool RouteDataGenerator::Import(const ImportParameter& parameter,
-                                  Progress& progress,
-                                  const TypeConfig& typeConfig)
+  bool RouteDataGenerator::Import(const TypeConfigRef& typeConfig,
+                                  const ImportParameter& parameter,
+                                  Progress& progress)
   {
     // List of restrictions for a way
-    ViaTurnRestrictionMap restrictions;
+    ViaTurnRestrictionMap              restrictions;
 
-    NodeUseMap            nodeUseMap;
-    NodeIdObjectsMap      nodeObjectsMap;
+    NodeUseMap                         nodeUseMap;
+    NodeIdObjectsMap                   nodeObjectsMap;
+    AccessRestrictedFeatureValueReader accessRestrictedReader(*typeConfig);
+    AccessFeatureValueReader           accessReader(*typeConfig);
+    MaxSpeedFeatureValueReader         maxSpeedReader(*typeConfig);
+    GradeFeatureValueReader            gradeReader(*typeConfig);
+
+    this->accessRestrictedReader=&accessRestrictedReader;
+    this->accessReader=&accessReader;
+    this->maxSpeedReader=&maxSpeedReader;
+    this->gradeReader=&gradeReader;
 
     //
     // Handling of restriction relations
@@ -1727,6 +1925,8 @@ namespace osmscout {
       return false;
     }
 
+    progress.Info(std::string("Restrictions for ") + NumberToString(restrictions.size()) + " objects loaded");
+
     //
     // Building a map of nodes and the number of ways that contain this way
     //
@@ -1735,41 +1935,38 @@ namespace osmscout {
 
     if (!ReadIntersections(parameter,
                            progress,
-                           typeConfig,
+                           *typeConfig,
                            nodeUseMap)) {
       return false;
     }
 
     //
-    // Building a map of way endpoint ids and list of ways (way offsets) having this point as endpoint
+    // Building a map of endpoint ids and list of objects (ObjectFileRef for ways and areas) having this point as junction point
     //
 
     progress.SetAction("Collecting objects at intersections");
 
     if (!ReadObjectsAtIntersections(parameter,
                                     progress,
-                                    typeConfig,
+                                    *typeConfig,
                                     nodeUseMap,
                                     nodeObjectsMap)) {
       return false;
     }
 
+    // We now have the nodeObjectsMap, we do not need this information anymore
     nodeUseMap.Clear();
-
-    progress.Info(NumberToString(nodeObjectsMap.size())+ " route nodes collected");
 
     progress.SetAction("Postprocessing intersections");
 
 
     // We sort objects by increasing file offset, for more efficient storage
     // in route node
-    for (NodeIdObjectsMap::iterator entry=nodeObjectsMap.begin();
-        entry!=nodeObjectsMap.end();
-        ++entry) {
-      entry->second.sort(ObjectFileRefByFileOffsetComparator());
+    for (auto& entry : nodeObjectsMap) {
+      entry.second.sort(ObjectFileRefByFileOffsetComparator());
     }
 
-    progress.SetAction(std::string("Writing intersection file '")+Router::FILENAME_INTERSECTIONS_DAT+"'");
+    progress.SetAction(std::string("Writing intersection file '")+RoutingService::FILENAME_INTERSECTIONS_DAT+"'");
 
     if (!WriteIntersections(parameter,
                             progress,
@@ -1777,39 +1974,35 @@ namespace osmscout {
       return false;
     }
 
+    for (const auto& router : parameter.GetRouter()) {
+      std::string dataFilename=AppendFileToDir(parameter.GetDestinationDirectory(),
+                                               router.GetDataFilename());
+      std::string variantFilename=AppendFileToDir(parameter.GetDestinationDirectory(),
+                                                  router.GetVariantFilename());
+      std::string indexFilename=AppendFileToDir(parameter.GetDestinationDirectory(),
+                                                router.GetIndexFilename());
 
-    progress.SetAction(std::string("Writing route graph '")+Router::FILENAME_FOOT_DAT+"'");
+      progress.SetAction(std::string("Writing route graph '")+dataFilename+"'");
 
+      WriteRouteGraph(parameter,
+                      progress,
+                      *typeConfig,
+                      nodeObjectsMap,
+                      restrictions,
+                      router.GetVehicleMask(),
+                      dataFilename,
+                      variantFilename);
 
-    WriteRouteGraph(parameter,
-                    progress,
-                    typeConfig,
-                    nodeObjectsMap,
-                    restrictions,
-                    vehicleFoot,
-                    Router::FILENAME_FOOT_DAT);
+      NumericIndexGenerator<Id,RouteNode> indexGenerator(std::string("Generating '")+indexFilename+"'",
+                                                         router.GetDataFilename(),
+                                                         router.GetIndexFilename());
 
-    progress.SetAction(std::string("Writing route graph '")+Router::FILENAME_BICYCLE_DAT+"'");
-
-
-    WriteRouteGraph(parameter,
-                    progress,
-                    typeConfig,
-                    nodeObjectsMap,
-                    restrictions,
-                    vehicleBicycle,
-                    Router::FILENAME_BICYCLE_DAT);
-
-    progress.SetAction(std::string("Writing route graph '")+Router::FILENAME_CAR_DAT+"'");
-
-
-    WriteRouteGraph(parameter,
-                    progress,
-                    typeConfig,
-                    nodeObjectsMap,
-                    restrictions,
-                    vehicleCar,
-                    Router::FILENAME_CAR_DAT);
+      if (!indexGenerator.Import(typeConfig,
+                                 parameter,
+                                 progress)) {
+        return false;
+      }
+    }
 
     // Cleaning up...
 

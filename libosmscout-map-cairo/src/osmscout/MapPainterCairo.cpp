@@ -317,8 +317,9 @@ namespace osmscout {
   }
 #endif
 
-  MapPainterCairo::MapPainterCairo()
-  : MapPainter(new CoordBufferImpl<Vertex2D>()),
+  MapPainterCairo::MapPainterCairo(const StyleConfigRef& styleConfig)
+  : MapPainter(styleConfig,
+               new CoordBufferImpl<Vertex2D>()),
     coordBuffer((CoordBufferImpl<Vertex2D>*)transBuffer.buffer)
   {
     // no code
@@ -363,13 +364,14 @@ namespace osmscout {
     }
   }
 
-  MapPainterCairo::Font MapPainterCairo::GetFont(const MapParameter& parameter,
+  MapPainterCairo::Font MapPainterCairo::GetFont(const Projection& projection,
+                                                 const MapParameter& parameter,
                                                  double fontSize)
   {
 #if defined(OSMSCOUT_MAP_CAIRO_HAVE_LIB_PANGO)
     FontMap::const_iterator f;
 
-    fontSize=fontSize*ConvertWidthToPixel(parameter,parameter.GetFontSize());
+    fontSize=fontSize*projection.ConvertWidthToPixel(parameter.GetFontSize());
 
     f=fonts.find(fontSize);
 
@@ -386,7 +388,7 @@ namespace osmscout {
 #else
     FontMap::const_iterator f;
 
-    fontSize=fontSize*ConvertWidthToPixel(parameter,parameter.GetFontSize());
+    fontSize=fontSize*projection.ConvertWidthToPixel(parameter.GetFontSize());
 
     f=fonts.find(fontSize);
 
@@ -490,8 +492,7 @@ namespace osmscout {
     }
 
     if (hasBorder) {
-      double borderWidth=ConvertWidthToPixel(parameter,
-                                             fill.GetBorderWidth());
+      double borderWidth=projection.ConvertWidthToPixel(fill.GetBorderWidth());
 
       if (borderWidth>=parameter.GetLineMinWidthPixel()) {
         SetLineAttributes(fill.GetBorderColor(),
@@ -505,7 +506,7 @@ namespace osmscout {
     }
   }
 
-  bool MapPainterCairo::HasIcon(const StyleConfig& styleConfig,
+  bool MapPainterCairo::HasIcon(const StyleConfig& /*styleConfig*/,
                                 const MapParameter& parameter,
                                 IconStyle& style)
   {
@@ -604,7 +605,35 @@ namespace osmscout {
     return false;
   }
 
-  void MapPainterCairo::GetTextDimension(const MapParameter& parameter,
+  void MapPainterCairo::GetFontHeight(const Projection& projection,
+                                      const MapParameter& parameter,
+                                      double fontSize,
+                                      double& height)
+  {
+#if defined(OSMSCOUT_MAP_CAIRO_HAVE_LIB_PANGO)
+    Font           font;
+
+    font=GetFont(projection,
+                 parameter,
+                 fontSize);
+
+    height=pango_font_description_get_size(font)/PANGO_SCALE;
+#else
+    Font                 font;
+    cairo_font_extents_t fontExtents;
+
+    font=GetFont(projection,
+                 parameter,
+                 fontSize);
+
+    cairo_scaled_font_extents(font,&fontExtents);
+
+    height=fontExtents.height;
+#endif
+  }
+
+  void MapPainterCairo::GetTextDimension(const Projection& projection,
+                                         const MapParameter& parameter,
                                          double fontSize,
                                          const std::string& text,
                                          double& xOff,
@@ -613,30 +642,47 @@ namespace osmscout {
                                          double& height)
   {
 #if defined(OSMSCOUT_MAP_CAIRO_HAVE_LIB_PANGO)
-    Font           font;
-    PangoLayout    *layout=pango_cairo_create_layout(draw);
-    PangoRectangle extends;
-
-    font=GetFont(parameter,
-                 fontSize);
+    Font             font=GetFont(projection,
+                                  parameter,
+                                  fontSize);
+    PangoLayout      *layout=pango_cairo_create_layout(draw);
 
     pango_layout_set_font_description(layout,font);
-    pango_layout_set_text(layout,text.c_str(),text.length());
 
-    pango_layout_get_pixel_extents(layout,&extends,NULL);
+    PangoContext     *context=pango_layout_get_context(layout);
+    PangoFontMetrics *metrics=pango_context_get_metrics(context,
+                                                        font,
+                                                        pango_context_get_language(context));
+    size_t           proposedWidth=pango_font_metrics_get_approximate_char_width(metrics)*parameter.GetLabelLineCharCount();
+    PangoRectangle   extends;
+
+    pango_layout_set_text(layout,text.c_str(),text.length());
+    pango_layout_set_alignment(layout,PANGO_ALIGN_CENTER);
+    pango_layout_set_wrap(layout,PANGO_WRAP_WORD);
+    pango_layout_set_width(layout,proposedWidth);
+
+    pango_layout_get_pixel_extents(layout,NULL,&extends);
 
     xOff=extends.x;
     yOff=extends.y;
     width=extends.width;
-    height=pango_font_description_get_size(font)/PANGO_SCALE;
 
+    if (pango_layout_get_line_count(layout)<=1) {
+      height=pango_font_description_get_size(font)/PANGO_SCALE;
+    }
+    else {
+      height=extends.height;
+    }
+
+    pango_font_metrics_unref(metrics);
     g_object_unref(layout);
 #else
     Font                 font;
     cairo_text_extents_t textExtents;
     cairo_font_extents_t fontExtents;
 
-    font=GetFont(parameter,
+    font=GetFont(projection,
+                 parameter,
                  fontSize);
 
     cairo_scaled_font_extents(font,&fontExtents);
@@ -693,8 +739,8 @@ namespace osmscout {
 
     symbol.GetBoundingBox(minX,minY,maxX,maxY);
 
-    double width=ConvertWidthToPixel(parameter,maxX-minX);
-    double height=ConvertWidthToPixel(parameter,maxY-minY);
+    double width=projection.ConvertWidthToPixel(maxX-minX);
+    double height=projection.ConvertWidthToPixel(maxY-minY);
 
     for (std::list<DrawPrimitiveRef>::const_iterator p=symbol.GetPrimitives().begin();
          p!=symbol.GetPrimitives().end();
@@ -743,19 +789,30 @@ namespace osmscout {
                                   const MapParameter& parameter,
                                   const LabelData& label)
   {
-    if (dynamic_cast<const TextStyle*>(label.style.Get())!=NULL) {
-      const TextStyle* style=dynamic_cast<const TextStyle*>(label.style.Get());
+    if (dynamic_cast<const TextStyle*>(label.style.get())!=NULL) {
+      const TextStyle* style=dynamic_cast<const TextStyle*>(label.style.get());
       double           r=style->GetTextColor().GetR();
       double           g=style->GetTextColor().GetG();
       double           b=style->GetTextColor().GetB();
-      Font             font=GetFont(parameter,
+      Font             font=GetFont(projection,
+                                    parameter,
                                     label.fontSize);
 
 #if defined(OSMSCOUT_MAP_CAIRO_HAVE_LIB_PANGO)
-      PangoLayout *layout=pango_cairo_create_layout(draw);
+      PangoLayout      *layout=pango_cairo_create_layout(draw);
 
       pango_layout_set_font_description(layout,font);
+
+      PangoContext     *context=pango_layout_get_context(layout);
+      PangoFontMetrics *metrics=pango_context_get_metrics(context,
+                                                          font,
+                                                          pango_context_get_language(context));
+      size_t           proposedWidth=pango_font_metrics_get_approximate_char_width(metrics)*parameter.GetLabelLineCharCount();
+
       pango_layout_set_text(layout,label.text.c_str(),label.text.length());
+      pango_layout_set_alignment(layout,PANGO_ALIGN_CENTER);
+      pango_layout_set_wrap(layout,PANGO_WRAP_WORD);
+      pango_layout_set_width(layout,proposedWidth);
 
       cairo_set_source_rgba(draw,r,g,b,label.alpha);
 
@@ -780,6 +837,7 @@ namespace osmscout {
         cairo_fill(draw);
       }
 
+      pango_font_metrics_unref(metrics);
       g_object_unref(layout);
 
 #else
@@ -812,8 +870,8 @@ namespace osmscout {
       }
 #endif
     }
-    else if (dynamic_cast<const ShieldStyle*>(label.style.Get())!=NULL) {
-      const ShieldStyle* style=dynamic_cast<const ShieldStyle*>(label.style.Get());
+    else if (dynamic_cast<const ShieldStyle*>(label.style.get())!=NULL) {
+      const ShieldStyle* style=dynamic_cast<const ShieldStyle*>(label.style.get());
 
       cairo_set_dash(draw,NULL,0,0);
       cairo_set_line_width(draw,1);
@@ -849,7 +907,8 @@ namespace osmscout {
                             style->GetTextColor().GetB(),
                             style->GetTextColor().GetA());
 #if defined(OSMSCOUT_MAP_CAIRO_HAVE_LIB_PANGO)
-      Font        font=GetFont(parameter,
+      Font        font=GetFont(projection,
+                               parameter,
                                label.fontSize);
       PangoLayout *layout=pango_cairo_create_layout(draw);
 
@@ -867,7 +926,8 @@ namespace osmscout {
       g_object_unref(layout);
 
 #else
-      Font                 font=GetFont(parameter,
+      Font                 font=GetFont(projection,
+                                        parameter,
                                         label.fontSize);
       cairo_font_extents_t fontExtents;
 
@@ -939,7 +999,8 @@ namespace osmscout {
     }
 
 #if defined(OSMSCOUT_MAP_CAIRO_HAVE_LIB_PANGO)
-    Font           font=GetFont(parameter,
+    Font           font=GetFont(projection,
+                                parameter,
                                 style.GetSize());
     PangoLayout    *layout=pango_cairo_create_layout(draw);
     PangoRectangle extends;
@@ -986,7 +1047,8 @@ namespace osmscout {
     g_object_unref(layout);
 
 #else
-    Font                 font=GetFont(parameter,
+    Font                 font=GetFont(projection,
+                                      parameter,
                                       style.GetSize());
     cairo_text_extents_t textExtents;
 
@@ -1025,7 +1087,7 @@ namespace osmscout {
   }
 
   void MapPainterCairo::DrawPrimitivePath(const Projection& projection,
-                                          const MapParameter& parameter,
+                                          const MapParameter& /*parameter*/,
                                           const DrawPrimitiveRef& p,
                                           double x, double y,
                                           double minX,
@@ -1033,25 +1095,25 @@ namespace osmscout {
                                           double maxX,
                                           double maxY)
   {
-    DrawPrimitive* primitive=p.Get();
-    double         centerX=maxX-minX;
-    double         centerY=maxY-minY;
+    DrawPrimitive* primitive=p.get();
+    double         centerX=(minX+maxX)/2;
+    double         centerY=(minY+maxY)/2;
 
     if (dynamic_cast<PolygonPrimitive*>(primitive)!=NULL) {
       PolygonPrimitive* polygon=dynamic_cast<PolygonPrimitive*>(primitive);
 
-      for (std::list<Coord>::const_iterator pixel=polygon->GetCoords().begin();
+      for (std::list<Vertex2D>::const_iterator pixel=polygon->GetCoords().begin();
            pixel!=polygon->GetCoords().end();
            ++pixel) {
         if (pixel==polygon->GetCoords().begin()) {
           cairo_move_to(draw,
-                        x+ConvertWidthToPixel(parameter,pixel->x-centerX),
-                        y+ConvertWidthToPixel(parameter,maxY-pixel->y-centerY));
+                        x+projection.ConvertWidthToPixel(pixel->GetX()-centerX),
+                        y+projection.ConvertWidthToPixel(maxY-pixel->GetY()-centerY));
         }
         else {
           cairo_line_to(draw,
-                        x+ConvertWidthToPixel(parameter,pixel->x-centerX),
-                        y+ConvertWidthToPixel(parameter,maxY-pixel->y-centerY));
+                        x+projection.ConvertWidthToPixel(pixel->GetX()-centerX),
+                        y+projection.ConvertWidthToPixel(maxY-pixel->GetY()-centerY));
         }
       }
 
@@ -1061,18 +1123,18 @@ namespace osmscout {
       RectanglePrimitive* rectangle=dynamic_cast<RectanglePrimitive*>(primitive);
 
       cairo_rectangle(draw,
-                      x+ConvertWidthToPixel(parameter,rectangle->GetTopLeft().x-centerX),
-                      y+ConvertWidthToPixel(parameter,maxY-rectangle->GetTopLeft().y-centerY),
-                      ConvertWidthToPixel(parameter,rectangle->GetWidth()),
-                      ConvertWidthToPixel(parameter,rectangle->GetHeight()));
+                      x+projection.ConvertWidthToPixel(rectangle->GetTopLeft().GetX()-centerX),
+                      y+projection.ConvertWidthToPixel(maxY-rectangle->GetTopLeft().GetY()-centerY),
+                      projection.ConvertWidthToPixel(rectangle->GetWidth()),
+                      projection.ConvertWidthToPixel(rectangle->GetHeight()));
     }
     else if (dynamic_cast<CirclePrimitive*>(primitive)!=NULL) {
       CirclePrimitive* circle=dynamic_cast<CirclePrimitive*>(primitive);
 
       cairo_arc(draw,
-                x+ConvertWidthToPixel(parameter,circle->GetCenter().x-centerX),
-                y+ConvertWidthToPixel(parameter,maxY-circle->GetCenter().y-centerY),
-                ConvertWidthToPixel(parameter,circle->GetRadius()),
+                x+projection.ConvertWidthToPixel(circle->GetCenter().GetX()-centerX),
+                y+projection.ConvertWidthToPixel(maxY-circle->GetCenter().GetY()-centerY),
+                projection.ConvertWidthToPixel(circle->GetRadius()),
                 0,2*M_PI);
     }
   }
@@ -1121,8 +1183,8 @@ namespace osmscout {
     cairo_paint(draw);
   }
 
-  void MapPainterCairo::DrawPath(const Projection& projection,
-                                 const MapParameter& parameter,
+  void MapPainterCairo::DrawPath(const Projection& /*projection*/,
+                                 const MapParameter& /*parameter*/,
                                  const Color& color,
                                  double width,
                                  const std::vector<double>& dash,
@@ -1245,7 +1307,7 @@ namespace osmscout {
   }
 
   void MapPainterCairo::DrawGround(const Projection& projection,
-                                   const MapParameter& parameter,
+                                   const MapParameter& /*parameter*/,
                                    const FillStyle& style)
   {
     cairo_set_source_rgba(draw,
@@ -1262,18 +1324,16 @@ namespace osmscout {
     cairo_fill(draw);
   }
 
-  bool MapPainterCairo::DrawMap(const StyleConfig& styleConfig,
-                                const Projection& projection,
+  bool MapPainterCairo::DrawMap(const Projection& projection,
                                 const MapParameter& parameter,
                                 const MapData& data,
                                 cairo_t *draw)
   {
     this->draw=draw;
 
-    minimumLineWidth=parameter.GetLineMinWidthPixel()*25.4/parameter.GetDPI();
+    minimumLineWidth=parameter.GetLineMinWidthPixel()*25.4/projection.GetDPI();
 
-    Draw(styleConfig,
-         projection,
+    Draw(projection,
          parameter,
          data);
 

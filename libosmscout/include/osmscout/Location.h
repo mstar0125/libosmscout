@@ -20,12 +20,22 @@
   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307  USA
 */
 
-#include <osmscout/ObjectRef.h>
+#include <list>
+#include <memory>
+#include <vector>
 
-#include <osmscout/util/Reference.h>
+#include <osmscout/ObjectRef.h>
 
 namespace osmscout {
   /**
+   * \defgroup Location Location related data structures and services
+   *
+   * Classes and methods for handling location aspects of object
+   * in the libosmscout database.
+   */
+
+  /**
+   \ingroup Location
    A named administrative region. It is used to build up hierarchical,
    structured containment information like "Streets in City". Most of
    the time an administrative region is just the area of a city, but
@@ -35,99 +45,92 @@ namespace osmscout {
    AdminRegions are currently returned by
    Database.GetMatchingAdminRegions() using the CityStreetIndex.
    */
-  class OSMSCOUT_API AdminRegion : public Referencable
+  class OSMSCOUT_API AdminRegion
   {
   public:
     class OSMSCOUT_API RegionAlias
     {
     public:
-      std::string name;         //! Alias
-      FileOffset  objectOffset; //! Node data offset of the alias
+      std::string name;         //!< Alias
+      FileOffset  objectOffset; //!< Node data offset of the alias
     };
 
-    FileOffset               regionOffset;       //! Offset of this entry in the index
-    FileOffset               dataOffset;         //! Offset of the data part of this entry
-    FileOffset               parentRegionOffset; //! Offset of the parent region index entry
-    std::string              name;               //! name of the region
-    ObjectFileRef            object;             //! The object that represents this region
-    std::string              aliasName;          //! Additional optional alias name
-    ObjectFileRef            aliasObject;        //! Additional optional alias reference
-    std::vector<RegionAlias> aliases;            //! The list of alias for this region
+    FileOffset               regionOffset;       //!< Offset of this entry in the index
+    FileOffset               dataOffset;         //!< Offset of the data part of this entry
+    FileOffset               parentRegionOffset; //!< Offset of the parent region index entry
+    std::string              name;               //!< name of the region
+    ObjectFileRef            object;             //!< The object that represents this region
+    std::string              aliasName;          //!< Additional optional alias name
+    ObjectFileRef            aliasObject;        //!< Additional optional alias reference
+    std::vector<RegionAlias> aliases;            //!< The list of alias for this region
+
+  public:
+    bool Match(const ObjectFileRef& object) const;
   };
 
-  typedef Ref<AdminRegion> AdminRegionRef;
+  typedef std::shared_ptr<AdminRegion> AdminRegionRef;
 
+  /**
+   * \ingroup Location
+   * Visitor that gets called for every region found.
+   * It is the task of the visitor to decide if a region matches the given criteria.
+   */
   class OSMSCOUT_API AdminRegionVisitor
   {
   public:
-    virtual ~AdminRegionVisitor();
-
-    virtual bool Visit(const AdminRegion& region) = 0;
-  };
-
-  class OSMSCOUT_API AdminRegionMatchVisitor : public AdminRegionVisitor
-  {
-  public:
-    class OSMSCOUT_API AdminRegionResult
-    {
-    public:
-      AdminRegionRef adminRegion;
-      bool           isMatch;
+    enum Action {
+      //! Do not visit child regions, but continue with traversal
+      skipChildren,
+      //! Visit child regions
+      visitChildren,
+      //! Stop
+      stop,
+      //! Signal an error
+      error
     };
 
-  private:
-    std::string                  pattern;
-    size_t                       limit;
-
   public:
-    std::list<AdminRegionResult> results;
-    bool                         limitReached;
+    virtual ~AdminRegionVisitor();
 
-  private:
-    void Match(const std::string& name,
-               bool& match,
-               bool& candidate) const;
-
-  public:
-    AdminRegionMatchVisitor(const std::string& pattern,
-                            size_t limit);
-
-    bool Visit(const AdminRegion& region);
+    virtual Action Visit(const AdminRegion& region) = 0;
   };
 
   /**
+   * \ingroup Location
    * A POI is an object within an area, which has been indexed by
    * its name.
    */
-  class OSMSCOUT_API POI : public Referencable
+  class OSMSCOUT_API POI
   {
   public:
-    FileOffset    regionOffset; //! Offset of the region this location is in
-    std::string   name;         //! name of the POI
-    ObjectFileRef object;       //! Reference to the object
+    FileOffset    regionOffset; //!< Offset of the region this location is in
+    std::string   name;         //!< name of the POI
+    ObjectFileRef object;       //!< Reference to the object
   };
 
-  typedef Ref<POI> POIRef;
+  typedef std::shared_ptr<POI> POIRef;
 
   /**
+    \ingroup Location
     A location is a named point, way, area or relation on the map.
     Something you can search for. Location are currently returned
     by Database.GetMatchingLocations() which uses CityStreetIndex
     internally.
    */
-  class OSMSCOUT_API Location : public Referencable
+  class OSMSCOUT_API Location
   {
   public:
-    FileOffset                 locationOffset;  //! Offset to location
-    FileOffset                 regionOffset;    //! Offset of the admin region this location is in
-    FileOffset                 addressesOffset; //! Offset to the list of addresses
-    std::string                name;            //! name of the location
-    std::vector<ObjectFileRef> objects;         //! List of objects that build up this location
+    FileOffset                 locationOffset;  //!< Offset to location
+    FileOffset                 regionOffset;    //!< Offset of the admin region this location is in
+    FileOffset                 addressesOffset; //!< Offset to the list of addresses
+    std::string                name;            //!< name of the location
+    std::vector<ObjectFileRef> objects;         //!< List of objects that build up this location
   };
 
-  typedef Ref<Location> LocationRef;
+  typedef std::shared_ptr<Location> LocationRef;
 
   /**
+   * \ingroup Location
    * Visitor that gets called for every location found in the given area.
    * It is the task of the visitor to decide if a locations matches the given criteria.
    */
@@ -143,69 +146,24 @@ namespace osmscout {
   };
 
   /**
-   * Visitor that gets called for every location found in the given region.
-   * It is the task of the visitor to decide if a locations matches the given criteria.
-   */
-  class OSMSCOUT_API LocationMatchVisitor : public LocationVisitor
-  {
-  public:
-    class OSMSCOUT_API POIResult
-    {
-    public:
-      AdminRegionRef adminRegion;
-      POIRef         poi;
-      bool           isMatch;
-    };
-
-    class OSMSCOUT_API LocationResult
-    {
-    public:
-      AdminRegionRef adminRegion;
-      LocationRef    location;
-      bool           isMatch;
-    };
-
-  private:
-    std::string         pattern;
-    size_t              limit;
-
-  public:
-    std::list<POIResult>      poiResults;
-    std::list<LocationResult> locationResults;
-    bool                      limitReached;
-
-  private:
-    void Match(const std::string& name,
-               bool& match,
-               bool& candidate) const;
-
-  public:
-    LocationMatchVisitor(const std::string& pattern,
-                         size_t limit);
-
-    bool Visit(const AdminRegion& adminRegion,
-               const POI &poi);
-    bool Visit(const AdminRegion& adminRegion,
-               const Location &location);
-  };
-
-  /**
+    \ingroup Location
     An address is a unique place at a given location, normally a building that
     is address by its house number.
    */
-  class OSMSCOUT_API Address : public Referencable
+  class OSMSCOUT_API Address
   {
   public:
-    FileOffset    addressOffset;  //! Offset of the address entry
-    FileOffset    locationOffset; //! Offset to location
-    FileOffset    regionOffset;   //! Offset of the admin region this location is in
-    std::string   name;           //! name of the address
-    ObjectFileRef object;         //! Object that represents the address
+    FileOffset    addressOffset;  //!< Offset of the address entry
+    FileOffset    locationOffset; //!< Offset to location
+    FileOffset    regionOffset;   //!< Offset of the admin region this location is in
+    std::string   name;           //!< name of the address
+    ObjectFileRef object;         //!< Object that represents the address
   };
 
-  typedef Ref<Address> AddressRef;
+  typedef std::shared_ptr<Address> AddressRef;
 
   /**
+   * \ingroup Location
    * Visitor that gets called for every address found at a given location.
    * It is the task of the visitor to decide if a address matches the given criteria.
    */
@@ -214,18 +172,23 @@ namespace osmscout {
   public:
     virtual ~AddressVisitor();
 
-    virtual bool Visit(const Location& location,
+    virtual bool Visit(const AdminRegion& adminRegion,
+                       const Location& location,
                        const Address& address) = 0;
   };
 
+  /**
+   * \ingroup Location
+   */
   class OSMSCOUT_API AddressListVisitor : public AddressVisitor
   {
   public:
     class OSMSCOUT_API AddressResult
     {
     public:
-      LocationRef location;
-      AddressRef  address;
+      AdminRegionRef adminRegion; //!< The admin region the address is contained by
+      LocationRef    location;    //!< The location the address belongs to
+      AddressRef     address;     //!< The address itself
     };
 
   private:
@@ -238,101 +201,67 @@ namespace osmscout {
   public:
     AddressListVisitor(size_t limit);
 
-    bool Visit(const Location& location,
+    bool Visit(const AdminRegion& adminRegion,
+               const Location& location,
                const Address& address);
   };
 
-  class OSMSCOUT_API AddressMatchVisitor : public AddressVisitor
+  /**
+   * \ingroup Location
+   *
+   * A Place description a certain place in respect to the location index.
+   * A place consists on certain optional attributes, that in turn describe
+   * certain aspects.
+   *
+   * * object: A reference to the object that is described by the place
+   * * adminRegion: The hierarchical administrative region the object is in (normally the City)
+   * * poi: Additional information, if the object is an POI
+   * * location: The location the place is at (normally the street)
+   * * address: The address of the object in respect to the location (normally the house number)
+   */
+  class OSMSCOUT_API Place
   {
-  public:
-    class OSMSCOUT_API AddressResult
-    {
-    public:
-      LocationRef location;
-      AddressRef  address;
-      bool        isMatch;
-    };
-
   private:
-    std::string              pattern;
-    size_t                   limit;
+    ObjectFileRef  object;      //!< Object the location is in
+    AdminRegionRef adminRegion; //!< Region the object is in, if set
+    POIRef         poi;         //!< POI data, if set
+    LocationRef    location;    //!< Location data, if set
+    AddressRef     address;     //!< Address data if set
 
   public:
-    std::list<AddressResult> results;
-    bool                     limitReached;
+    Place(const ObjectFileRef& object,
+          const AdminRegionRef& adminRegion,
+          const POIRef& poi,
+          const LocationRef& location,
+          const AddressRef& address);
 
-  private:
-    void Match(const std::string& name,
-               bool& match,
-               bool& candidate) const;
-
-  public:
-    AddressMatchVisitor(const std::string& pattern,
-                        size_t limit);
-
-    bool Visit(const Location& location,
-               const Address& address);
-  };
-
-  class OSMSCOUT_API LocationSearch
-  {
-  public:
-    class OSMSCOUT_API Entry
+    inline ObjectFileRef GetObject() const
     {
-    public:
-      std::string adminRegionPattern;
-      std::string locationPattern;
-      std::string addressPattern;
-    };
+      return object;
+    }
 
-  public:
-    std::list<Entry> searches;
-    size_t           limit;
-
-    /**
-     * This takes the given pattern, splits it into tokens,
-     * and generates a number of search entries based on the idea
-     * that the input follows one of the following patterns:
-     * * AdminRegion Location Address
-     * * Location Address AdminRegion
-     * * AdminRegion Location
-     * * Location AdminRegion
-     * * AdminRegion
-     */
-    void InitializeSearchEntries(const std::string& searchPattern);
-  };
-
-  class OSMSCOUT_API LocationSearchResult
-  {
-  public:
-
-    enum MatchQuality {
-      match     = 1,
-      candidate = 2,
-      none      = 3
-    };
-
-    class OSMSCOUT_API Entry
+    inline AdminRegionRef GetAdminRegion() const
     {
-    public:
-      AdminRegionRef adminRegion;
-      MatchQuality   adminRegionMatchQuality;
-      LocationRef    location;
-      MatchQuality   locationMatchQuality;
-      POIRef         poi;
-      MatchQuality   poiMatchQuality;
-      AddressRef     address;
-      MatchQuality   addressMatchQuality;
+      return adminRegion;
+    }
 
-      bool operator<(const Entry& other) const;
-      bool operator==(const Entry& other) const;
-    };
+    inline POIRef GetPOI() const
+    {
+      return poi;
+    }
 
-  public:
-    std::list<Entry> results;
-    bool             limitReached;
+    inline LocationRef GetLocation() const
+    {
+      return location;
+    }
+
+    inline AddressRef GetAddress() const
+    {
+      return address;
+    }
+
+    std::string GetDisplayString() const;
   };
 }
-
 
 #endif

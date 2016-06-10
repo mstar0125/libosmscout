@@ -20,10 +20,17 @@
   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307  USA
 */
 
+#include <list>
+#include <map>
+#include <unordered_map>
+#include <vector>
+
 #include <osmscout/NumericIndex.h>
 #include <osmscout/RouteNode.h>
 #include <osmscout/TurnRestriction.h>
+
 #include <osmscout/Types.h>
+#include <osmscout/TypeFeatures.h>
 
 #include <osmscout/Area.h>
 #include <osmscout/Way.h>
@@ -31,8 +38,6 @@
 #include <osmscout/ObjectRef.h>
 
 #include <osmscout/util/FileWriter.h>
-#include <osmscout/util/HashMap.h>
-#include <osmscout/util/HashSet.h>
 #include <osmscout/util/NodeUseMap.h>
 
 #include <osmscout/import/Import.h>
@@ -50,10 +55,10 @@ namespace osmscout {
         Forbit = 1
       };
 
-      FileOffset fromWayOffset;
-      Id         viaNodeId;
-      FileOffset toWayOffset;
-      Type       type;
+      FileOffset fromWayOffset; //!< FileOffset of the from way
+      Id         viaNodeId;     //!< Libosmscout specific Id for the via node, from and to way should have a node with this id
+      FileOffset toWayOffset;   //!< FileOffset of the from way
+      Type       type;          //!< Type of restriction
     };
 
     struct PendingOffset
@@ -62,32 +67,73 @@ namespace osmscout {
       size_t     index;
     };
 
-    typedef OSMSCOUT_HASHMAP<Id, FileOffset>               NodeIdOffsetMap;
+    typedef std::unordered_map<Id, FileOffset>             NodeIdOffsetMap;
     typedef std::map<Id,std::list<ObjectFileRef> >         NodeIdObjectsMap;
     typedef std::map<Id,std::list<PendingOffset> >         PendingRouteNodeOffsetsMap;
     typedef std::map<Id,std::vector<TurnRestrictionData> > ViaTurnRestrictionMap;
 
+    AccessFeatureValueReader           *accessReader;
+    AccessRestrictedFeatureValueReader *accessRestrictedReader;
+    MaxSpeedFeatureValueReader         *maxSpeedReader;
+    GradeFeatureValueReader            *gradeReader;
+
   private:
+    bool IsAccessRestricted(const FeatureValueBuffer& buffer) const;
+
+    AccessFeatureValue GetAccess(const FeatureValueBuffer& buffer) const;
+
+    inline AccessFeatureValue GetAccess(const Way& way) const
+    {
+      return GetAccess(way.GetFeatureValueBuffer());
+    }
+
+    uint8_t GetMaxSpeed(const Way& way) const;
+    uint8_t GetGrade(const Way& way) const;
+
+    uint8_t CopyFlags(const Area::Ring& ring) const;
+    uint8_t CopyFlagsForward(const Way& way) const;
+    uint8_t CopyFlagsBackward(const Way& way) const;
+
+    uint16_t RegisterOrUseObjectVariantData(std::map<ObjectVariantData,uint16_t>& routeDataMap,
+                                            const TypeInfoRef& type,
+                                            uint8_t maxSpeed,
+                                            uint8_t grade);
+
+    bool IsAnyRoutable(Progress& progress,
+                       const std::list<ObjectFileRef>& objects,
+                       const std::unordered_map<FileOffset,WayRef>& waysMap,
+                       const std::unordered_map<FileOffset,AreaRef>&  areasMap,
+                       VehicleMask vehicles) const;
+
     /**
-     * Read turn restrictions and return a map of way ids together with their (set to 0) file offset
+     * Read turn restrictions and return a map of OSM way ids and OSM node ids together with their (set to 0) file offset
      */
-    bool ReadTurnRestrictionWayIds(const ImportParameter& parameter,
-                                   Progress& progress,
-                                   std::map<Id,FileOffset>& wayIdOffsetMap);
+    bool ReadTurnRestrictionIds(const ImportParameter& parameter,
+                                Progress& progress,
+                                std::map<OSMId,FileOffset>& wayIdOffsetMap,
+                                std::map<OSMId,Id>& nodeMap);
 
     /**
      * Resove the file offsets for the way ids given in the wayIdOffsetMap
      */
-    bool ResolveWayIdsToFileOffsets(const ImportParameter& parameter,
-                                    Progress& progress,
-                                    std::map<Id,FileOffset>& wayIdOffsetMap);
+    bool ResolveWayIds(const ImportParameter& parameter,
+                       Progress& progress,
+                       std::map<OSMId,FileOffset>& wayIdOffsetMap);
+
+    /**
+     * Resove the node ids from the OSM node ids given in the nodeIdMap
+     */
+    bool ResolveNodeIds(const ImportParameter& parameter,
+                        Progress& progress,
+                        std::map<OSMId,Id>& nodeIdMap);
 
     /**
      * Red the turn restriction again using the "way id to file offset" map and create a ViaTurnRestrictionMap.
      */
     bool ReadTurnRestrictionData(const ImportParameter& parameter,
                                  Progress& progress,
-                                 const std::map<Id,FileOffset>& wayIdOffsetMap,
+                                 const std::map<OSMId,Id>& nodeIdMap,
+                                 const std::map<OSMId,FileOffset>& wayIdOffsetMap,
                                  ViaTurnRestrictionMap& restrictions);
 
     /**
@@ -130,18 +176,27 @@ namespace osmscout {
     /**
      * Loads ways based on their file offset.
      */
-    bool LoadWays(Progress& progress,
+    bool LoadWays(const TypeConfig& typeConfig,
+                  Progress& progress,
                   FileScanner& scanner,
                   const std::set<FileOffset>& fileOffsets,
-                  OSMSCOUT_HASHMAP<FileOffset,WayRef>& waysMap);
+                  std::unordered_map<FileOffset,WayRef>& waysMap);
 
     /**
      * Loads areas based on their file offset.
      */
-    bool LoadAreas(Progress& progress,
+    bool LoadAreas(const TypeConfig& typeConfig,
+                   Progress& progress,
                    FileScanner& scanner,
                    const std::set<FileOffset>& fileOffsets,
-                   OSMSCOUT_HASHMAP<FileOffset,AreaRef>& areasMap);
+                   std::unordered_map<FileOffset,AreaRef>& areasMap);
+
+    bool GetRouteNodePoint(Progress& progress,
+                           Id id,
+                           const std::list<ObjectFileRef>& objects,
+                           std::unordered_map<FileOffset,WayRef>& waysMap,
+                           std::unordered_map<FileOffset,AreaRef>& areasMap,
+                           Point& point) const;
 
     /*
     uint8_t CalculateEncodedBearing(const Way& way,
@@ -152,9 +207,9 @@ namespace osmscout {
     /**
      * Calculate all possible route from the given route node for the given area
      */
-    void CalculateAreaPaths(const TypeConfig& typeConfig,
-                            RouteNode& routeNode,
+    void CalculateAreaPaths(RouteNode& routeNode,
                             const Area& area,
+                            uint16_t objectVariantIndex,
                             FileOffset routeNodeOffset,
                             const NodeIdObjectsMap& nodeObjectsMap,
                             const NodeIdOffsetMap& nodeIdOffsetMap,
@@ -165,6 +220,7 @@ namespace osmscout {
      */
     void CalculateCircularWayPaths(RouteNode& routeNode,
                                    const Way& way,
+                                   uint16_t objectVariantIndex,
                                    FileOffset routeNodeOffset,
                                    const NodeIdObjectsMap& nodeObjectsMap,
                                    const NodeIdOffsetMap& nodeIdOffsetMap,
@@ -175,6 +231,7 @@ namespace osmscout {
      */
     void CalculateWayPaths(RouteNode& routeNode,
                            const Way& way,
+                           uint16_t objectVariantIndex,
                            FileOffset routeNodeOffset,
                            const NodeIdObjectsMap& nodeObjectsMap,
                            const NodeIdOffsetMap& nodeIdOffsetMap,
@@ -195,23 +252,31 @@ namespace osmscout {
                               const NodeIdOffsetMap& routeNodeIdOffsetMap,
                               PendingRouteNodeOffsetsMap& pendingOffsetsMap,
                               FileWriter& routeNodeWriter,
-                              std::vector<NodeIdObjectsMap::const_iterator>& block,
+                              const std::vector<NodeIdObjectsMap::const_iterator>& block,
                               size_t blockCount);
+
+    bool WriteObjectVariantData(Progress& progress,
+                                const std::string& variantFilename,
+                                const std::map<ObjectVariantData,uint16_t>& routeDataMap);
 
     bool WriteRouteGraph(const ImportParameter& parameter,
                          Progress& progress,
                          const TypeConfig& typeConfig,
                          const NodeIdObjectsMap& nodeObjectsMap,
                          const ViaTurnRestrictionMap& restrictions,
-                         Vehicle vehicle,
-                         const std::string& filename);
+                         VehicleMask vehicles,
+                         const std::string& dataFilename,
+                         const std::string& variantFilename);
 
   public:
     RouteDataGenerator();
-    std::string GetDescription() const;
-    bool Import(const ImportParameter& parameter,
-                Progress& progress,
-                const TypeConfig& typeConfig);
+
+    void GetDescription(const ImportParameter& parameter,
+                        ImportModuleDescription& description) const;
+
+    bool Import(const TypeConfigRef& typeConfig,
+                const ImportParameter& parameter,
+                Progress& progress);
   };
 }
 

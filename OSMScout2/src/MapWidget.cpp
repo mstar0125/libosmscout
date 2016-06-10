@@ -21,9 +21,18 @@
 
 #include <iostream>
 
+//! We rotate in 16 steps
+static double DELTA_ANGLE=2*M_PI/16.0;
+
 MapWidget::MapWidget(QQuickItem* parent)
     : QQuickPaintedItem(parent),
-      requestNewMap(true)
+      center(0.0,0.0),
+      angle(0.0),
+      magnification(64),
+      mouseDragging(false),
+      dbInitialized(false),
+      hasBeenPainted(false)
+
 {
     setOpaquePainting(true);
     setAcceptedMouseButtons(Qt::LeftButton);
@@ -34,18 +43,14 @@ MapWidget::MapWidget(QQuickItem* parent)
     connect(dbThread,SIGNAL(InitialisationFinished(DatabaseLoadedResponse)),
             this,SLOT(initialisationFinished(DatabaseLoadedResponse)));
 
-    connect(this,SIGNAL(TriggerMapRenderingSignal()),
-            dbThread,SLOT(TriggerMapRendering()));
+    connect(this,SIGNAL(TriggerMapRenderingSignal(RenderMapRequest)),
+            dbThread,SLOT(TriggerMapRendering(RenderMapRequest)));
 
     connect(dbThread,SIGNAL(HandleMapRenderingResult()),
             this,SLOT(redraw()));
 
     connect(dbThread,SIGNAL(Redraw()),
             this,SLOT(redraw()));
-
-    lon=0;
-    lat=0;
-    magnification=64;
 }
 
 MapWidget::~MapWidget()
@@ -64,14 +69,10 @@ void MapWidget::initialisationFinished(const DatabaseLoadedResponse& response)
     double dlat=360;
     double dlon=180;
 
-    std::cout << "Initial bounding box [";
-    std::cout << response.minLat <<"," << response.minLon << " - " << response.maxLat << "," << response.maxLon << "]" << std::endl;
+    center=response.boundingBox.GetCenter();
 
-    lat=response.minLat+(response.maxLat-response.minLat)/2;
-    lon=response.minLon+(response.maxLon-response.minLon)/2;
-
-    while (dlat>response.maxLat-response.minLat &&
-           dlon>response.maxLon-response.minLon) {
+    while (dlat>response.boundingBox.GetHeight() &&
+           dlon>response.boundingBox.GetWidth()) {
         zoom=zoom*2;
         dlat=dlat/2;
         dlon=dlon/2;
@@ -79,9 +80,11 @@ void MapWidget::initialisationFinished(const DatabaseLoadedResponse& response)
 
     magnification=zoom;
 
-    std::cout << "Magnification: " << magnification.GetMagnification() << "x" << std::endl;
+    dbInitialized=true;
 
-    TriggerMapRendering();
+    if (hasBeenPainted) {
+        TriggerMapRendering();
+    }
 }
 
 void MapWidget::TriggerMapRendering()
@@ -89,63 +92,64 @@ void MapWidget::TriggerMapRendering()
     DBThread         *dbThread=DBThread::GetInstance();
     RenderMapRequest request;
 
-    request.lat=lat;
-    request.lon=lon;
+    request.lat=center.GetLat();
+    request.lon=center.GetLon();
+    request.angle=angle;
     request.magnification=magnification;
     request.width=width();
     request.height=height();
 
-    dbThread->UpdateRenderRequest(request);
+    dbThread->CancelCurrentDataLoading();
 
-    emit TriggerMapRenderingSignal();
+    emit TriggerMapRenderingSignal(request);
 }
 
 
 void MapWidget::HandleMouseMove(QMouseEvent* event)
 {
-    double                       olon, olat;
-    double                       tlon, tlat;
-    osmscout::MercatorProjection projection;
+    osmscout::MercatorProjection projection=startProjection;
 
-    projection.Set(lon,lat,
-                   magnification,
-                   width(),height());
+    if (!projection.IsValid()) {
+        return;
+    }
 
-    // Get origin coordinates
-    projection.PixelToGeo(0,0,
-                          olon,olat);
+    if (!projection.Move(startX-event->x(),
+                         event->y()-startY)) {
+        return;
+    }
 
-    // Get current mouse pos coordinates (relative to drag start)
-    projection.PixelToGeo(event->x()-startX,
-                          event->y()-startY,
-                          tlon,tlat);
-
-    lon=startLon-(tlon-olon);
-    lat=startLat-(tlat-olat);
+    center=projection.GetCenter();
 }
 
 void MapWidget::mousePressEvent(QMouseEvent* event)
 {
     if (event->button()==1) {
-        startLon=lon;
-        startLat=lat;
+        DBThread *dbThread=DBThread::GetInstance();
+
+        dbThread->GetProjection(startProjection);
+
         startX=event->x();
         startY=event->y();
+
+        setFocus(true);
+        mouseDragging=true;
     }
 }
 
 void MapWidget::mouseMoveEvent(QMouseEvent* event)
 {
     HandleMouseMove(event);
-    requestNewMap=false;
     update();
 }
 
 void MapWidget::mouseReleaseEvent(QMouseEvent* event)
 {
-    if (event->button()==1) {
+    if (event->button()==1 &&
+        (startX!=event->x() ||
+         startY!=event->y())) {
+        mouseDragging=false;
         HandleMouseMove(event);
-        requestNewMap=true;
+        TriggerMapRendering();
         update();
     }
 }
@@ -167,28 +171,40 @@ void MapWidget::wheelEvent(QWheelEvent* event)
 
 void MapWidget::paint(QPainter *painter)
 {
-    RenderMapRequest request;
-    DBThread         *dbThread=DBThread::GetInstance();
-    QRectF           boundingBox=contentsBoundingRect();
+    DBThread *dbThread=DBThread::GetInstance();
 
-    request.lat=lat;
-    request.lon=lon;
-    request.magnification=magnification;
-    request.width=boundingBox.width();
-    request.height=boundingBox.height();
+    if (dbInitialized) {
+        RenderMapRequest request;
+        QRectF           boundingBox=contentsBoundingRect();
 
-    if (!dbThread->RenderMap(*painter,request) &&
-            requestNewMap) {
-        TriggerMapRendering();
+        request.lat=center.GetLat();
+        request.lon=center.GetLon();
+        request.angle=angle;
+        request.magnification=magnification;
+        request.width=boundingBox.width();
+        request.height=boundingBox.height();
+
+        if (!dbThread->RenderMap(*painter,request)) {
+            if (!mouseDragging) {
+                TriggerMapRendering();
+            }
+        }
+    }
+    else {
+      dbThread->RenderMessage(*painter,width(),height(),"Database not initialized yet");
     }
 
-    requestNewMap=true;
+    hasBeenPainted=true;
 }
 
 void MapWidget::zoomIn(double zoomFactor)
 {
-    if (magnification.GetMagnification()*zoomFactor>200000) {
-        magnification.SetMagnification(200000);
+    osmscout::Magnification maxMag;
+
+    maxMag.SetLevel(20);
+
+    if (magnification.GetMagnification()*zoomFactor>maxMag.GetMagnification()) {
+        magnification.SetMagnification(maxMag.GetMagnification());
     }
     else {
         magnification.SetMagnification(magnification.GetMagnification()*zoomFactor);
@@ -211,72 +227,121 @@ void MapWidget::zoomOut(double zoomFactor)
 
 void MapWidget::left()
 {
+    DBThread                     *dbThread=DBThread::GetInstance();
     osmscout::MercatorProjection projection;
-    double                       lonMin,latMin,lonMax,latMax;
 
-    projection.Set(lon,lat,
-                   magnification,
-                   width(),height());
+    dbThread->GetProjection(projection);
 
-    projection.GetDimensions(lonMin,latMin,lonMax,latMax);
+    if (!projection.IsValid()) {
+        TriggerMapRendering();
+        return;
+    }
 
-    lon-=(lonMax-lonMin)*0.3;
+    projection.MoveLeft(width()/3);
+
+    center=projection.GetCenter();
 
     TriggerMapRendering();
 }
 
 void MapWidget::right()
 {
+    DBThread                     *dbThread=DBThread::GetInstance();
     osmscout::MercatorProjection projection;
-    double                       lonMin,latMin,lonMax,latMax;
 
-    projection.Set(lon,lat,
-                   magnification,
-                   width(),height());
+    dbThread->GetProjection(projection);
 
-    projection.GetDimensions(lonMin,latMin,lonMax,latMax);
+    if (!projection.IsValid()) {
+        TriggerMapRendering();
+        return;
+    }
 
-    lon+=(lonMax-lonMin)*0.3;
+    projection.MoveRight(width()/3);
+
+    center=projection.GetCenter();
 
     TriggerMapRendering();
 }
 
 void MapWidget::up()
 {
+    DBThread                     *dbThread=DBThread::GetInstance();
     osmscout::MercatorProjection projection;
-    double                       lonMin,latMin,lonMax,latMax;
 
-    projection.Set(lon,lat,
-                   magnification,
-                   width(),height());
+    dbThread->GetProjection(projection);
 
-    projection.GetDimensions(lonMin,latMin,lonMax,latMax);
+    if (!projection.IsValid()) {
+        TriggerMapRendering();
+        return;
+    }
 
-    lat+=(latMax-latMin)*0.3;
+    projection.MoveUp(height()/3);
+
+    center=projection.GetCenter();
 
     TriggerMapRendering();
 }
 
 void MapWidget::down()
 {
+    DBThread                     *dbThread=DBThread::GetInstance();
     osmscout::MercatorProjection projection;
-    double                       lonMin,latMin,lonMax,latMax;
 
-    projection.Set(lon,lat,
-                   magnification,
-                   width(),height());
+    dbThread->GetProjection(projection);
 
-    projection.GetDimensions(lonMin,latMin,lonMax,latMax);
+    if (!projection.IsValid()) {
+        TriggerMapRendering();
+        return;
+    }
 
-    lat-=(latMax-latMin)*0.3;
+    projection.MoveDown(height()/3);
 
+    center=projection.GetCenter();
+
+    TriggerMapRendering();
+}
+
+void MapWidget::rotateLeft()
+{
+    angle=round(angle/DELTA_ANGLE)*DELTA_ANGLE-DELTA_ANGLE;
+
+    if (angle<0) {
+        angle+=2*M_PI;
+    }
+
+    TriggerMapRendering();
+}
+
+void MapWidget::rotateRight()
+{
+    angle=round(angle/DELTA_ANGLE)*DELTA_ANGLE+DELTA_ANGLE;
+
+    if (angle>=2*M_PI) {
+        angle-=2*M_PI;
+    }
+
+    TriggerMapRendering();
+}
+
+void MapWidget::toggleDaylight()
+{
+    DBThread *dbThread=DBThread::GetInstance();
+
+    dbThread->ToggleDaylight();
+    TriggerMapRendering();
+}
+
+void MapWidget::reloadStyle()
+{
+    DBThread *dbThread=DBThread::GetInstance();
+
+    dbThread->ReloadStyle();
     TriggerMapRendering();
 }
 
 void MapWidget::showCoordinates(double lat, double lon)
 {
-    this->lat=lat;
-    this->lon=lon;
+    center=osmscout::GeoCoord(lat,lon);
     this->magnification=osmscout::Magnification::magVeryClose;
 
     TriggerMapRendering();
@@ -285,53 +350,62 @@ void MapWidget::showCoordinates(double lat, double lon)
 void MapWidget::showLocation(Location* location)
 {
     if (location==NULL) {
-        std::cout << "MapWidget::showLocation(): no location passed!" << std::endl;
+        qDebug() << "MapWidget::showLocation(): no location passed!";
 
         return;
     }
 
-    std::cout << "MapWidget::showLocation(\"" << location->getName().toLocal8Bit().constData() << "\")" << std::endl;
+    qDebug() << "MapWidget::showLocation(\"" << location->getName().toLocal8Bit().constData() << "\")";
 
-    osmscout::ObjectFileRef reference=location->getReferences().front();
+    if (location->getType()==Location::typeObject) {
+        osmscout::ObjectFileRef reference=location->getReferences().front();
 
-    DBThread* dbThread=DBThread::GetInstance();
+        DBThread* dbThread=DBThread::GetInstance();
 
-    if (reference.GetType()==osmscout::refNode) {
-        osmscout::NodeRef node;
+        if (reference.GetType()==osmscout::refNode) {
+            osmscout::NodeRef node;
 
-        if (dbThread->GetNodeByOffset(reference.GetFileOffset(),node)) {
-            lon=node->GetLon();
-            lat=node->GetLat();
-            this->magnification=osmscout::Magnification::magVeryClose;
-
-            TriggerMapRendering();
-        }
-    }
-    else if (reference.GetType()==osmscout::refArea) {
-        osmscout::AreaRef area;
-
-        if (dbThread->GetAreaByOffset(reference.GetFileOffset(),area)) {
-            if (area->GetCenter(lat,lon)) {
+            if (dbThread->GetNodeByOffset(reference.GetFileOffset(),node)) {
+                center=node->GetCoords();
                 this->magnification=osmscout::Magnification::magVeryClose;
 
                 TriggerMapRendering();
             }
         }
-    }
-    else if (reference.GetType()==osmscout::refWay) {
-        osmscout::WayRef way;
+        else if (reference.GetType()==osmscout::refArea) {
+            osmscout::AreaRef area;
 
-        if (dbThread->GetWayByOffset(reference.GetFileOffset(),way)) {
-            if (way->GetCenter(lat,lon)) {
-                this->magnification=osmscout::Magnification::magVeryClose;
+            if (dbThread->GetAreaByOffset(reference.GetFileOffset(),area)) {
+                if (area->GetCenter(center)) {
+                    this->magnification=osmscout::Magnification::magVeryClose;
 
-                TriggerMapRendering();
+                    TriggerMapRendering();
+                }
             }
         }
+        else if (reference.GetType()==osmscout::refWay) {
+            osmscout::WayRef way;
+
+            if (dbThread->GetWayByOffset(reference.GetFileOffset(),way)) {
+                if (way->GetCenter(center)) {
+                    this->magnification=osmscout::Magnification::magVeryClose;
+
+                    TriggerMapRendering();
+                }
+            }
+        }
+        else {
+            assert(false);
+        }
     }
-    else {
-        assert(false);
+    else if (location->getType()==Location::typeCoordinate) {
+        osmscout::GeoCoord coord=location->getCoord();
+
+        qDebug() << "MapWidget: " << coord.GetDisplayText().c_str();
+
+        center=coord;
+        this->magnification=osmscout::Magnification::magVeryClose;
+
+        TriggerMapRendering();
     }
 }
-
-

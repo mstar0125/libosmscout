@@ -24,20 +24,23 @@ typedef void (^OSMScoutMKTileOperationCB)(NSData *tileData, NSError *error) ;
     BOOL        finished;
     OSMScout    *_osmScout;
     NSInteger   _zoom;
-    CLLocationCoordinate2D _center;
+    NSUInteger  _x;
+    NSUInteger  _y;
     NSInteger   _scaleFactor;
     OSMScoutMKTileOperationCB _result;
 }
 
--(id)initWithOsmScout: (OSMScout *)osmScout center:(CLLocationCoordinate2D) center zoom:(NSInteger)zoom scaleFactor: (CGFloat)scaleFactor result: (OSMScoutMKTileOperationCB)result ;
+-(id)initWithOsmScout: (OSMScout *)osmScout x:(NSUInteger)x y:(NSUInteger)y zoom:(NSInteger)zoom scaleFactor: (CGFloat)scaleFactor result: (OSMScoutMKTileOperationCB)result ;
 @end
 
 @interface OSMScoutMKTileOverlay : MKTileOverlay {
     NSString                 *_path;
     OSMScout                *_osmScout;
-    NSOperationQueue        *drawQueue;
+    NSOperationQueue        *_drawQueue;
 
 }
 @property (retain, nonatomic) NSString *path;
+
+-(id)initWithURLTemplate: (NSString *)urlTemplate;
 
 @end

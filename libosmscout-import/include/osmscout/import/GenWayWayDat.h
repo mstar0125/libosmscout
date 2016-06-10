@@ -22,16 +22,14 @@
 
 #include <osmscout/ImportFeatures.h>
 
-#include <map>
+#include <unordered_map>
 
 #include <osmscout/Way.h>
 
+#include <osmscout/Coord.h>
 #include <osmscout/CoordDataFile.h>
 #include <osmscout/NumericIndex.h>
 #include <osmscout/TurnRestriction.h>
-
-#include <osmscout/util/HashMap.h>
-#include <osmscout/util/HashSet.h>
 
 #include <osmscout/import/Import.h>
 #include <osmscout/import/RawWay.h>
@@ -40,14 +38,24 @@ namespace osmscout {
 
   class WayWayDataGenerator : public ImportModule
   {
-  private:
-    typedef std::list<RawWayRef>                   WayList;
-    typedef WayList::iterator                      WayListPtr;
-    typedef std::list<WayListPtr>                  WayListPtrList;
-    typedef OSMSCOUT_HASHMAP<OSMId,WayListPtrList> WaysByNodeMap;
+  public:
+    static const char* WAYWAY_TMP;
+    static const char* TURNRESTR_DAT;
 
-    void GetWayTypes(const TypeConfig& typeConfig,
-                     std::set<TypeId>& types) const;
+  private:
+    struct Distribution
+    {
+      uint32_t nodeCount;
+      uint32_t wayCount;
+      uint32_t areaCount;
+
+      Distribution();
+    };
+
+    typedef std::list<RawWayRef>                     WayList;
+    typedef WayList::iterator                        WayListPtr;
+    typedef std::list<WayListPtr>                    WayListPtrList;
+    typedef std::unordered_map<OSMId,WayListPtrList> WaysByNodeMap;
 
     bool ReadTurnRestrictions(const ImportParameter& parameter,
                               Progress& progress,
@@ -57,9 +65,15 @@ namespace osmscout {
                                Progress& progress,
                                std::multimap<OSMId,TurnRestrictionRef>& restrictions);
 
+    bool ReadTypeDistribution(const TypeConfigRef& typeConfig,
+                              const ImportParameter& parameter,
+                              Progress& progress,
+                              std::vector<Distribution>& typeDistribution) const;
+
     bool GetWays(const ImportParameter& parameter,
                  Progress& progress,
-                 std::set<TypeId>& types,
+                 const TypeConfig& typeConfig,
+                 TypeInfoSet& types,
                  FileScanner& scanner,
                  std::vector<std::list<RawWayRef> >& ways);
 
@@ -72,22 +86,31 @@ namespace osmscout {
                       OSMId nodeId) const;
 
     bool MergeWays(Progress& progress,
-                   const TypeConfig& typeConfig,
                    std::list<RawWayRef>& ways,
                    std::multimap<OSMId,TurnRestrictionRef>& restrictions);
 
-    bool WriteWay(Progress& progress,
+    void WriteWay(Progress& progress,
                   const TypeConfig& typeConfig,
                   FileWriter& writer,
                   uint32_t& writtenWayCount,
-                  const CoordDataFile::CoordResultMap& coordsMap,
+                  const CoordDataFile::ResultMap& coordsMap,
                   const RawWay& rawWay);
 
+    bool HandleLowMemoryFallback(Progress& progress,
+                                 const TypeConfig& typeConfig,
+                                 FileScanner& scanner,
+                                 const TypeInfoSet& types,
+                                 FileWriter& writer,
+                                 uint32_t& writtenWayCount,
+                                 const CoordDataFile& coordDataFile);
+
   public:
-    std::string GetDescription() const;
-    bool Import(const ImportParameter& parameter,
-                Progress& progress,
-                const TypeConfig& typeConfig);
+    void GetDescription(const ImportParameter& parameter,
+                        ImportModuleDescription& description) const;
+
+    bool Import(const TypeConfigRef& typeConfig,
+                const ImportParameter& parameter,
+                Progress& progress);
   };
 }
 

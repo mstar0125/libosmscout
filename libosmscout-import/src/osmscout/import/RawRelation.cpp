@@ -19,6 +19,7 @@
 
 #include <osmscout/import/RawRelation.h>
 
+#include <algorithm>
 #include <limits>
 
 namespace osmscout {
@@ -28,45 +29,56 @@ namespace osmscout {
     this->id=id;
   }
 
-  void RawRelation::SetType(TypeId type)
+  void RawRelation::SetType(const TypeInfoRef& type)
   {
-    this->type=type;
+    featureValueBuffer.SetType(type);
   }
 
-  bool RawRelation::Read(FileScanner& scanner)
+  void RawRelation::Parse(Progress& progress,
+                          const TypeConfig& typeConfig,
+                          const TagMap& tags)
   {
-    uint32_t tagCount;
+    ObjectOSMRef object(id,
+                        osmRefRelation);
+
+    featureValueBuffer.Parse(progress,
+                             typeConfig,
+                             object,
+                             tags);
+  }
+
+  /**
+   * Reads data from the given FileScanner
+   *
+   * @throws IOException
+   */
+  void RawRelation::Read(const TypeConfig& typeConfig,
+                         FileScanner& scanner)
+  {
     uint32_t memberCount;
 
     scanner.ReadNumber(id);
-    scanner.ReadNumber(type);
 
-    scanner.ReadNumber(tagCount);
+    uint32_t tmpType;
 
-    if (scanner.HasError()) {
-      return false;
-    }
+    scanner.ReadNumber(tmpType);
 
-    tags.resize(tagCount);
-    for (size_t i=0; i<tagCount; i++) {
-      scanner.ReadNumber(tags[i].key);
-      scanner.Read(tags[i].value);
+    TypeInfoRef type=typeConfig.GetTypeInfo(tmpType);
+
+    featureValueBuffer.SetType(type);
+
+    if (!type->GetIgnore()) {
+      featureValueBuffer.Read(scanner);
     }
 
     scanner.ReadNumber(memberCount);
-
-    if (scanner.HasError()) {
-      return false;
-    }
 
     members.resize(memberCount);
 
     if (memberCount>0) {
       OSMId minId;
 
-      if (!scanner.ReadNumber(minId)) {
-        return false;
-      }
+      scanner.ReadNumber(minId);
 
       for (size_t i=0; i<memberCount; i++) {
         uint32_t memberType;
@@ -81,40 +93,41 @@ namespace osmscout {
         scanner.Read(members[i].role);
       }
     }
-
-    return !scanner.HasError();
   }
 
-  bool RawRelation::Write(FileWriter& writer) const
+  /**
+   * Writes data to the given FileWriter
+   *
+   * @throws IOException
+   */
+  void RawRelation::Write(const TypeConfig& /*typeConfig*/,
+                          FileWriter& writer) const
   {
     writer.WriteNumber(id);
-    writer.WriteNumber(type);
 
-    writer.WriteNumber((uint32_t)tags.size());
-    for (size_t i=0; i<tags.size(); i++) {
-      writer.WriteNumber(tags[i].key);
-      writer.Write(tags[i].value);
+    writer.WriteNumber((uint32_t)featureValueBuffer.GetType()->GetIndex());
+
+    if (!featureValueBuffer.GetType()->GetIgnore()) {
+      featureValueBuffer.Write(writer);
     }
 
     writer.WriteNumber((uint32_t)members.size());
 
-    if (!members.empty()) {
-      OSMId minId=members[0].id;
+    assert(!members.empty());
 
-      for (size_t i=1; i<members.size(); i++) {
-        minId=std::min(minId,members[i].id);
-      }
+    OSMId minId=members[0].id;
 
-      writer.WriteNumber(minId);
-
-      for (size_t i=0; i<members.size(); i++) {
-        writer.WriteNumber((uint32_t)members[i].type);
-        writer.WriteNumber(members[i].id-minId);
-        writer.Write(members[i].role);
-      }
+    for (size_t i=1; i<members.size(); i++) {
+      minId=std::min(minId,members[i].id);
     }
 
-    return !writer.HasError();
+    writer.WriteNumber(minId);
+
+    for (size_t i=0; i<members.size(); i++) {
+      writer.WriteNumber((uint32_t)members[i].type);
+      writer.WriteNumber(members[i].id-minId);
+      writer.Write(members[i].role);
+    }
   }
 }
 

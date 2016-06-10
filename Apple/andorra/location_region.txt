@@ -1,0 +1,68 @@
+ + Andorra Area 111213
+   = Juberri Node 724
+   = Mas d’Alins Node 823
+   = Fontaneda Node 1048
+   = Aubinyà Node 1173
+   = Aixirivall Node 1339
+   = Sant Julià de Lòria Node 1722
+   = Nagol Node 1956
+   = Llumeneres Node 1971
+   = Bixessarri Node 2373
+   = Aixàs Node 2393
+   = Aixovall Node 2420
+   = Certers Node 2540
+   + Canillo Area 106127
+     = Meritxell Node 13104
+     = Prats Node 13317
+     = les Bordes d'Envalira Node 13737
+     = el Forn Node 14500
+     = Sant Joan de Caselles Node 14915
+     = l’Aldosa de Canillo Node 16532
+     = els Plans Node 16571
+     = Ransol Node 16762
+     = Soldeu Node 17135
+     = Sant Pere Node 17315
+     = el Tarter Node 17541
+   + La Massana Area 107423
+     = Sispony Node 7534
+     = Anyós Node 7551
+     = el Cortalet Node 7620
+     = el Bosquet Node 7641
+     = Super Pal Node 9063
+     = Pal Node 9082
+     = Escàs Node 9104
+     = el Pui Node 9817
+     = l'Aldosa de la Massana Node 9993
+     = Xixerella Node 12492
+     = Puiol del Piu Node 14038
+     = Mas de Ribafeta Node 14304
+     = Erts Node 14329
+     = Arinsal Node 16071
+   + Ordino Area 108770
+     = Segudet Node 12874
+     = Sornás Node 14404
+     = Ansalonga Node 14421
+     = el Vilar Node 16321
+     = la Cortinada Node 16348
+     = Mas d'en Soler Node 16370
+     = Arans Node 16394
+     = Llorts Node 18987
+     = les Salines Node 19487
+     = el Serrat Node 20161
+   + Andorra la Vella Area 164653
+     = la Margineda Node 2797
+     + Andorra la Vella Area 139299
+     + Santa Coloma Area 157741
+   + Escaldes-Engordany Area 199557
+     = Les Escaldes Node 6015
+     = Engolasters Node 6227
+     = Engordany Node 6248
+     = els Vilars Node 6267
+   + Encamp Area 213031
+     = Vila Node 7821
+     = les Bons Node 8673
+     = Grau Roig Node 8942
+     = Pas de la Casa Node 12306
+ + Sant Julià de Lòria Area 165070
+ + L'Hospitalet-près-l'Andorre Area 110800
+ + El Vilar Area 62342

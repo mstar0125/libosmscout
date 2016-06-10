@@ -20,11 +20,15 @@
   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307  USA
 */
 
-#include <osmscout/private/Config.h>
+#include <osmscout/CoreFeatures.h>
 
 #include <osmscout/system/Math.h>
-#include <osmscout/system/Types.h>
+
 #include <osmscout/system/SSEMathPublic.h>
+
+#include <osmscout/system/Types.h>
+
+#include <osmscout/private/Config.h>
 
 namespace osmscout {
 
@@ -93,7 +97,7 @@ namespace osmscout {
 
 DECLARE_COEFFS(SINECOEFF_SSE)
 DECLARE_COEFFS(COSINECOEFF_SSE)
-DECLARE_COEFFS(LOGCOEFF);
+DECLARE_COEFFS(LOGCOEFF)
 
 /* declare some SSE constants */
 #define _PS_CONST(Name)                                            \

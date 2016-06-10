@@ -19,9 +19,10 @@
 
 #include <osmscout/import/Import.h>
 
+#include <algorithm>
 #include <iostream>
+#include <iterator>
 
-#include <osmscout/TypeConfigLoader.h>
 #include <osmscout/Types.h>
 
 
@@ -29,7 +30,10 @@
 #include <osmscout/import/RawWay.h>
 #include <osmscout/import/RawRelation.h>
 
-#include <osmscout/Router.h>
+#include <osmscout/import/GenRawWayIndex.h>
+#include <osmscout/import/GenRawRelIndex.h>
+
+#include <osmscout/RoutingService.h>
 #include <osmscout/RouteNode.h>
 #include <osmscout/Intersection.h>
 
@@ -37,14 +41,15 @@
 
 #include <osmscout/import/Preprocess.h>
 
-#include <osmscout/import/GenTurnRestrictionDat.h>
+#include <osmscout/import/GenCoordDat.h>
 
 #include <osmscout/import/GenNodeDat.h>
 #include <osmscout/import/SortNodeDat.h>
 
 #include <osmscout/import/GenRelAreaDat.h>
 #include <osmscout/import/GenWayAreaDat.h>
-#include <osmscout/import/SortAreaDat.h>
+#include <osmscout/import/MergeAreaData.h>
+#include <osmscout/import/GenMergeAreas.h>
 
 #include <osmscout/import/GenWayWayDat.h>
 #include <osmscout/import/SortWayDat.h>
@@ -64,11 +69,13 @@
 
 // Routing
 #include <osmscout/import/GenRouteDat.h>
+#include <osmscout/import/GenIntersectionIndex.h>
 
 #if defined(OSMSCOUT_IMPORT_HAVE_LIB_MARISA)
 #include <osmscout/import/GenTextIndex.h>
 #endif
 
+#include <osmscout/util/MemoryMonitor.h>
 #include <osmscout/util/Progress.h>
 #include <osmscout/util/StopClock.h>
 
@@ -76,41 +83,48 @@ namespace osmscout {
 
   static const size_t defaultStartStep=1;
 #if defined(OSMSCOUT_IMPORT_HAVE_LIB_MARISA)
-  static const size_t defaultEndStep=27;
+  static const size_t defaultEndStep=24;
 #else
-  static const size_t defaultEndStep=26;
+  static const size_t defaultEndStep=23;
 #endif
+
+  ImportParameter::Router::Router(uint8_t vehicleMask,
+                                  const std::string& filenamebase)
+  : vehicleMask(vehicleMask),
+    filenamebase(filenamebase)
+  {
+     // no code
+  }
 
   ImportParameter::ImportParameter()
    : typefile("map.ost"),
      startStep(defaultStartStep),
      endStep(defaultEndStep),
+     eco(false),
      strictAreas(false),
      sortObjects(true),
      sortBlockSize(40000000),
-     sortTileMag(13),
-     numericIndexPageSize(4096),
-     coordDataMemoryMaped(false),
+     sortTileMag(14),
+     numericIndexPageSize(1024),
+     rawCoordBlockSize(60000000),
      rawNodeDataMemoryMaped(false),
-     rawNodeDataCacheSize(10000),
      rawWayIndexMemoryMaped(true),
      rawWayDataMemoryMaped(false),
-     rawWayDataCacheSize(5000),
      rawWayIndexCacheSize(10000),
      rawWayBlockSize(500000),
+     coordDataMemoryMaped(false),
+     coordIndexCacheSize(1000000),
      areaDataMemoryMaped(false),
      areaDataCacheSize(0),
      wayDataMemoryMaped(false),
      wayDataCacheSize(0),
      areaAreaIndexMaxMag(17),
-     areaWayMinMag(14),
-     areaWayIndexMinFillRate(0.1),
-     areaWayIndexCellSizeAverage(16),
-     areaWayIndexCellSizeMax(256),
      areaNodeMinMag(8),
      areaNodeIndexMinFillRate(0.1),
      areaNodeIndexCellSizeAverage(16),
      areaNodeIndexCellSizeMax(256),
+     areaWayMinMag(11), // Should not be >= than optimizationMaxMag
+     areaWayIndexMaxLevel(13),
      waterIndexMinMag(6),
      waterIndexMaxMag(14),
      optimizationMaxWayCount(1000000),
@@ -120,14 +134,15 @@ namespace osmscout {
      optimizationCellSizeMax(255),
      optimizationWayMethod(TransPolygon::quality),
      routeNodeBlockSize(500000),
-     assumeLand(true)
+     assumeLand(true),
+     langOrder({"#"})
   {
     // no code
   }
 
-  std::string ImportParameter::GetMapfile() const
+  const std::list<std::string>& ImportParameter::GetMapfiles() const
   {
-    return mapfile;
+    return mapfiles;
   }
 
   std::string ImportParameter::GetTypefile() const
@@ -148,6 +163,16 @@ namespace osmscout {
   size_t ImportParameter::GetEndStep() const
   {
     return endStep;
+  }
+
+  bool ImportParameter::IsEco() const
+  {
+    return eco;
+  }
+
+  const std::list<ImportParameter::Router>& ImportParameter::GetRouter() const
+  {
+    return router;
   }
 
   bool ImportParameter::GetStrictAreas() const
@@ -175,9 +200,9 @@ namespace osmscout {
     return numericIndexPageSize;
   }
 
-  bool ImportParameter::GetCoordDataMemoryMaped() const
+  size_t ImportParameter::GetRawCoordBlockSize() const
   {
-    return coordDataMemoryMaped;
+    return rawCoordBlockSize;
   }
 
   bool ImportParameter::GetRawNodeDataMemoryMaped() const
@@ -188,11 +213,6 @@ namespace osmscout {
   bool ImportParameter::GetRawWayIndexMemoryMaped() const
   {
     return rawWayIndexMemoryMaped;
-  }
-
-  size_t ImportParameter::GetRawWayDataCacheSize() const
-  {
-    return rawWayDataCacheSize;
   }
 
   size_t ImportParameter::GetRawWayIndexCacheSize() const
@@ -210,9 +230,14 @@ namespace osmscout {
     return rawWayBlockSize;
   }
 
-  size_t ImportParameter::GetRawNodeDataCacheSize() const
+  bool ImportParameter::GetCoordDataMemoryMaped() const
   {
-    return rawNodeDataCacheSize;
+    return coordDataMemoryMaped;
+  }
+
+  size_t ImportParameter::GetCoordIndexCacheSize() const
+  {
+    return coordIndexCacheSize;
   }
 
   size_t ImportParameter::GetAreaDataCacheSize() const
@@ -260,19 +285,9 @@ namespace osmscout {
     return areaWayMinMag;
   }
 
-  double ImportParameter::GetAreaWayIndexMinFillRate() const
+  size_t ImportParameter::GetAreaWayIndexMaxLevel() const
   {
-    return areaWayIndexMinFillRate;
-  }
-
-  size_t ImportParameter::GetAreaWayIndexCellSizeAverage() const
-  {
-    return areaWayIndexCellSizeAverage;
-  }
-
-  size_t ImportParameter::GetAreaWayIndexCellSizeMax() const
-  {
-    return areaWayIndexCellSizeMax;
+    return areaWayIndexMaxLevel;
   }
 
   size_t ImportParameter::GetAreaAreaIndexMaxMag() const
@@ -330,9 +345,19 @@ namespace osmscout {
     return assumeLand;
   }
 
-  void ImportParameter::SetMapfile(const std::string& mapfile)
+  const std::vector<std::string>& ImportParameter::GetLangOrder() const
   {
-    this->mapfile=mapfile;
+    return this->langOrder;
+  }
+
+  const std::vector<std::string>& ImportParameter::GetAltLangOrder() const
+  {
+    return this->altLangOrder;
+  }
+
+  void ImportParameter::SetMapfiles(const std::list<std::string>& mapfiles)
+  {
+    this->mapfiles=mapfiles;
   }
 
   void ImportParameter::SetTypefile(const std::string& typefile)
@@ -355,6 +380,21 @@ namespace osmscout {
   {
     this->startStep=startStep;
     this->endStep=endStep;
+  }
+
+  void ImportParameter::SetEco(bool eco)
+  {
+    this->eco=eco;
+  }
+
+  void ImportParameter::ClearRouter()
+  {
+    router.clear();
+  }
+
+  void ImportParameter::AddRouter(const Router& router)
+  {
+    this->router.push_back(router);
   }
 
   void ImportParameter::SetStrictAreas(bool strictAreas)
@@ -382,9 +422,9 @@ namespace osmscout {
     this->numericIndexPageSize=numericIndexPageSize;
   }
 
-  void ImportParameter::SetCoordDataMemoryMaped(bool memoryMaped)
+  void ImportParameter::SetRawCoordBlockSize(size_t blockSize)
   {
-    this->coordDataMemoryMaped=memoryMaped;
+    this->rawCoordBlockSize=blockSize;
   }
 
   void ImportParameter::SetRawNodeDataMemoryMaped(bool memoryMaped)
@@ -402,11 +442,6 @@ namespace osmscout {
     this->rawWayDataMemoryMaped=memoryMaped;
   }
 
-  void ImportParameter::SetRawWayDataCacheSize(size_t wayDataCacheSize)
-  {
-    this->rawWayDataCacheSize=wayDataCacheSize;
-  }
-
   void ImportParameter::SetRawWayIndexCacheSize(size_t wayIndexCacheSize)
   {
     this->rawWayIndexCacheSize=wayIndexCacheSize;
@@ -417,9 +452,14 @@ namespace osmscout {
     this->rawWayBlockSize=blockSize;
   }
 
-  void ImportParameter::SetRawNodeDataCacheSize(size_t nodeDataCacheSize)
+  void ImportParameter::SetCoordDataMemoryMaped(bool memoryMaped)
   {
-    this->rawNodeDataCacheSize=nodeDataCacheSize;
+    this->coordDataMemoryMaped=memoryMaped;
+  }
+
+  void ImportParameter::SetCoordIndexCacheSize(size_t coordIndexCacheSize)
+  {
+    this->coordIndexCacheSize=coordIndexCacheSize;
   }
 
   void ImportParameter::SetAreaDataMemoryMaped(bool memoryMaped)
@@ -473,19 +513,9 @@ namespace osmscout {
     this->areaWayMinMag=areaWayMinMag;
   }
 
-  void ImportParameter::SetAreaWayIndexMinFillRate(double areaWayIndexMinFillRate)
+  void ImportParameter::SetAreaWayIndexMaxMag(size_t areaWayIndexMaxLevel)
   {
-    this->areaWayIndexMinFillRate=areaWayIndexMinFillRate;
-  }
-
-  void ImportParameter::SetAreaWayIndexCellSizeAverage(size_t areaWayIndexCellSizeAverage)
-  {
-    this->areaWayIndexCellSizeAverage=areaWayIndexCellSizeAverage;
-  }
-
-  void ImportParameter::SetAreaWayIndexCellSizeMax(size_t areaWayIndexCellSizeMax)
-  {
-    this->areaWayIndexCellSizeMax=areaWayIndexCellSizeMax;
+    this->areaWayIndexMaxLevel=areaWayIndexMaxLevel;
   }
 
   void ImportParameter::SetWaterIndexMinMag(size_t waterIndexMinMag)
@@ -539,42 +569,339 @@ namespace osmscout {
   {
     this->assumeLand=assumeLand;
   }
+    
+  void ImportParameter::SetLangOrder(const std::vector<std::string>& langOrder)
+  {
+    this->langOrder = langOrder;
+  }
+
+  void ImportParameter::SetAltLangOrder(const std::vector<std::string>& altLangOrder)
+  {
+    this->altLangOrder = altLangOrder;
+  }
+    
+  void ImportModuleDescription::SetName(const std::string& name)
+  {
+    this->name=name;
+  }
+
+  void ImportModuleDescription::SetDescription(const std::string& description)
+  {
+    this->description=description;
+  }
+
+  void ImportModuleDescription::AddProvidedFile(const std::string& providedFile)
+  {
+    providedFiles.push_back(providedFile);
+  }
+
+  void ImportModuleDescription::AddProvidedOptionalFile(const std::string& providedFile)
+  {
+    providedOptionalFiles.push_back(providedFile);
+  }
+
+  void ImportModuleDescription::AddProvidedDebuggingFile(const std::string& providedFile)
+  {
+    providedDebuggingFiles.push_back(providedFile);
+  }
+
+  void ImportModuleDescription::AddProvidedTemporaryFile(const std::string& providedFile)
+  {
+    providedTemporaryFiles.push_back(providedFile);
+  }
+
+  void ImportModuleDescription::AddRequiredFile(const std::string& requiredFile)
+  {
+    requiredFiles.push_back(requiredFile);
+  }
 
   ImportModule::~ImportModule()
   {
     // no code
   }
 
-  static bool ExecuteModules(std::list<ImportModule*>& modules,
-                            const ImportParameter& parameter,
-                            Progress& progress,
-                            const TypeConfig& typeConfig)
+  void ImportModule::GetDescription(const ImportParameter& /*parameter*/,
+                                    ImportModuleDescription& /*description*/) const
   {
-    StopClock overAllTimer;
-    size_t    currentStep=1;
+    // no code
+  }
 
-    for (std::list<ImportModule*>::const_iterator module=modules.begin();
-         module!=modules.end();
-         ++module) {
+  Importer::Importer(const ImportParameter& parameter)
+  : parameter(parameter)
+  {
+    GetModuleList(modules);
+
+    for (const auto& module : modules) {
+      ImportModuleDescription description;
+
+      module->GetDescription(parameter,
+                             description);
+
+      moduleDescriptions.push_back(description);
+    }
+  }
+
+  Importer::~Importer()
+  {
+    // no code
+  }
+
+  bool Importer::ValidateDescription(Progress& progress)
+  {
+    std::unordered_set<std::string> temporaryFiles;
+    std::unordered_set<std::string> requiredFiles;
+    bool                            success=true;
+
+    for (const auto& description : moduleDescriptions) {
+      for (const auto& file : description.GetProvidedTemporaryFiles()) {
+        temporaryFiles.insert(file);
+      }
+      for (const auto& file : description.GetRequiredFiles()) {
+        requiredFiles.insert(file);
+      }
+    }
+
+    // Temporary files must be required by some module
+
+    for (const auto& tmpFile : temporaryFiles) {
+      if (requiredFiles.find(tmpFile)==requiredFiles.end()) {
+        progress.Error("Temporary file '"+tmpFile+"' is not required by any import module");
+        success=false;
+      }
+    }
+
+    return success;
+  }
+
+  bool Importer::ValidateParameter(Progress& progress)
+  {
+    if (parameter.GetAreaWayMinMag()<=parameter.GetOptimizationMaxMag()) {
+      progress.Error("Area way index minimum magnification is <= than optimization max magnification");
+      return false;
+    }
+
+    if (parameter.IsEco() &&
+        (parameter.GetStartStep()!=defaultStartStep ||
+         parameter.GetEndStep()!=defaultEndStep)) {
+      progress.Error("If eco mode is activated you must run all import steps");
+    }
+
+    return true;
+  }
+
+  void Importer::GetModuleList(std::vector<ImportModuleRef>& modules)
+  {
+    /* 1 */
+    modules.push_back(std::make_shared<TypeDataGenerator>());
+
+    /* 2 */
+    modules.push_back(std::make_shared<Preprocess>());
+
+    /* 3 */
+    modules.push_back(std::make_shared<CoordDataGenerator>());
+
+    /* 4 */
+    modules.push_back(std::make_shared<RawWayIndexGenerator>());
+    /* 5 */
+    modules.push_back(std::make_shared<RawRelationIndexGenerator>());
+    /* 6 */
+    modules.push_back(std::make_shared<RelAreaDataGenerator>());
+
+    /* 7 */
+    modules.push_back(std::make_shared<WayAreaDataGenerator>());
+
+    /* 8 */
+    modules.push_back(std::make_shared<MergeAreaDataGenerator>());
+
+    /* 9 */
+    modules.push_back(std::make_shared<MergeAreasGenerator>());
+
+    /* 10 */
+    modules.push_back(std::make_shared<WayWayDataGenerator>());
+
+    /* 11 */
+    modules.push_back(std::make_shared<OptimizeAreaWayIdsGenerator>());
+
+    /* 12 */
+    modules.push_back(std::make_shared<NodeDataGenerator>());
+
+    /* 13 */
+    modules.push_back(std::make_shared<SortNodeDataGenerator>());
+
+    /* 14 */
+    modules.push_back(std::make_shared<SortWayDataGenerator>());
+
+    /* 15 */
+    modules.push_back(std::make_shared<AreaNodeIndexGenerator>());
+
+    /* 16 */
+    modules.push_back(std::make_shared<AreaWayIndexGenerator>());
+
+    /* 17 */
+    modules.push_back(std::make_shared<AreaAreaIndexGenerator>());
+
+    /* 18 */
+    modules.push_back(std::make_shared<WaterIndexGenerator>());
+
+    /* 19 */
+    modules.push_back(std::make_shared<OptimizeAreasLowZoomGenerator>());
+
+    /* 20 */
+    modules.push_back(std::make_shared<OptimizeWaysLowZoomGenerator>());
+
+    /* 21 */
+    modules.push_back(std::make_shared<LocationIndexGenerator>());
+
+    /* 22 */
+    modules.push_back(std::make_shared<RouteDataGenerator>());
+
+    /* 23 */
+    modules.push_back(std::make_shared<IntersectionIndexGenerator>());
+
+#if defined(OSMSCOUT_IMPORT_HAVE_LIB_MARISA)
+    /* 24 */
+    modules.push_back(std::make_shared<TextIndexGenerator>());
+#endif
+  }
+
+  void Importer::DumpTypeConfigData(const TypeConfig& typeConfig,
+                                    Progress& progress)
+  {
+    progress.Info("Number of types: "+NumberToString(typeConfig.GetTypes().size()));
+    progress.Info("Number of node types: "+NumberToString(typeConfig.GetNodeTypes().size())+" "+NumberToString(typeConfig.GetNodeTypeIdBytes())+" byte(s)");
+    progress.Info("Number of way types: "+NumberToString(typeConfig.GetWayTypes().size())+" "+NumberToString(typeConfig.GetWayTypeIdBytes())+" byte(s)");
+    progress.Info("Number of area types: "+NumberToString(typeConfig.GetAreaTypes().size())+" "+NumberToString(typeConfig.GetAreaTypeIdBytes())+" byte(s)");
+  }
+
+  void Importer::DumpModuleDescription(const ImportModuleDescription& description,
+                                       Progress& progress)
+  {
+    for (const auto& filename : description.GetRequiredFiles()) {
+      progress.Info("Module requires file '"+filename+"'");
+    }
+    for (const auto& filename : description.GetProvidedFiles()) {
+      progress.Info("Module provides file '"+filename+"'");
+    }
+    for (const auto& filename : description.GetProvidedOptionalFiles()) {
+      progress.Info("Module provides optional file '"+filename+"'");
+    }
+    for (const auto& filename : description.GetProvidedDebuggingFiles()) {
+      progress.Info("Module provides debugging file '"+filename+"'");
+    }
+    for (const auto& filename : description.GetProvidedTemporaryFiles()) {
+      progress.Info("Module provides temporary file '"+filename+"'");
+    }
+  }
+
+  bool Importer::CleanupTemporaries(size_t currentStep,
+                                    Progress& progress)
+  {
+    std::set<std::string> allTemporaryFiles;
+
+    for (const auto& description : moduleDescriptions) {
+      for (const auto& file : description.GetProvidedTemporaryFiles()) {
+        allTemporaryFiles.insert(file);
+      }
+    }
+
+    std::set<std::string> uptoNowRequiredTemporaryFiles;
+
+    for (const auto& file : moduleDescriptions[currentStep-1].GetRequiredFiles()) {
+      if (allTemporaryFiles.find(file)!=allTemporaryFiles.end()) {
+        uptoNowRequiredTemporaryFiles.insert(file);
+      }
+    }
+
+    std::set<std::string> inFutureStillRequiredTemporaryFiles;
+
+    for (size_t step=currentStep; step<moduleDescriptions.size(); step++) {
+      for (const auto& file : moduleDescriptions[step].GetRequiredFiles()) {
+        if (allTemporaryFiles.find(file)!=allTemporaryFiles.end()) {
+          inFutureStillRequiredTemporaryFiles.insert(file);
+        }
+      }
+    }
+
+    std::list<std::string> notAnymoreRequiredFiles;
+
+    std::set_difference(uptoNowRequiredTemporaryFiles.begin(),uptoNowRequiredTemporaryFiles.end(),
+                        inFutureStillRequiredTemporaryFiles.begin(),inFutureStillRequiredTemporaryFiles.end(),
+                        std::inserter(notAnymoreRequiredFiles,notAnymoreRequiredFiles.begin()));
+
+    for (const auto& file : notAnymoreRequiredFiles) {
+      std::string filename=AppendFileToDir(parameter.GetDestinationDirectory(),file);
+
+      progress.Info("Removing temporary file '"+ filename + "'...");
+
+      if (!RemoveFile(filename)) {
+        progress.Error("Error while rmeoving file '"+ filename + "'!");
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  bool Importer::ExecuteModules(const TypeConfigRef& typeConfig,
+                                Progress& progress)
+  {
+    StopClock     overAllTimer;
+    size_t        currentStep=1;
+    MemoryMonitor monitor;
+    double        maxVMUsage=0.0;
+    double        maxResidentSet=0.0;
+
+    for (const auto& module : modules) {
       if (currentStep>=parameter.GetStartStep() &&
           currentStep<=parameter.GetEndStep()) {
-        StopClock timer;
-        bool      success;
+        ImportModuleDescription moduleDescription;
+        StopClock               timer;
+        bool                    success;
+        double                  vmUsage;
+        double                  residentSet;
 
-        progress.SetStep(std::string("Step #")+
+        module->GetDescription(parameter,
+                               moduleDescription);
+
+        progress.SetStep("Step #"+
                          NumberToString(currentStep)+
                          " - "+
-                         (*module)->GetDescription());
+                         moduleDescription.GetName());
+        progress.Info("Module description: "+moduleDescription.GetDescription());
 
-        success=(*module)->Import(parameter,progress,typeConfig);
+        monitor.Reset();
+
+        DumpModuleDescription(moduleDescription,
+                              progress);
+
+        success=module->Import(typeConfig,
+                               parameter,
+                               progress);
 
         timer.Stop();
 
-        progress.Info(std::string("=> ")+timer.ResultString()+" second(s)");
+        monitor.GetMaxValue(vmUsage,residentSet);
+
+        maxVMUsage=std::max(maxVMUsage,vmUsage);
+        maxResidentSet=std::max(maxResidentSet,residentSet);
+
+        if (vmUsage!=0.0 || residentSet!=0.0) {
+          progress.Info(std::string("=> ")+timer.ResultString()+"s, RSS "+ByteSizeToString(residentSet)+", VM "+ByteSizeToString(vmUsage));
+        }
+        else {
+          progress.Info(std::string("=> ")+timer.ResultString()+"s");
+        }
 
         if (!success) {
-          progress.Error(std::string("Error while executing step '")+(*module)->GetDescription()+"'!");
+          progress.Error("Error while executing step '"+moduleDescription.GetName()+"'!");
           return false;
+        }
+
+        if (parameter.IsEco()) {
+          if (!CleanupTemporaries(currentStep,
+                                  progress)) {
+            return false;
+          }
         }
       }
 
@@ -582,146 +909,107 @@ namespace osmscout {
     }
 
     overAllTimer.Stop();
-    progress.Info(std::string("=> ")+overAllTimer.ResultString()+" second(s)");
+
+    if (maxVMUsage!=0.0 || maxResidentSet!=0.0) {
+      progress.Info(std::string("Overall ")+overAllTimer.ResultString()+"s, RSS "+ByteSizeToString(maxResidentSet)+", VM "+ByteSizeToString(maxVMUsage));
+    }
+    else {
+      progress.Info(std::string("Overall ")+overAllTimer.ResultString()+"s");
+    }
 
     return true;
   }
 
-  bool Import(const ImportParameter& parameter,
-              Progress& progress)
+  bool Importer::Import(Progress& progress)
   {
-    // TODO: verify parameter
+    TypeConfigRef typeConfig(std::make_shared<TypeConfig>());
 
-    TypeConfig               typeConfig;
-    std::list<ImportModule*> modules;
+    if (!ValidateDescription(progress)) {
+      return false;
+    }
+
+    if (!ValidateParameter(progress)) {
+      return false;
+    }
 
     progress.SetStep("Loading type config");
 
-    if (!LoadTypeConfig(parameter.GetTypefile().c_str(),typeConfig)) {
+    if (!typeConfig->LoadFromOSTFile(parameter.GetTypefile())) {
       progress.Error("Cannot load type configuration!");
       return false;
     }
 
-    typeConfig.RegisterNameTag("name",0);
-    typeConfig.RegisterNameTag("place_name",1);
-
-    /* 1 */
-    modules.push_back(new TypeDataGenerator());
-
-    /* 2 */
-    modules.push_back(new Preprocess());
-
-    /* 3 */
-    modules.push_back(new NumericIndexGenerator<OSMId,RawNode>("Generating 'rawnode.idx'",
-                                                               AppendFileToDir(parameter.GetDestinationDirectory(),
-                                                                               "rawnodes.dat"),
-                                                               AppendFileToDir(parameter.GetDestinationDirectory(),
-                                                                               "rawnode.idx")));
-    /* 4 */
-    modules.push_back(new NumericIndexGenerator<OSMId,RawWay>("Generating 'rawway.idx'",
-                                                              AppendFileToDir(parameter.GetDestinationDirectory(),
-                                                                              "rawways.dat"),
-                                                              AppendFileToDir(parameter.GetDestinationDirectory(),
-                                                                              "rawway.idx")));
-    /* 5 */
-    modules.push_back(new NumericIndexGenerator<OSMId,RawRelation>("Generating 'rawrel.idx'",
-                                                                   AppendFileToDir(parameter.GetDestinationDirectory(),
-                                                                                   "rawrels.dat"),
-                                                                   AppendFileToDir(parameter.GetDestinationDirectory(),
-                                                                                   "rawrel.idx")));
-    /* 6 */
-    modules.push_back(new TurnRestrictionDataGenerator());
-
-    /* 7 */
-    modules.push_back(new RelAreaDataGenerator());
-
-    /* 8 */
-    modules.push_back(new WayAreaDataGenerator());
-
-    /* 9 */
-    modules.push_back(new WayWayDataGenerator());
-
-    /* 10 */
-    modules.push_back(new OptimizeAreaWayIdsGenerator());
-
-    /* 11 */
-    modules.push_back(new NodeDataGenerator());
-
-    /* 12 */
-    modules.push_back(new SortNodeDataGenerator());
-
-    /* 13 */
-    modules.push_back(new SortAreaDataGenerator());
-
-    /* 14 */
-    modules.push_back(new SortWayDataGenerator());
-
-    /* 15 */
-    modules.push_back(new AreaNodeIndexGenerator());
-
-    /* 16 */
-    modules.push_back(new AreaWayIndexGenerator());
-
-    /* 17 */
-    modules.push_back(new AreaAreaIndexGenerator());
-
-    /* 18 */
-    modules.push_back(new WaterIndexGenerator());
-
-    /* 19 */
-    modules.push_back(new OptimizeAreasLowZoomGenerator());
-
-    /* 20 */
-    modules.push_back(new OptimizeWaysLowZoomGenerator());
-
-    /* 21 */
-    modules.push_back(new LocationIndexGenerator());
-
-    /* 22 */
-    modules.push_back(new RouteDataGenerator());
-
-    /* 23 */
-    modules.push_back(new NumericIndexGenerator<Id,Intersection>(std::string("Generating '")+Router::FILENAME_INTERSECTIONS_IDX+"'",
-                                                                 AppendFileToDir(parameter.GetDestinationDirectory(),
-                                                                                 Router::FILENAME_INTERSECTIONS_DAT),
-                                                                 AppendFileToDir(parameter.GetDestinationDirectory(),
-                                                                                 Router::FILENAME_INTERSECTIONS_IDX)));
-
-    /* 24 */
-    modules.push_back(new NumericIndexGenerator<Id,RouteNode>(std::string("Generating '")+Router::FILENAME_FOOT_IDX+"'",
-                                                              AppendFileToDir(parameter.GetDestinationDirectory(),
-                                                                              Router::FILENAME_FOOT_DAT),
-                                                              AppendFileToDir(parameter.GetDestinationDirectory(),
-                                                                              Router::FILENAME_FOOT_IDX)));
-
-    /* 25 */
-    modules.push_back(new NumericIndexGenerator<Id,RouteNode>(std::string("Generating '")+Router::FILENAME_BICYCLE_IDX+"'",
-                                                              AppendFileToDir(parameter.GetDestinationDirectory(),
-                                                                              Router::FILENAME_BICYCLE_DAT),
-                                                              AppendFileToDir(parameter.GetDestinationDirectory(),
-                                                                              Router::FILENAME_BICYCLE_IDX)));
-
-    /* 26 */
-    modules.push_back(new NumericIndexGenerator<Id,RouteNode>(std::string("Generating '")+Router::FILENAME_CAR_IDX+"'",
-                                                              AppendFileToDir(parameter.GetDestinationDirectory(),
-                                                                              Router::FILENAME_CAR_DAT),
-                                                              AppendFileToDir(parameter.GetDestinationDirectory(),
-                                                                              Router::FILENAME_CAR_IDX)));
-
-#if defined(OSMSCOUT_IMPORT_HAVE_LIB_MARISA)
-    /* 27 */
-    modules.push_back(new TextIndexGenerator());
-#endif
-
-    bool result=ExecuteModules(modules,parameter,progress,typeConfig);
-
-    for (std::list<ImportModule*>::iterator module=modules.begin();
-         module!=modules.end();
-         ++module) {
-      delete *module;
+    DumpTypeConfigData(*typeConfig,
+                       progress);
+      
+    progress.Info("Parsed language(s) :");
+    int langIndex = 0;
+    for(const auto& lang : parameter.GetLangOrder()){
+      if(lang=="#"){
+        progress.Info("  default");
+        typeConfig->RegisterNameTag("name", langIndex);
+        typeConfig->RegisterNameTag("place_name", langIndex+1);
+      } else {
+          progress.Info("  " + lang);
+          typeConfig->RegisterNameTag("name:"+lang, langIndex);
+          typeConfig->RegisterNameTag("place_name:"+lang, langIndex+1);
+      }
+      langIndex+=2;
+    }
+      
+    progress.Info("Parsed alt language(s) :");
+    langIndex = 0;
+    for(const auto& lang : parameter.GetAltLangOrder()){
+      if(lang=="#"){
+        progress.Info("  default");
+        typeConfig->RegisterNameAltTag("name", langIndex);
+        typeConfig->RegisterNameAltTag("place_name", langIndex+1);
+      } else {
+        progress.Info("  " + lang);
+        typeConfig->RegisterNameAltTag("name:"+lang, langIndex);
+        typeConfig->RegisterNameAltTag("place_name:"+lang, langIndex+1);
+      }
+      langIndex+=2;
     }
 
+    bool result=ExecuteModules(typeConfig,
+                               progress);
+
     return result;
+  }
+
+  std::list<std::string> Importer::GetProvidedFiles() const
+  {
+    std::set<std::string> providedFileSet;
+
+    for (const auto& description : moduleDescriptions) {
+      for (const auto& file : description.GetProvidedFiles()) {
+        providedFileSet.insert(file);
+      }
+    }
+
+    std::list<std::string> providedFiles;
+
+    std::copy(providedFileSet.begin(),providedFileSet.end(),std::back_inserter(providedFiles));
+
+    return providedFiles;
+  }
+
+  std::list<std::string> Importer::GetProvidedOptionalFiles() const
+  {
+    std::set<std::string> providedFileSet;
+
+    for (const auto& description : moduleDescriptions) {
+      for (const auto& file : description.GetProvidedOptionalFiles()) {
+        providedFileSet.insert(file);
+      }
+    }
+
+    std::list<std::string> providedFiles;
+
+    std::copy(providedFileSet.begin(),providedFileSet.end(),std::back_inserter(providedFiles));
+
+    return providedFiles;
   }
 }
 

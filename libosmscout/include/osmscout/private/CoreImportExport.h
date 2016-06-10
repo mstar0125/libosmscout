@@ -24,7 +24,7 @@
 
 // Shared library support
 #if defined(__WIN32__) || defined(WIN32)
-  #if defined(OSMSCOUTDLL) 
+  #if defined(OSMSCOUT_EXPORT_SYMBOLS) 
     #if defined(DLL_EXPORT) || defined(_WINDLL)
       #define OSMSCOUT_EXPTEMPL
       #define OSMSCOUT_API __declspec(dllexport)
@@ -49,7 +49,7 @@
     #define OSMSCOUT_DLLLOCAL
   #endif
 
-  #if defined(OSMSCOUTDLL)
+  #if defined(OSMSCOUT_EXPORT_SYMBOLS)
     #define OSMSCOUT_API OSMSCOUT_EXPORT
   #else
     #define OSMSCOUT_API OSMSCOUT_IMPORT

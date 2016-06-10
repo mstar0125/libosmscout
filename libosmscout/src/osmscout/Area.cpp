@@ -19,250 +19,30 @@
 
 #include <osmscout/Area.h>
 
+#include <algorithm>
 #include <limits>
 
+#include <osmscout/util/String.h>
+
 #include <osmscout/system/Math.h>
-#include <iostream>
+
 namespace osmscout {
 
-  bool AreaAttributes::SetTags(Progress& /*progress*/,
-                               const TypeConfig& typeConfig,
-                               std::vector<Tag>& tags)
+  const uint8_t Area::masterRingId=0;
+  const uint8_t Area::outerRingId=1;
+
+  bool Area::Ring::HasAnyFeaturesSet() const
   {
-    uint32_t namePriority=0;
-    uint32_t nameAltPriority=0;
-
-    name.clear();
-    nameAlt.clear();
-    location.clear();
-    address.clear();
-
-    flags=0;
-
-    this->tags.clear();
-
-    flags|=hasAccess;
-
-    std::vector<Tag>::iterator tag=tags.begin();
-    while (tag!=tags.end()) {
-      uint32_t ntPrio;
-      bool     isNameTag=typeConfig.IsNameTag(tag->key,ntPrio);
-      uint32_t natPrio;
-      bool     isNameAltTag=typeConfig.IsNameAltTag(tag->key,natPrio);
-
-      if (isNameTag &&
-          (name.empty() || ntPrio>namePriority)) {
-        name=tag->value;
-        namePriority=ntPrio;
-
-        /*
-        size_t i=0;
-        while (postfixes[i]!=NULL) {
-          size_t pos=name.rfind(postfixes[i]);
-          if (pos!=std::string::npos &&
-              pos==name.length()-strlen(postfixes[i])) {
-            name=name.substr(0,pos);
-            break;
-          }
-
-          i++;
-        }*/
-      }
-
-      if (isNameAltTag &&
-          (nameAlt.empty() || natPrio>nameAltPriority)) {
-        nameAlt=tag->value;
-        nameAltPriority=natPrio;
-      }
-
-      if (isNameTag || isNameAltTag) {
-        tag=tags.erase(tag);
-      }
-      else if (tag->key==typeConfig.tagStreet) {
-        location=tag->value;
-        tag=tags.erase(tag);
-      }
-      else if (tag->key==typeConfig.tagHouseNr) {
-        address=tag->value;
-        tag=tags.erase(tag);
-      }
-      else if (tag->key==typeConfig.tagAccess) {
-        if (tag->value=="no" ||
-            tag->value=="private" ||
-            tag->value=="destination" ||
-            tag->value=="delivery") {
-          flags&=~hasAccess;
-        }
-
-        tag=tags.erase(tag);
-      }
-      else {
-        ++tag;
+    for (size_t f=0; f<featureValueBuffer.GetType()->GetFeatureCount(); f++) {
+      if (featureValueBuffer.HasFeature(f)) {
+        return true;
       }
     }
 
-    this->tags=tags;
-
-    return true;
+    return false;
   }
 
-  void AreaAttributes::GetFlags(uint8_t& flags) const
-  {
-    flags=0;
-
-    if (!name.empty()) {
-      flags|=hasName;
-    }
-
-    if (!nameAlt.empty()) {
-      flags|=hasNameAlt;
-    }
-
-    if (!location.empty()) {
-      flags|=hasLocation;
-    }
-
-    if (!address.empty()) {
-      flags|=hasAddress;
-    }
-
-    if (!tags.empty()) {
-      flags|=hasTags;
-    }
-  }
-
-  bool AreaAttributes::Read(FileScanner& scanner)
-  {
-    uint8_t flags;
-
-    scanner.Read(flags);
-
-    if (scanner.HasError()) {
-      return false;
-    }
-
-    return Read(scanner,
-                flags);
-  }
-
-  bool AreaAttributes::Read(FileScanner& scanner,
-                            uint8_t flags)
-  {
-    this->flags=flags;
-
-    if (flags & hasName) {
-      scanner.Read(name);
-    }
-
-    if (flags & hasNameAlt) {
-      scanner.Read(nameAlt);
-    }
-
-    if (flags & hasLocation) {
-      scanner.Read(location);
-    }
-
-    if (flags & hasAddress) {
-      scanner.Read(address);
-    }
-
-    if (flags & hasTags) {
-      uint32_t tagCount;
-
-      scanner.ReadNumber(tagCount);
-      if (scanner.HasError()) {
-        return false;
-      }
-
-      tags.resize(tagCount);
-      for (size_t i=0; i<tagCount; i++) {
-        scanner.ReadNumber(tags[i].key);
-        scanner.Read(tags[i].value);
-      }
-    }
-
-    return !scanner.HasError();
-  }
-
-  bool AreaAttributes::Write(FileWriter& writer) const
-  {
-    uint8_t flags;
-
-    GetFlags(flags);
-
-    writer.Write(flags);
-
-    return Write(writer,
-                 flags);
-  }
-
-  bool AreaAttributes::Write(FileWriter& writer,
-                             uint8_t flags) const
-  {
-    if (flags & hasName) {
-      writer.Write(name);
-    }
-
-    if (flags & hasNameAlt) {
-      writer.Write(nameAlt);
-    }
-
-    if (flags & hasLocation) {
-      writer.Write(location);
-    }
-
-    if (flags & hasAddress) {
-      writer.Write(address);
-    }
-
-    if (flags & hasTags) {
-      writer.WriteNumber((uint32_t)tags.size());
-
-      for (size_t i=0; i<tags.size(); i++) {
-        writer.WriteNumber(tags[i].key);
-        writer.Write(tags[i].value);
-      }
-    }
-
-    return !writer.HasError();
-  }
-
-  bool AreaAttributes::operator==(const AreaAttributes& other) const
-  {
-    if (name!=other.name ||
-        nameAlt!=other.nameAlt ||
-        location!=other.location ||
-        address!=other.address) {
-      return false;
-    }
-
-    if (tags.empty() && other.tags.empty()) {
-      return true;
-    }
-
-    if (tags.size()!=other.tags.size()) {
-      return false;
-    }
-
-    for (size_t t=0; t<tags.size(); t++) {
-      if (tags[t].key!=other.tags[t].key) {
-        return false;
-      }
-
-      if (tags[t].value!=other.tags[t].value) {
-        return false;
-      }
-    }
-
-    return true;
-  }
-
-  bool AreaAttributes::operator!=(const AreaAttributes& other) const
-  {
-    return !this->operator==(other);
-  }
-
-  bool Area::Ring::GetCenter(double& lat, double& lon) const
+  bool Area::Ring::GetCenter(GeoCoord& center) const
   {
     double minLat=0.0;
     double minLon=0.0;
@@ -292,23 +72,20 @@ namespace osmscout {
       return false;
     }
 
-    lat=minLat+(maxLat-minLat)/2;
-    lon=minLon+(maxLon-minLon)/2;
+    center.Set(minLat+(maxLat-minLat)/2,
+               minLon+(maxLon-minLon)/2);
 
     return true;
   }
 
-  void Area::Ring::GetBoundingBox(double& minLon,
-                                  double& maxLon,
-                                  double& minLat,
-                                  double& maxLat) const
+  void Area::Ring::GetBoundingBox(GeoBox& boundingBox) const
   {
     assert(!nodes.empty());
 
-    minLon=nodes[0].GetLon();
-    maxLon=minLon;
-    minLat=nodes[0].GetLat();
-    maxLat=minLat;
+    double minLon=nodes[0].GetLon();
+    double maxLon=minLon;
+    double minLat=nodes[0].GetLat();
+    double maxLat=minLat;
 
     for (size_t i=1; i<nodes.size(); i++) {
       minLon=std::min(minLon,nodes[i].GetLon());
@@ -316,9 +93,12 @@ namespace osmscout {
       minLat=std::min(minLat,nodes[i].GetLat());
       maxLat=std::max(maxLat,nodes[i].GetLat());
     }
+
+    boundingBox.Set(GeoCoord(minLat,minLon),
+                    GeoCoord(maxLat,maxLon));
   }
 
-  bool Area::GetCenter(double& lat, double& lon) const
+  bool Area::GetCenter(GeoCoord& center) const
   {
     assert(!rings.empty());
 
@@ -329,22 +109,22 @@ namespace osmscout {
 
     bool start=true;
 
-    for (size_t i=0; i<rings.size(); i++) {
-      if (rings[i].ring==Area::outerRingId) {
-        for (size_t j=0; j<rings[i].nodes.size(); j++) {
+    for (const auto& ring : rings) {
+      if (ring.IsOuterRing()) {
+        for (size_t j=0; j<ring.nodes.size(); j++) {
           if (start) {
-            minLat=rings[i].nodes[j].GetLat();
+            minLat=ring.nodes[j].GetLat();
             maxLat=minLat;
-            minLon=rings[i].nodes[j].GetLon();
+            minLon=ring.nodes[j].GetLon();
             maxLon=minLon;
 
             start=false;
           }
           else {
-            minLat=std::min(minLat,rings[i].nodes[j].GetLat());
-            minLon=std::min(minLon,rings[i].nodes[j].GetLon());
-            maxLat=std::max(maxLat,rings[i].nodes[j].GetLat());
-            maxLon=std::max(maxLon,rings[i].nodes[j].GetLon());
+            minLat=std::min(minLat,ring.nodes[j].GetLat());
+            minLon=std::min(minLon,ring.nodes[j].GetLon());
+            maxLat=std::max(maxLat,ring.nodes[j].GetLat());
+            maxLon=std::max(maxLon,ring.nodes[j].GetLon());
           }
         }
       }
@@ -356,422 +136,382 @@ namespace osmscout {
       return false;
     }
 
-    lat=minLat+(maxLat-minLat)/2;
-    lon=minLon+(maxLon-minLon)/2;
+    center.Set(minLat+(maxLat-minLat)/2,
+               minLon+(maxLon-minLon)/2);
 
     return true;
   }
 
-  void Area::GetBoundingBox(double& minLon,
-                            double& maxLon,
-                            double& minLat,
-                            double& maxLat) const
+  void Area::GetBoundingBox(GeoBox& boundingBox) const
   {
-    assert(!rings.empty());
+    boundingBox.Invalidate();
 
-    for (std::vector<Area::Ring>::const_iterator role=rings.begin();
-         role!=rings.end();
-         ++role) {
-      if (role->ring==Area::outerRingId) {
-        role->GetBoundingBox(minLon,
-                             maxLon,
-                             minLat,
-                             maxLat);
+    for (const auto& role : rings) {
+      if (role.IsOuterRing()) {
+        if (!boundingBox.IsValid()) {
+          role.GetBoundingBox(boundingBox);
+        }
+        else {
+          GeoBox ringBoundingBox;
+
+          role.GetBoundingBox(ringBoundingBox);
+
+          boundingBox.Include(ringBoundingBox);
+        }
       }
     }
   }
 
-  bool Area::ReadIds(FileScanner& scanner,
-                     uint32_t nodesCount,
-                     std::vector<Id>& ids)
+  /**
+   * Reads data from the given Filescanner. Node ids will only be read
+   * if not thought to be required for this area.
+   *
+   * @throws IOException
+   */
+  void Area::Read(const TypeConfig& typeConfig,
+                  FileScanner& scanner)
   {
-    Id minId;
+    TypeId             ringType;
+    bool               multipleRings;
+    bool               hasMaster;
+    uint32_t           ringCount=1;
+    FeatureValueBuffer featureValueBuffer;
 
-    ids.resize(nodesCount);
+    fileOffset=scanner.GetPos();
 
-    scanner.ReadNumber(minId);
-    for (size_t j=0; j<nodesCount; j++) {
-      Id id;
+    scanner.ReadTypeId(ringType,
+                       typeConfig.GetAreaTypeIdBytes());
 
-      scanner.ReadNumber(id);
+    TypeInfoRef type=typeConfig.GetAreaTypeInfo(ringType);
 
-      ids[j]=minId+id;
-    }
+    featureValueBuffer.SetType(type);
 
-    return !scanner.HasError();
-  }
+    featureValueBuffer.Read(scanner,
+                            multipleRings,
+                            hasMaster);
 
-  bool Area::ReadCoords(FileScanner& scanner,
-                        uint32_t nodesCount,
-                        std::vector<GeoCoord>& coords)
-  {
-    uint32_t minLat;
-    uint32_t minLon;
-
-    coords.resize(nodesCount);
-
-    scanner.Read(minLat);
-    scanner.Read(minLon);
-
-    for (size_t j=0; j<nodesCount; j++) {
-      uint32_t latValue;
-      uint32_t lonValue;
-
-      scanner.ReadNumber(latValue);
-      scanner.ReadNumber(lonValue);
-
-      coords[j].Set((minLat+latValue)/conversionFactor-90.0,
-                     (minLon+lonValue)/conversionFactor-180.0);
-    }
-
-    return !scanner.HasError();
-  }
-
-  bool Area::Read(FileScanner& scanner)
-  {
-    if (!scanner.GetPos(fileOffset)) {
-      return false;
-    }
-
-    uint32_t ringCount=1;
-    uint8_t  outerFlags;
-    uint32_t nodesCount;
-
-    scanner.Read(outerFlags);
-
-    if (!(outerFlags & AreaAttributes::isSimple)) {
+    if (multipleRings) {
       scanner.ReadNumber(ringCount);
-      if (scanner.HasError()) {
-        return false;
-      }
 
       ringCount++;
     }
 
     rings.resize(ringCount);
 
-    scanner.ReadNumber(rings[0].type);
+    rings[0].featureValueBuffer=std::move(featureValueBuffer);
 
-    if (!rings[0].attributes.Read(scanner,
-                                  outerFlags)) {
-      return false;
-    }
-
-    if (ringCount>1) {
-      rings[0].ring=masterRingId;
+    if (hasMaster) {
+      rings[0].MarkAsMasterRing();
     }
     else {
-      rings[0].ring=outerRingId;
+      rings[0].MarkAsOuterRing();
     }
 
-    scanner.ReadNumber(nodesCount);
-
-    if (nodesCount>0) {
-      if (!ReadIds(scanner,
-                   nodesCount,
-                   rings[0].ids)) {
-        return false;
-      }
-
-      if (!ReadCoords(scanner,
-                      nodesCount,
-                      rings[0].nodes)) {
-        return false;
-      }
-    }
+    scanner.Read(rings[0].nodes,
+                 rings[0].GetType()->CanRoute());
 
     for (size_t i=1; i<ringCount; i++) {
-      scanner.ReadNumber(rings[i].type);
+      scanner.ReadTypeId(ringType,
+                         typeConfig.GetAreaTypeIdBytes());
 
-      if (rings[i].type!=typeIgnore) {
-        if (!rings[i].attributes.Read(scanner)) {
-          return false;
-        }
+      type=typeConfig.GetAreaTypeInfo(ringType);
+
+      rings[i].SetType(type);
+
+      if (rings[i].GetType()->GetAreaId()!=typeIgnore) {
+        rings[i].featureValueBuffer.Read(scanner);
       }
 
       scanner.Read(rings[i].ring);
-
-      scanner.ReadNumber(nodesCount);
-
-      if (nodesCount>0 &&
-          rings[i].type!=typeIgnore) {
-        if (!ReadIds(scanner,
-                     nodesCount,
-                     rings[i].ids)) {
-          return false;
-        }
-      }
-
-      if (nodesCount>0) {
-        if (!ReadCoords(scanner,
-                        nodesCount,
-                        rings[i].nodes)) {
-          return false;
-        }
-      }
+      scanner.Read(rings[i].nodes,
+                   rings[i].GetType()->GetAreaId()!=typeIgnore &&
+                   rings[i].GetType()->CanRoute());
     }
-
-    return !scanner.HasError();
   }
 
-  bool Area::ReadOptimized(FileScanner& scanner)
+  /**
+   * Reads data from the given FileScanner. All data available will be read.
+   *
+   * @throws IOException
+   */
+  void Area::ReadImport(const TypeConfig& typeConfig,
+                        FileScanner& scanner)
   {
-    if (!scanner.GetPos(fileOffset)) {
-      return false;
-    }
+    TypeId             ringType;
+    bool               multipleRings;
+    bool               hasMaster;
+    uint32_t           ringCount=1;
+    FeatureValueBuffer featureValueBuffer;
 
-    uint32_t ringCount=1;
-    uint8_t  outerFlags;
-    uint32_t nodesCount;
+    fileOffset=scanner.GetPos();
 
-    scanner.Read(outerFlags);
+    scanner.ReadTypeId(ringType,
+                       typeConfig.GetAreaTypeIdBytes());
 
-    if (!(outerFlags & AreaAttributes::isSimple)) {
+    TypeInfoRef type=typeConfig.GetAreaTypeInfo(ringType);
+
+    featureValueBuffer.SetType(type);
+
+    featureValueBuffer.Read(scanner,
+                            multipleRings,
+                            hasMaster);
+
+    if (multipleRings) {
       scanner.ReadNumber(ringCount);
-      if (scanner.HasError()) {
-        return false;
-      }
 
       ringCount++;
     }
 
     rings.resize(ringCount);
 
-    scanner.ReadNumber(rings[0].type);
+    rings[0].featureValueBuffer=featureValueBuffer;
 
-    if (!rings[0].attributes.Read(scanner,
-                                  outerFlags)) {
-      return false;
-    }
-
-    if (ringCount>1) {
-      rings[0].ring=masterRingId;
+    if (hasMaster) {
+      rings[0].MarkAsMasterRing();
     }
     else {
-      rings[0].ring=outerRingId;
+      rings[0].MarkAsOuterRing();
     }
 
-    scanner.ReadNumber(nodesCount);
-
-    if (nodesCount>0) {
-      if (!ReadCoords(scanner,
-                      nodesCount,
-                      rings[0].nodes)) {
-        return false;
-      }
-    }
+    scanner.Read(rings[0].nodes,
+                 true);
 
     for (size_t i=1; i<ringCount; i++) {
-      scanner.ReadNumber(rings[i].type);
+      scanner.ReadTypeId(ringType,
+                         typeConfig.GetAreaTypeIdBytes());
 
-      if (rings[i].type!=typeIgnore) {
-        if (!rings[i].attributes.Read(scanner)) {
-          return false;
-        }
+      type=typeConfig.GetAreaTypeInfo(ringType);
+
+      rings[i].SetType(type);
+
+      if (rings[i].GetType()->GetAreaId()!=typeIgnore) {
+        rings[i].featureValueBuffer.Read(scanner);
       }
 
       scanner.Read(rings[i].ring);
+      scanner.Read(rings[i].nodes,
+                   rings[i].GetType()->GetAreaId()!=typeIgnore ||
+                   rings[i].ring==outerRingId);
+    }
+  }
 
-      scanner.ReadNumber(nodesCount);
+  /**
+   * Reads data to the given FileScanner. No node ids will be read.
+   *
+   * @throws IOException
+   */
+  void Area::ReadOptimized(const TypeConfig& typeConfig,
+                           FileScanner& scanner)
+  {
+    TypeId             ringType;
+    bool               multipleRings;
+    bool               hasMaster;
+    uint32_t           ringCount=1;
+    FeatureValueBuffer featureValueBuffer;
 
-      if (nodesCount>0) {
-        if (!ReadCoords(scanner,
-                        nodesCount,
-                        rings[i].nodes)) {
-          return false;
-        }
+    fileOffset=scanner.GetPos();
+
+    scanner.ReadTypeId(ringType,
+                       typeConfig.GetAreaTypeIdBytes());
+
+    TypeInfoRef type=typeConfig.GetAreaTypeInfo(ringType);
+
+    featureValueBuffer.SetType(type);
+
+    featureValueBuffer.Read(scanner,
+                            multipleRings,
+                            hasMaster);
+
+    if (multipleRings) {
+      scanner.ReadNumber(ringCount);
+
+      ringCount++;
+    }
+
+    rings.resize(ringCount);
+
+    rings[0].featureValueBuffer=featureValueBuffer;
+
+    if (hasMaster) {
+      rings[0].MarkAsMasterRing();
+    }
+    else {
+      rings[0].MarkAsOuterRing();
+    }
+
+    scanner.Read(rings[0].nodes,
+                 false);
+
+    for (size_t i=1; i<ringCount; i++) {
+      scanner.ReadTypeId(ringType,
+                         typeConfig.GetAreaTypeIdBytes());
+
+      type=typeConfig.GetAreaTypeInfo(ringType);
+
+      rings[i].SetType(type);
+
+      if (rings[i].featureValueBuffer.GetType()->GetAreaId()!=typeIgnore) {
+        rings[i].featureValueBuffer.Read(scanner);
       }
-    }
 
-    return !scanner.HasError();
+      scanner.Read(rings[i].ring);
+      scanner.Read(rings[i].nodes,
+                   false);
+    }
   }
 
-  bool Area::WriteIds(FileWriter& writer,
-                      const std::vector<Id>& ids) const
-  {
-    Id minId=std::numeric_limits<Id>::max();
-
-    for (size_t j=0; j<ids.size(); j++) {
-      minId=std::min(minId,ids[j]);
-    }
-
-    writer.WriteNumber(minId);
-
-    for (size_t j=0; j<ids.size(); j++) {
-      writer.WriteNumber(ids[j]-minId);
-    }
-
-    return !writer.HasError();
-  }
-
-  bool Area::WriteCoords(FileWriter& writer,
-                         const std::vector<GeoCoord>& coords) const
-  {
-    uint32_t minLat=std::numeric_limits<uint32_t>::max();
-    uint32_t minLon=std::numeric_limits<uint32_t>::max();
-
-    for (size_t j=0; j<coords.size(); j++) {
-      minLat=std::min(minLat,(uint32_t)round((coords[j].GetLat()+90.0)*conversionFactor));
-      minLon=std::min(minLon,(uint32_t)round((coords[j].GetLon()+180.0)*conversionFactor));
-    }
-
-    writer.Write(minLat);
-    writer.Write(minLon);
-
-    for (size_t j=0; j<coords.size(); j++) {
-      uint32_t latValue=(uint32_t)round((coords[j].GetLat()+90.0)*conversionFactor);
-      uint32_t lonValue=(uint32_t)round((coords[j].GetLon()+180.0)*conversionFactor);
-
-      writer.WriteNumber(latValue-minLat);
-      writer.WriteNumber(lonValue-minLon);
-    }
-
-    return !writer.HasError();
-  }
-
-  bool Area::Write(FileWriter& writer) const
+  /**
+   * Writes data to the given FileWriter. Node ids will only be written
+   * if not thought to be required for this area.
+   *
+   * @throws IOException
+   */
+  void Area::Write(const TypeConfig& typeConfig,
+                   FileWriter& writer) const
   {
     std::vector<Ring>::const_iterator ring=rings.begin();
+    bool                              multipleRings=rings.size()>1;
+    bool                              hasMaster=rings[0].IsMasterRing();
+
+    // TODO: We would like to have a bit flag here, if we have a simple area,
+    // an area with one master (and multiple rings) or an area with
+    // multiple outer but no master
+    //
+    // Also for each ring we would like to have a bit flag, if
+    // we stor eids or not
 
     // Outer ring
 
-    uint8_t outerFlags;
+    writer.WriteTypeId(ring->GetType()->GetAreaId(),
+                       typeConfig.GetAreaTypeIdBytes());
 
-    ring->attributes.GetFlags(outerFlags);
+    ring->featureValueBuffer.Write(writer,
+                                   multipleRings,
+                                   hasMaster);
 
-    if (rings.size()==1) {
-      outerFlags|=AreaAttributes::isSimple;
+    if (multipleRings) {
+      writer.WriteNumber((uint32_t)(rings.size()-1));
     }
 
-    writer.Write(outerFlags);
-
-    if (rings.size()>1) {
-      writer.WriteNumber((uint32_t)rings.size()-1);
-    }
-
-    writer.WriteNumber(ring->type);
-
-    if (!ring->attributes.Write(writer,
-                                outerFlags)) {
-      return false;
-    }
-
-    writer.WriteNumber((uint32_t)ring->nodes.size());
-
-    if (!ring->nodes.empty()) {
-      if (!WriteIds(writer,
-                    ring->ids)) {
-        return false;
-      }
-
-      if (!WriteCoords(writer,
-                       ring->nodes)) {
-        return false;
-      }
-    }
+    writer.Write(ring->nodes,
+                 ring->GetType()->CanRoute());
 
     ++ring;
 
     // Potential additional rings
 
     while (ring!=rings.end()) {
-      writer.WriteNumber(ring->type);
+      writer.WriteTypeId(ring->GetType()->GetAreaId(),
+                         typeConfig.GetAreaTypeIdBytes());
 
-      if (ring->type!=typeIgnore) {
-        if (!ring->attributes.Write(writer)) {
-          return false;
-        }
+      if (ring->GetType()->GetAreaId()!=typeIgnore) {
+        ring->featureValueBuffer.Write(writer);
       }
 
       writer.Write(ring->ring);
-
-      writer.WriteNumber((uint32_t)ring->nodes.size());
-
-      if (!ring->nodes.empty() &&
-          ring->type!=typeIgnore) {
-        if (!WriteIds(writer,
-                      ring->ids)) {
-          return false;
-        }
-      }
-
-      if (!ring->nodes.empty()) {
-        if (!WriteCoords(writer,
-                        ring->nodes)) {
-          return false;
-        }
-      }
+      writer.Write(ring->nodes,
+                   ring->GetType()->GetAreaId()!=typeIgnore &&
+                   ring->GetType()->CanRoute());
 
       ++ring;
     }
-
-    return !writer.HasError();
   }
 
-  bool Area::WriteOptimized(FileWriter& writer) const
+  /**
+   * Writes data to the given FileWriter. All data available will be written.
+   *
+   * @throws IOException
+   */
+  void Area::WriteImport(const TypeConfig& typeConfig,
+                         FileWriter& writer) const
   {
     std::vector<Ring>::const_iterator ring=rings.begin();
+    bool                              multipleRings=rings.size()>1;
+    bool                              hasMaster=rings[0].IsMasterRing();
 
     // Outer ring
 
-    uint8_t outerFlags;
+    writer.WriteTypeId(ring->GetType()->GetAreaId(),
+                       typeConfig.GetAreaTypeIdBytes());
 
-    ring->attributes.GetFlags(outerFlags);
+    ring->featureValueBuffer.Write(writer,
+                                   multipleRings,
+                                   hasMaster);
 
-    if (rings.size()==1) {
-      outerFlags|=AreaAttributes::isSimple;
+    if (multipleRings) {
+      writer.WriteNumber((uint32_t)(rings.size()-1));
     }
 
-    writer.Write(outerFlags);
-
-    if (rings.size()>1) {
-      writer.WriteNumber((uint32_t)rings.size()-1);
-    }
-
-    writer.WriteNumber(ring->type);
-
-    if (!ring->attributes.Write(writer,
-                                outerFlags)) {
-      return false;
-    }
-
-    writer.WriteNumber((uint32_t)ring->nodes.size());
-
-    if (!ring->nodes.empty()) {
-      if (!WriteCoords(writer,
-                      ring->nodes)) {
-        return false;
-      }
-    }
+    writer.Write(ring->nodes,
+                 true);
 
     ++ring;
 
     // Potential additional rings
 
     while (ring!=rings.end()) {
-      writer.WriteNumber(ring->type);
+      writer.WriteTypeId(ring->GetType()->GetAreaId(),
+                         typeConfig.GetAreaTypeIdBytes());
 
-      if (ring->type!=typeIgnore) {
-        if (!ring->attributes.Write(writer)) {
-          return false;
-        }
+      if (ring->GetType()->GetAreaId()!=typeIgnore) {
+        ring->featureValueBuffer.Write(writer);
       }
 
       writer.Write(ring->ring);
-
-      writer.WriteNumber((uint32_t)ring->nodes.size());
-
-      if (!ring->nodes.empty()) {
-        if (!WriteCoords(writer,
-                        ring->nodes)) {
-          return false;
-        }
-      }
+      writer.Write(ring->nodes,
+                   ring->GetType()->GetAreaId()!=typeIgnore ||
+                   ring->ring==outerRingId);
 
       ++ring;
     }
+  }
 
-    return !writer.HasError();
+  /**
+   * Writes data to the given FileWriter. No node ids will be written.
+   *
+   * @throws IOException
+   */
+  void Area::WriteOptimized(const TypeConfig& typeConfig,
+                            FileWriter& writer) const
+  {
+    std::vector<Ring>::const_iterator ring=rings.begin();
+    bool                              multipleRings=rings.size()>1;
+    bool                              hasMaster=rings[0].IsMasterRing();
+
+    // Outer ring
+
+    writer.WriteTypeId(ring->GetType()->GetAreaId(),
+                       typeConfig.GetAreaTypeIdBytes());
+
+    ring->featureValueBuffer.Write(writer,
+                                   multipleRings,
+                                   hasMaster);
+
+    if (multipleRings) {
+      writer.WriteNumber((uint32_t)(rings.size()-1));
+    }
+
+    writer.Write(ring->nodes,
+                 false);
+
+    ++ring;
+
+    // Potential additional rings
+
+    while (ring!=rings.end()) {
+      writer.WriteTypeId(ring->GetType()->GetAreaId(),
+                         typeConfig.GetAreaTypeIdBytes());
+
+      if (ring->GetType()->GetAreaId()!=typeIgnore) {
+        ring->featureValueBuffer.Write(writer);
+      }
+
+      writer.Write(ring->ring);
+      writer.Write(ring->nodes,
+                   false);
+
+      ++ring;
+    }
   }
 }
 

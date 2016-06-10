@@ -20,6 +20,7 @@
   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307  USA
 */
 
+#include <memory>
 #include <vector>
 
 #include <osmscout/GeoCoord.h>
@@ -29,99 +30,21 @@
 #include <osmscout/util/FileScanner.h>
 #include <osmscout/util/FileWriter.h>
 #include <osmscout/util/Progress.h>
-#include <osmscout/util/Reference.h>
 
 namespace osmscout {
 
-  class OSMSCOUT_API NodeAttributes
+  class OSMSCOUT_API Node
   {
   private:
-    // Attribute availability flags (for optimized attribute storage)
-    const static uint8_t hasNameAlt      = 1 << 3; //! We have an alternative name (mainly in a second language)
-    const static uint8_t hasName         = 1 << 4; //! We have a name
-    const static uint8_t hasLocation     = 1 << 5; //! Street and...
-    const static uint8_t hasAddress      = 1 << 6; //! ...house number
-    const static uint8_t hasTags         = 1 << 7; //! We have additional tags
+    FeatureValueBuffer featureValueBuffer; //!< List of features
 
-  private:
-    mutable uint8_t  flags;
+    FileOffset         fileOffset;         //!< File offset in the data file, use as unique id
 
-    std::string      name;     //! name
-    std::string      nameAlt;  //! alternative name
-    std::string      location; //! street and...
-    std::string      address;  //! ...house number
-    std::vector<Tag> tags;     //! list of preparsed tags
-
-  private:
-    void GetFlags(uint8_t& flags) const;
-    bool Read(FileScanner& scanner);
-    bool Write(FileWriter& writer) const;
-
-    friend class Node;
-
-  public:
-    inline NodeAttributes()
-    : flags(0)
-    {
-      // no code
-    }
-
-    inline uint8_t GetFlags() const
-    {
-      return flags;
-    }
-
-    inline std::string GetName() const
-    {
-      return name;
-    }
-
-    inline std::string GetNameAlt() const
-    {
-      return nameAlt;
-    }
-
-    inline std::string GetLocation() const
-    {
-      return location;
-    }
-
-    inline std::string GetAddress() const
-    {
-      return address;
-    }
-
-    inline bool HasTags() const
-    {
-      return !tags.empty();
-    }
-
-    inline const std::vector<Tag>& GetTags() const
-    {
-      return tags;
-    }
-
-    bool SetTags(Progress& progress,
-                 const TypeConfig& typeConfig,
-                 std::vector<Tag>& tags);
-
-    bool operator==(const NodeAttributes& other) const;
-    bool operator!=(const NodeAttributes& other) const;
-  };
-
-  class OSMSCOUT_API Node : public Referencable
-  {
-  private:
-    FileOffset        fileOffset;
-
-    TypeId            type;       //! Type of Node
-    GeoCoord          coords;     //! Coordinates of node
-    NodeAttributes    attributes; //! Attributes of the nodes
+    GeoCoord           coords;             //!< Coordinates of node
 
   public:
     inline Node()
-    : fileOffset(0),
-      type(typeIgnore)
+    : fileOffset(0)
     {
       // no code
     }
@@ -132,9 +55,9 @@ namespace osmscout {
     }
 
   public:
-    inline TypeId GetType() const
+    inline TypeInfoRef GetType() const
     {
-      return type;
+      return featureValueBuffer.GetType();
     }
 
     inline const GeoCoord& GetCoords() const
@@ -142,52 +65,47 @@ namespace osmscout {
       return coords;
     }
 
-    inline double GetLat() const
+    inline size_t GetFeatureCount() const
     {
-      return coords.GetLat();
+      return featureValueBuffer.GetType()->GetFeatureCount();
     }
 
-    inline double GetLon() const
+    inline bool HasFeature(size_t idx) const
     {
-      return coords.GetLon();
+      return featureValueBuffer.HasFeature(idx);
     }
 
-    inline const NodeAttributes& GetAttributes() const
+    inline const FeatureInstance& GetFeature(size_t idx) const
     {
-      return attributes;
+      return featureValueBuffer.GetType()->GetFeature(idx);
     }
 
-    inline std::string GetName() const
+    inline FeatureValue* GetFeatureValue(size_t idx) const
     {
-      return attributes.GetName();
+      return featureValueBuffer.GetValue(idx);
     }
 
-    inline std::string GetLocation() const
+    inline void UnsetFeature(size_t idx)
     {
-      return attributes.GetLocation();
+      featureValueBuffer.FreeValue(idx);
     }
 
-    inline std::string GetAddress() const
+    inline const FeatureValueBuffer& GetFeatureValueBuffer() const
     {
-      return attributes.GetAddress();
+      return featureValueBuffer;
     }
 
-    inline bool HasTags() const
-    {
-      return !attributes.GetTags().empty();
-    }
-
-    void SetType(TypeId type);
+    void SetType(const TypeInfoRef& type);
     void SetCoords(const GeoCoord& coords);
-    bool SetTags(Progress& progress,
-                 const TypeConfig& typeConfig,
-                 std::vector<Tag>& tags);
+    void SetFeatures(const FeatureValueBuffer& buffer);
 
-    bool Read(FileScanner& scanner);
-    bool Write(FileWriter& writer) const;
+    void Read(const TypeConfig& typeConfig,
+              FileScanner& scanner);
+    void Write(const TypeConfig& typeConfig,
+               FileWriter& writer) const;
   };
 
-  typedef Ref<Node> NodeRef;
+  typedef std::shared_ptr<Node> NodeRef;
 }
 
 #endif

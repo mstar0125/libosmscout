@@ -25,11 +25,56 @@
 
 namespace osmscout {
 
-  uint32_t RouteNode::AddObject(const ObjectFileRef& object)
+  bool ObjectVariantData::operator==(const ObjectVariantData& other) const
+  {
+    return type==other.type && maxSpeed==other.maxSpeed && grade==other.grade;
+  }
+
+  bool ObjectVariantData::operator<(const ObjectVariantData& other) const
+  {
+    if (type->GetIndex()!=other.type->GetIndex()) {
+      return type->GetIndex()<other.type->GetIndex();
+    }
+
+    if (maxSpeed!=other.maxSpeed) {
+      return maxSpeed<other.maxSpeed;
+    }
+
+    return grade<other.grade;
+  }
+
+  void ObjectVariantData::Read(const TypeConfig& typeConfig,
+                               FileScanner& scanner)
+  {
+    uint32_t typeIndex;
+
+    scanner.ReadNumber(typeIndex);
+
+    type=typeConfig.GetTypeInfo(typeIndex);
+
+    scanner.Read(maxSpeed);
+    scanner.Read(grade);
+  }
+
+  /**
+   * Write the data to the given FileWriter.
+   *
+   * @throws IOException
+   */
+  void ObjectVariantData::Write(FileWriter& writer) const
+  {
+    writer.WriteNumber((uint32_t)type->GetIndex());
+    writer.Write(maxSpeed);
+    writer.Write(grade);
+  }
+
+  uint32_t RouteNode::AddObject(const ObjectFileRef& object,
+                                uint16_t objectVariantIndex)
   {
     uint32_t index=0;
 
-    while (index<objects.size() && objects[index]!=object) {
+    while (index<objects.size() &&
+           objects[index].object!=object) {
       index++;
     }
 
@@ -37,150 +82,152 @@ namespace osmscout {
       return index;
     }
 
-    objects.push_back(object);
+    ObjectData data;
+
+    data.object=object;
+    data.objectVariantIndex=objectVariantIndex;
+
+    objects.push_back(data);
 
     return index;
   }
 
 
-  bool RouteNode::Read(FileScanner& scanner)
+  /**
+   * Read data from the given FileScanner
+   *
+   * @throws IOException
+   */
+  void RouteNode::Read(FileScanner& scanner)
   {
+    uint8_t  serial;
+    GeoCoord coord;
     uint32_t objectCount;
     uint32_t pathCount;
     uint32_t excludesCount;
-    uint32_t minLat;
-    uint32_t minLon;
 
-    if (!scanner.GetPos(fileOffset)) {
-      return false;
-    }
+    fileOffset=scanner.GetPos();
 
-    scanner.ReadNumber(id);
+    scanner.Read(serial);
+    scanner.ReadCoord(coord);
+
+    point.Set(serial,coord);
 
     scanner.ReadNumber(objectCount);
     scanner.ReadNumber(pathCount);
     scanner.ReadNumber(excludesCount);
-
-    scanner.Read(minLat);
-    scanner.Read(minLon);
-
-    if (scanner.HasError()) {
-      return false;
-    }
 
     objects.resize(objectCount);
 
     Id previousFileOffset=0;
 
     for (size_t i=0; i<objectCount; i++) {
-      uint8_t    type;
+      RefType    type;
       FileOffset fileOffset;
 
-      if (!scanner.Read(type)) {
-        return false;
+      scanner.ReadNumber(fileOffset);
+
+      if (fileOffset % 2==0) {
+        type=refWay;
+      }
+      else {
+        type=refArea;
       }
 
-      if (!scanner.ReadNumber(fileOffset)) {
-        return false;
-      }
+      fileOffset=fileOffset/2;
 
       fileOffset+=previousFileOffset;
 
-      objects[i].Set(fileOffset,(RefType)type);
+      objects[i].object.Set(fileOffset,type);
+
+      scanner.Read(objects[i].objectVariantIndex);
 
       previousFileOffset=fileOffset;
     }
 
-    paths.resize(pathCount);
-    for (size_t i=0; i<pathCount; i++) {
-      uint32_t latValue;
-      uint32_t lonValue;
-      uint32_t distanceValue;
+    if (pathCount>0) {
+      paths.resize(pathCount);
 
-      scanner.ReadFileOffset(paths[i].offset);
-      scanner.ReadNumber(paths[i].objectIndex);
-      scanner.ReadNumber(paths[i].type);
-      scanner.Read(paths[i].maxSpeed);
-      scanner.Read(paths[i].grade);
-      //scanner.Read(paths[i].bearing);
-      scanner.Read(paths[i].flags);
-      scanner.ReadNumber(distanceValue);
-      scanner.ReadNumber(latValue);
-      scanner.ReadNumber(lonValue);
+      for (size_t i=0; i<pathCount; i++) {
+        uint32_t distanceValue;
 
-      paths[i].distance=distanceValue/(1000.0*100.0);
-      paths[i].lat=(latValue+minLat)/conversionFactor-90.0;
-      paths[i].lon=(lonValue+minLon)/conversionFactor-180.0;
+        scanner.ReadFileOffset(paths[i].offset);
+        scanner.ReadNumber(paths[i].objectIndex);
+        //scanner.Read(paths[i].bearing);
+        scanner.Read(paths[i].flags);
+        scanner.ReadNumber(distanceValue);
+
+        paths[i].distance=distanceValue/(1000.0*100.0);
+      }
     }
 
     excludes.resize(excludesCount);
     for (size_t i=0; i<excludesCount; i++) {
-      FileOffset fileOffset;
-      uint8_t    typeByte;
-
-      scanner.Read(typeByte);
-      scanner.ReadFileOffset(fileOffset);
+      scanner.Read(excludes[i].source);
       scanner.ReadNumber(excludes[i].targetIndex);
-
-      excludes[i].source.Set(fileOffset,(RefType)typeByte);;
     }
-
-    return !scanner.HasError();
   }
 
-  bool RouteNode::Write(FileWriter& writer) const
+  /**
+   * Read data from the given FileScanner
+   *
+   * @throws IOException
+   */
+  void RouteNode::Read(const TypeConfig& /*typeConfig*/,
+                       FileScanner& scanner)
   {
-    writer.WriteNumber(id);
+    Read(scanner);
+  }
+
+  /**
+   * Write data to the given FileWriter
+   *
+   * @throws IOException
+   */
+  void RouteNode::Write(FileWriter& writer) const
+  {
+    writer.Write(point.GetSerial());
+    writer.WriteCoord(point.GetCoord());
 
     writer.WriteNumber((uint32_t)objects.size());
     writer.WriteNumber((uint32_t)paths.size());
     writer.WriteNumber((uint32_t)excludes.size());
 
-    uint32_t minLat=std::numeric_limits<uint32_t>::max();
-    uint32_t minLon=std::numeric_limits<uint32_t>::max();
-
-    for (size_t i=0; i<paths.size(); i++) {
-      minLat=std::min(minLat,(uint32_t)floor((paths[i].lat+90.0)*conversionFactor+0.5));
-      minLon=std::min(minLon,(uint32_t)floor((paths[i].lon+180.0)*conversionFactor+0.5));
-    }
-
-    writer.Write(minLat);
-    writer.Write(minLon);
-
     Id lastFileOffset=0;
 
-    for (std::vector<ObjectFileRef>::const_iterator object=objects.begin();
-        object!=objects.end();
-        ++object) {
-      writer.Write((uint8_t)object->GetType());
-      writer.WriteNumber(object->GetFileOffset()-lastFileOffset);
+    for (const auto& object : objects) {
+      FileOffset offset=object.object.GetFileOffset()-lastFileOffset;
 
-      lastFileOffset=object->GetFileOffset();
+      if (object.object.GetType()==refWay) {
+        offset=offset*2;
+      }
+      else if (object.object.GetType()==refArea) {
+        offset=offset*2+1;
+      }
+      else {
+        assert(false);
+      }
+
+      writer.WriteNumber(offset);
+      writer.Write(object.objectVariantIndex);
+
+      lastFileOffset=object.object.GetFileOffset();
     }
 
-    for (size_t i=0; i<paths.size(); i++) {
-      uint32_t latValue=(uint32_t)floor((paths[i].lat+90.0)*conversionFactor+0.5);
-      uint32_t lonValue=(uint32_t)floor((paths[i].lon+180.0)*conversionFactor+0.5);
-      uint32_t distanceValue=(uint32_t)floor(paths[i].distance*(1000.0*100.0)+0.5);
+    if (!paths.empty()) {
 
-      writer.WriteFileOffset(paths[i].offset);
-      writer.WriteNumber(paths[i].objectIndex);
-      writer.WriteNumber(paths[i].type);
-      writer.Write(paths[i].maxSpeed);
-      writer.Write(paths[i].grade);
-      //writer.Write(paths[i].bearing);
-      writer.Write(paths[i].flags);
-      writer.WriteNumber(distanceValue);
-      writer.WriteNumber(latValue-minLat);
-      writer.WriteNumber(lonValue-minLon);
+      for (const auto& path : paths) {
+        writer.WriteFileOffset(path.offset);
+        writer.WriteNumber(path.objectIndex);
+        //writer.Write(paths[i].bearing);
+        writer.Write(path.flags);
+        writer.WriteNumber((uint32_t)floor(path.distance*(1000.0*100.0)+0.5));
+      }
     }
 
-    for (size_t i=0; i<excludes.size(); i++) {
-      writer.Write((uint8_t)excludes[i].source.GetType());
-      writer.WriteFileOffset(excludes[i].source.GetFileOffset());
-      writer.WriteNumber(excludes[i].targetIndex);
+    for (const auto& exclude : excludes) {
+      writer.Write(exclude.source);
+      writer.WriteNumber(exclude.targetIndex);
     }
-
-    return !writer.HasError();
   }
 }

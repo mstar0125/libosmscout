@@ -36,11 +36,40 @@ IGNORE '\t' + '\r' + '\n'
 
 PRODUCTIONS
   OST         = SYNC "OST"
+                [MAXSPEEDS]
                 [GRADES]
                 [TYPES]
-                [TAGS]
                 "END"
                 .
+
+  MAXSPEEDS   = SYNC "MAX" "SPEEDS"
+                MAXSPEED {MAXSPEED}
+                .
+
+  MAXSPEED    = (.
+                  std::string alias;
+                  size_t      speed; 
+                .)
+                SYNC "SPEED"
+                STRING<alias>
+                "="
+                UINT<speed>
+                (.
+                  if (speed>0 && speed<256) {
+                    config.RegisterMaxSpeedAlias(alias,
+                                                 (uint8_t)speed);
+                  }
+                  else {
+                       std::string e="Speed value not in the allowed range (]0..255] km/h)";
+
+                       SemErr(e.c_str());
+                  }
+                .)
+                [
+                "km/h"
+                ]
+                .
+
 
   GRADES      = SYNC "GRADES"
                 GRADE {GRADE}
@@ -78,55 +107,55 @@ PRODUCTIONS
                 .
 
   TYPE        = (.
-                  std::string   name;
-                  TagCondition  *condition=NULL;
-                  TypeInfo      typeInfo;
-                  unsigned char types;
+                  std::string     name;
+                  TagConditionRef condition=NULL;
+                  TypeInfoRef     typeInfo;
+                  unsigned char   types;
                 .)
                 SYNC "TYPE"
-                IDENT<name>                       (. typeInfo.SetType(name); .)
+                IDENT<name>                       (. typeInfo=std::make_shared<TypeInfo>(name); .)
+                [
+                  "IGNORE"                        (. typeInfo->SetIgnore(true); .)
+                ]
 
                 "="
                 TYPEKINDS<types>
-                "(" TAGCONDITION<condition> ")"   (. typeInfo.AddCondition(types,condition); .)
+                "(" TAGCONDITION<condition> ")"   (. typeInfo->AddCondition(types,condition); .)
 
                 {
                   "OR"
                   TYPEKINDS<types>
-                  "(" TAGCONDITION<condition> ")" (. typeInfo.AddCondition(types,condition); .)
+                  "(" TAGCONDITION<condition> ")" (. typeInfo->AddCondition(types,condition); .)
                 }
 
                 [
-                  "OPTIONS"
-                  TYPEOPTIONS<typeInfo>
+                  "{"
+                  [
+                    FEATURE<*typeInfo>
+                    {
+                      ","
+                      FEATURE<*typeInfo>
+                    }
+                  ]  
+                  "}"
                 ]
 
+                [
+                  TYPEOPTIONS<*typeInfo>
+                ]
+
+                [
+                  GROUPS<*typeInfo>
+                ]
                 (.
-                  config.AddTypeInfo(typeInfo);
+                  config.RegisterType(typeInfo);
                 .)
                 .
 
-  TAGS        = SYNC "TAGS" TAG {TAG}.
-  TAG         = SYNC "TAG"
-                string
-                (.
-                   std::string tagName=Destring(t->val);
-
-                   if (tagName.empty()) {
-                     std::string e="Empty tags are not allowed";
-
-                     SemErr(e.c_str());
-                   }
-                   else {
-                     config.RegisterTagForExternalUse(tagName);
-                   }
-                .)
-                .
-
-  TAGCONDITION<TagCondition*& condition>
+  TAGCONDITION<TagConditionRef& condition>
               = (.
-                  std::list<TagCondition*> conditions;
-                  TagCondition             *subCond;
+                  std::list<TagConditionRef> conditions;
+                  TagConditionRef            subCond;
                 .)
                 TAGANDCOND<subCond>   (. conditions.push_back(subCond); .)
                 {
@@ -138,22 +167,20 @@ PRODUCTIONS
                     condition=conditions.front();
                   }
                   else {
-                    TagBoolCondition *orCondition=new TagBoolCondition(TagBoolCondition::boolOr);
+                    TagBoolConditionRef orCondition=std::make_shared<TagBoolCondition>(TagBoolCondition::boolOr);
 
-                    for (std::list<TagCondition*>::const_iterator c=conditions.begin();
-                         c!=conditions.end();
-                         ++c) {
-                      orCondition->AddCondition(*c);
+                    for (const auto& c : conditions) {
+                      orCondition->AddCondition(c);
                     }
 
                     condition=orCondition;
                   }
                 .)
                 .
-  TAGANDCOND<TagCondition*& condition>
+  TAGANDCOND<TagConditionRef& condition>
               = (.
-                  std::list<TagCondition*> conditions;
-                  TagCondition             *subCond;
+                  std::list<TagConditionRef> conditions;
+                  TagConditionRef            subCond;
                 .)
                 TAGBOOLCOND<subCond>     (. conditions.push_back(subCond); .)
                 {
@@ -165,62 +192,178 @@ PRODUCTIONS
                     condition=conditions.front();
                   }
                   else {
-                    TagBoolCondition *andCondition=new TagBoolCondition(TagBoolCondition::boolAnd);
+                    TagBoolConditionRef andCondition=std::make_shared<TagBoolCondition>(TagBoolCondition::boolAnd);
 
-                    for (std::list<TagCondition*>::const_iterator c=conditions.begin();
-                         c!=conditions.end();
-                         ++c) {
-                      andCondition->AddCondition(*c);
+                    for (const auto& c : conditions) {
+                      andCondition->AddCondition(c);
                     }
 
                     condition=andCondition;
                   }
                 .)
                 .
-  TAGBOOLCOND<TagCondition*& condition>
+  TAGBOOLCOND<TagConditionRef& condition>
               =   TAGBINCOND<condition>
                 | TAGEXISTSCOND<condition>
                 | "(" TAGCONDITION<condition> ")"
-                | "!" TAGBOOLCOND<condition> (. condition=new TagNotCondition(condition); .)
+                | "!" TAGBOOLCOND<condition> (. condition=std::make_shared<TagNotCondition>(condition); .)
                 .
 
-  TAGBINCOND<TagCondition*& condition>
+  TAGBINCOND<TagConditionRef& condition>
               = (.
                   std::string nameValue;
                 .)
                 string (. nameValue=Destring(t->val); .)
                 (
-                  TAGEQUALSCOND<nameValue,condition>
+                  TAGLESSCOND<nameValue,condition>
+                | TAGLESSEQUALCOND<nameValue,condition>
+                | TAGEQUALSCOND<nameValue,condition>
                 | TAGNOTEQUALSCOND<nameValue,condition>
+                | TAGGREATERCOND<nameValue,condition>
+                | TAGGREATEREQUALCOND<nameValue,condition>
                 | TAGISINCOND<nameValue,condition>
                 )
                 .
 
-  TAGEQUALSCOND<const std::string& tagName,TagCondition*& condition>
+  TAGLESSCOND<const std::string& tagName,TagConditionRef& condition>
               = (.
-                  std::string valueValue;
+                  std::string stringValue;
+                  size_t      sizeValue;
+                .)
+                "<"
+                (
+                  STRING<stringValue>
+                  (.
+                    TagId tagId=config.RegisterTag(tagName);
+
+                    condition=std::make_shared<TagBinaryCondition>(tagId,operatorLess,stringValue);
+                  .)
+                |
+                  UINT<sizeValue>
+                  (.
+                    TagId tagId=config.RegisterTag(tagName);
+
+                    condition=std::make_shared<TagBinaryCondition>(tagId,operatorLess,sizeValue);
+                  .)
+                )
+                .
+
+  TAGLESSEQUALCOND<const std::string& tagName,TagConditionRef& condition>
+              = (.
+                  std::string stringValue;
+                  size_t      sizeValue;
+                .)
+                "<="
+                (
+                  STRING<stringValue>
+                  (.
+                    TagId tagId=config.RegisterTag(tagName);
+
+                    condition=std::make_shared<TagBinaryCondition>(tagId,operatorLessEqual,stringValue);
+                  .)
+                |
+                  UINT<sizeValue>
+                  (.
+                    TagId tagId=config.RegisterTag(tagName);
+
+                    condition=std::make_shared<TagBinaryCondition>(tagId,operatorLessEqual,sizeValue);
+                  .)
+                )
+                .
+
+  TAGEQUALSCOND<const std::string& tagName,TagConditionRef& condition>
+              = (.
+                  std::string stringValue;
+                  size_t      sizeValue;
                 .)
                 "=="
-                string (. valueValue=Destring(t->val); .)
-                (.
-                  TagId tagId=config.RegisterTagForInternalUse(tagName);
+                (
+                  STRING<stringValue>
+                  (.
+                    TagId tagId=config.RegisterTag(tagName);
 
-                  condition=new TagBinaryCondition(tagId,operatorEqual,valueValue);
-                .)
+                    condition=std::make_shared<TagBinaryCondition>(tagId,operatorEqual,stringValue);
+                  .)
+                |
+                  UINT<sizeValue>
+                  (.
+                    TagId tagId=config.RegisterTag(tagName);
+
+                    condition=std::make_shared<TagBinaryCondition>(tagId,operatorEqual,sizeValue);
+                  .)
+                )
                 .
-  TAGNOTEQUALSCOND<const std::string& tagName,TagCondition*& condition>
+
+  TAGNOTEQUALSCOND<const std::string& tagName,TagConditionRef& condition>
               = (.
-                  std::string valueValue;
+                  std::string stringValue;
+                  size_t      sizeValue;
                 .)
                 "!="
-                string (. valueValue=Destring(t->val); .)
-                (.
-                  TagId tagId=config.RegisterTagForInternalUse(tagName);
+                (
+                  STRING<stringValue>
+                  (.
+                    TagId tagId=config.RegisterTag(tagName);
 
-                  condition=new TagBinaryCondition(tagId,operatorNotEqual,valueValue);
-                .)
+                    condition=std::make_shared<TagBinaryCondition>(tagId,operatorNotEqual,stringValue);
+                  .)
+                |
+                  UINT<sizeValue>
+                  (.
+                    TagId tagId=config.RegisterTag(tagName);
+
+                    condition=std::make_shared<TagBinaryCondition>(tagId,operatorNotEqual,sizeValue);
+                  .)
+                )
                 .
-  TAGISINCOND<const std::string& tagName,TagCondition*& condition>
+
+  TAGGREATEREQUALCOND<const std::string& tagName,TagConditionRef& condition>
+              = (.
+                  std::string stringValue;
+                  size_t      sizeValue;
+                .)
+                ">="
+                (
+                  STRING<stringValue>
+                  (.
+                    TagId tagId=config.RegisterTag(tagName);
+
+                    condition=std::make_shared<TagBinaryCondition>(tagId,operatorGreaterEqual,stringValue);
+                  .)
+                |
+                  UINT<sizeValue>
+                  (.
+                    TagId tagId=config.RegisterTag(tagName);
+
+                    condition=std::make_shared<TagBinaryCondition>(tagId,operatorGreaterEqual,sizeValue);
+                  .)
+                )
+                .
+
+  TAGGREATERCOND<const std::string& tagName,TagConditionRef& condition>
+              = (.
+                  std::string stringValue;
+                  size_t      sizeValue;
+                .)
+                ">"
+                (
+                  STRING<stringValue>
+                  (.
+                    TagId tagId=config.RegisterTag(tagName);
+
+                    condition=std::make_shared<TagBinaryCondition>(tagId,operatorGreater,stringValue);
+                  .)
+                |
+                  UINT<sizeValue>
+                  (.
+                    TagId tagId=config.RegisterTag(tagName);
+
+                    condition=std::make_shared<TagBinaryCondition>(tagId,operatorGreater,sizeValue);
+                  .)
+                )
+                .
+
+  TAGISINCOND<const std::string& tagName,TagConditionRef& condition>
               = (.
                  std::list<std::string> values;
                 .)
@@ -233,29 +376,28 @@ PRODUCTIONS
                 }
                 "]"
                 (.
-                  TagId tagId=config.RegisterTagForInternalUse(tagName);
+                  TagId tagId=config.RegisterTag(tagName);
 
                   if (values.size()==1) {
-                    condition=new TagBinaryCondition(tagId,operatorEqual,values.front());
+                    condition=std::make_shared<TagBinaryCondition>(tagId,operatorEqual,values.front());
                   }
                   else {
-                    TagIsInCondition *isInCondition=new TagIsInCondition(tagId);
+                    TagIsInConditionRef isInCondition=std::make_shared<TagIsInCondition>(tagId);
 
-                    for (std::list<std::string>::const_iterator s=values.begin();
-                         s!=values.end();
-                         ++s) {
-                      isInCondition->AddTagValue(*s);
+                    for (const auto& s : values) {
+                      isInCondition->AddTagValue(s);
                     }
 
                     condition=isInCondition;
                   }
                 .)
                 .
-  TAGEXISTSCOND<TagCondition*& condition>
+
+  TAGEXISTSCOND<TagConditionRef& condition>
               = "EXISTS"
                  string
                  (.
-                   condition=new TagExistsCondition(config.RegisterTagForInternalUse(Destring(t->val)));
+                   condition=std::make_shared<TagExistsCondition>(config.RegisterTag(Destring(t->val)));
                  .)
                  .
 
@@ -281,51 +423,91 @@ PRODUCTIONS
                | "RELATION"  (. types|=TypeInfo::typeRelation; .)
                .
 
+  FEATURE <TypeInfo& typeInfo>
+              = (. std::string name; .)
+                IDENT<name>
+                (.
+                  FeatureRef feature=config.GetFeature(name);
+                  
+                  if (feature) {
+                    if (!typeInfo.HasFeature(name)) {
+                      typeInfo.AddFeature(feature);
+                    }
+                    else {
+                    std::string e="Feature '"+name+"' has been already assigned to type";
+
+                    SemErr(e.c_str());
+                    }
+                  }
+                  else {
+                    std::string e="Feature '"+name+"' is unknown";
+
+                    SemErr(e.c_str());
+                  }                
+                .)
+                .
+
   TYPEOPTIONS<TypeInfo& typeInfo>
               = TYPEOPTION<typeInfo>
                 {
                   TYPEOPTION<typeInfo>
                 }
-              .
+                .
 
   TYPEOPTION<TypeInfo& typeInfo>
-              =  ROUTE<typeInfo>
-               | "INDEX_LOC"         (. typeInfo.SetIndexAsLocation(true); .)
-               | "INDEX_REGION"      (. typeInfo.SetIndexAsRegion(true); .)
-               | "INDEX_POI"         (. typeInfo.SetIndexAsPOI(true); .)
-               | "CONSUME_CHILDREN"  (. typeInfo.SetConsumeChildren(true); .)
-               | "OPTIMIZE_LOW_ZOOM" (. typeInfo.SetOptimizeLowZoom(true); .)
-               | "IGNORE"            (. typeInfo.SetIgnore(true); .)
-               | "MULTIPOLYGON"      (. typeInfo.SetMultipolygon(true); .)
-               | "PIN_WAY"           (. typeInfo.SetPinWay(true); .)
+              =  PATH<typeInfo>                                               // TODO: Only valid for WAY and AREA
+               | "LOCATION"          (. typeInfo.SetIndexAsLocation(true); .) // TODO: Only valid for WAY
+               | "ADMIN_REGION"      (. typeInfo.SetIndexAsRegion(true); .)   // TODO: Only valid for AREA
+               | "ADDRESS"           (. typeInfo.SetIndexAsAddress(true); .)  // TODO: Only valid for NODE and AREA
+               | "POI"               (. typeInfo.SetIndexAsPOI(true); .)      // TODO: Only valid for NODE and AREA
+               | "OPTIMIZE_LOW_ZOOM" (. typeInfo.SetOptimizeLowZoom(true); .) // TODO: Only valid for WAY AND AREA
+               | "MULTIPOLYGON"      (. typeInfo.SetMultipolygon(true); .)    // TODO: Only valid for AREA
+               | "PIN_WAY"           (. typeInfo.SetPinWay(true); .)          // TODO: Only valid for WAY
+               | "MERGE_AREAS"       (. typeInfo.SetMergeAreas(true); .)      // TODO: Only valid for AREA
                | "IGNORESEALAND"     (. typeInfo.SetIgnoreSeaLand(true); .)
                .
 
-  ROUTE<TypeInfo& typeInfo>
-              = "ROUTE"
-                "["
-                   [
-                     "FOOT"
-                     (.
-                       typeInfo.CanRouteFoot(true);
-                     .)
-                   ]
+  PATH<TypeInfo& typeInfo>
+              = "PATH"
+                (. typeInfo.SetIsPath(true); .)
+                [
+                  "["
+                     [
+                       "FOOT"
+                       (.
+                         typeInfo.CanRouteFoot(true);
+                       .)
+                     ]
 
-                   [
-                     "BICYCLE"
-                     (.
-                       typeInfo.CanRouteBicycle(true);
-                     .)
-                   ]
+                     [
+                       "BICYCLE"
+                       (.
+                         typeInfo.CanRouteBicycle(true);
+                       .)
+                     ]
 
-                   [
-                     "CAR"
-                     (.
-                       typeInfo.CanRouteCar(true);
-                     .)
-                   ]
-                "]"
+                     [
+                       "CAR"
+                       (.
+                         typeInfo.CanRouteCar(true);
+                       .)
+                     ]
+                  "]"
+                ]
                 .
+
+  GROUPS<TypeInfo& typeInfo>
+              = "GROUP"
+                (. std::string groupName; .)
+                IDENT<groupName>
+                (. typeInfo.AddGroup(groupName); .)
+                {
+                  ","
+                  IDENT<groupName>
+                  (. typeInfo.AddGroup(groupName); .)
+                }
+                .
+
 
   IDENT<std::string& value>
               = ident

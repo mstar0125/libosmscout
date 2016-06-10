@@ -19,276 +19,345 @@
 
 #include <osmscout/AreaAreaIndex.h>
 
-#include <iostream>
+#include <algorithm>
+
+#include <osmscout/util/File.h>
+#include <osmscout/util/Logger.h>
+#include <osmscout/util/StopClock.h>
 
 #include <osmscout/system/Math.h>
 
+//#define ANALYZE_CACHE
+
 namespace osmscout {
 
+  const char* AreaAreaIndex::AREA_AREA_IDX="areaarea.idx";
+
   AreaAreaIndex::AreaAreaIndex(size_t cacheSize)
-  : filepart("areaarea.idx"),
-    maxLevel(0),
+  : maxLevel(0),
     topLevelOffset(0),
     indexCache(cacheSize)
   {
     // no code
   }
 
+  AreaAreaIndex::~AreaAreaIndex()
+  {
+    Close();
+  }
+
   void AreaAreaIndex::Close()
   {
-    if (scanner.IsOpen()) {
-      scanner.Close();
+    try  {
+      if (scanner.IsOpen()) {
+        scanner.Close();
+      }
+    }
+    catch (IOException& e) {
+      log.Error() << e.GetDescription();
+      scanner.CloseFailsafe();
     }
   }
 
   bool AreaAreaIndex::GetIndexCell(uint32_t level,
                                    FileOffset offset,
-                                   IndexCache::CacheRef& cacheRef) const
+                                   IndexCell &indexCell,
+                                   FileOffset &dataOffset) const
   {
-    if (!indexCache.GetEntry(offset,cacheRef)) {
-      IndexCache::CacheEntry cacheEntry(offset);
+    if (level<maxLevel) {
+      std::lock_guard<std::mutex> guard(lookupMutex);
+      IndexCache::CacheRef        cacheRef;
 
-      cacheRef=indexCache.SetEntry(cacheEntry);
-
-      if (!scanner.IsOpen()) {
-        if (!scanner.Open(datafilename,FileScanner::LowMemRandom,true)) {
-          std::cerr << "Error while opening " << datafilename << " for reading!" << std::endl;
-          return false;
-        }
+#if defined(ANALYZE_CACHE)
+      if (indexCache.GetSize()==indexCache.GetMaxSize()) {
+        log.Warn() << "areaarea.index cache of " << indexCache.GetSize() << "/" << indexCache.GetMaxSize()<< " is too small";
+        indexCache.DumpStatistics("areaarea.idx",IndexCacheValueSizer());
       }
+#endif
 
-      scanner.SetPos(offset);
+      if (!indexCache.GetEntry(offset,cacheRef)) {
+        IndexCache::CacheEntry cacheEntry(offset);
 
-      // Read offsets of children if not in the bottom level
+        cacheRef=indexCache.SetEntry(cacheEntry);
 
-      if (level<maxLevel) {
+        scanner.SetPos(offset);
+
         for (size_t c=0; c<4; c++) {
-          if (!scanner.ReadNumber(cacheRef->value.children[c])) {
-            std::cerr << "Cannot read index data at offset " << offset << std::endl;
-            return false;
+          FileOffset childOffset;
+
+          scanner.ReadNumber(childOffset);
+
+          if (childOffset==0) {
+            cacheRef->value.children[c]=0;
+          }
+          else {
+            cacheRef->value.children[c]=offset-childOffset;
           }
         }
+
+        cacheRef->value.data=scanner.GetPos();
+
+        indexCell=cacheRef->value;
       }
       else {
-        for (size_t c=0; c<4; c++) {
-          cacheRef->value.children[c]=0;
-        }
+        indexCell=cacheRef->value;
+      }
+    }
+    else {
+      indexCell.data=offset;
+
+      for (size_t c=0; c<4; c++) {
+        indexCell.children[c]=0;
+      }
+    }
+
+    dataOffset=indexCell.data;
+
+    return true;
+  }
+
+  bool AreaAreaIndex::ReadCellData(const TypeConfig& typeConfig,
+                                   const TypeInfoSet& types,
+                                   FileOffset dataOffset,
+                                   std::vector<DataBlockSpan>& spans) const
+  {
+    std::lock_guard<std::mutex> guard(lookupMutex);
+
+    scanner.SetPos(dataOffset);
+
+    uint32_t typeCount;
+
+    scanner.ReadNumber(typeCount);
+
+    FileOffset prevDataFileOffset=0;
+
+    for (size_t t=0; t<typeCount; t++) {
+      TypeId     typeId;
+      uint32_t   dataCount;
+      FileOffset dataFileOffset;
+
+      scanner.ReadTypeId(typeId,typeConfig.GetAreaTypeIdBytes());
+      scanner.ReadNumber(dataCount);
+      scanner.ReadNumber(dataFileOffset);
+
+      dataFileOffset+=prevDataFileOffset;
+      prevDataFileOffset=dataFileOffset;
+
+      if (dataFileOffset==0) {
+        continue;
       }
 
-      // Now read the way offsets by type in this index entry
+      TypeInfoRef type=typeConfig.GetAreaTypeInfo(typeId);
 
-      uint32_t offsetCount;
+      if (types.IsSet(type)) {
+        DataBlockSpan span;
 
-      // Areas
+        span.startOffset=dataFileOffset;
+        span.count=dataCount;
 
-      if (!scanner.ReadNumber(offsetCount)) {
-        std::cerr << "Cannot read index data for level " << level << " at offset " << offset << std::endl;
-        return false;
-      }
-
-      cacheRef->value.areas.resize(offsetCount);
-
-      FileOffset prevOffset=0;
-
-      for (size_t c=0; c<offsetCount; c++) {
-        if (!scanner.ReadNumber(cacheRef->value.areas[c].type)) {
-          std::cerr << "Cannot read index data for level " << level << " at offset " << offset << std::endl;
-          return false;
-        }
-        if (!scanner.ReadNumber(cacheRef->value.areas[c].offset)) {
-          std::cerr << "Cannot read index data for level " << level << " at offset " << offset << std::endl;
-          return false;
-        }
-
-        cacheRef->value.areas[c].offset+=prevOffset;
-
-        prevOffset=cacheRef->value.areas[c].offset;
+        spans.push_back(span);
       }
     }
 
     return true;
   }
 
-  bool AreaAreaIndex::Load(const std::string& path)
+  void AreaAreaIndex::PushCellsForNextLevel(double minlon,
+                                            double minlat,
+                                            double maxlon,
+                                            double maxlat,
+                                            const IndexCell& cellIndexData,
+                                            const CellDimension& cellDimension,
+                                            size_t cx,
+                                            size_t cy,
+                                            std::vector<CellRef>& nextCellRefs) const
   {
-    datafilename=path+"/"+filepart;
+    if (cellIndexData.children[0]!=0) {
+      // top left
+      double x=cx*cellDimension.width;
+      double y=(cy+1)*cellDimension.height;
 
-    if (!scanner.Open(datafilename,FileScanner::LowMemRandom,true)) {
-      std::cerr << "Cannot open file '" << datafilename << "'" << std::endl;
-      return false;
+      if (!(x>maxlon+cellDimension.width/2 ||
+            y>maxlat+cellDimension.height/2 ||
+            x+cellDimension.width<minlon-cellDimension.width/2 ||
+            y+cellDimension.height<minlat-cellDimension.height/2)) {
+        nextCellRefs.push_back(CellRef(cellIndexData.children[0],cx,cy+1));
+      }
     }
 
-    if (!scanner.ReadNumber(maxLevel)) {
-      std::cerr << "Cannot read data" << std::endl;
-      return false;
+    if (cellIndexData.children[1]!=0) {
+      // top right
+      double x=(cx+1)*cellDimension.width;
+      double y=(cy+1)*cellDimension.height;
+
+      if (!(x>maxlon+cellDimension.width/2 ||
+            y>maxlat+cellDimension.height/2 ||
+            x+cellDimension.width<minlon-cellDimension.width/2 ||
+            y+cellDimension.height<minlat-cellDimension.height/2)) {
+        nextCellRefs.push_back(CellRef(cellIndexData.children[1],cx+1,cy+1));
+      }
     }
 
-    if (!scanner.ReadFileOffset(topLevelOffset)) {
-      std::cerr << "Cannot read data" << std::endl;
-      return false;
+    if (cellIndexData.children[2]!=0) {
+      // bottom left
+      double x=cx*cellDimension.width;
+      double y=cy*cellDimension.height;
+
+      if (!(x>maxlon+cellDimension.width/2 ||
+            y>maxlat+cellDimension.height/2 ||
+            x+cellDimension.width<minlon-cellDimension.width/2 ||
+            y+cellDimension.height<minlat-cellDimension.height/2)) {
+        nextCellRefs.push_back(CellRef(cellIndexData.children[2],cx,cy));
+      }
     }
 
-    // Calculate the size of a cell in each index level
-    cellWidth.resize(maxLevel+1);
-    cellHeight.resize(maxLevel+1);
+    if (cellIndexData.children[3]!=0) {
+      // bottom right
+      double x=(cx+1)*cellDimension.width;
+      double y=cy*cellDimension.height;
 
-    for (size_t i=0; i<cellWidth.size(); i++) {
-      cellWidth[i]=360.0/pow(2.0,(int)i);
+      if (!(x>maxlon+cellDimension.width/2 ||
+            y>maxlat+cellDimension.height/2 ||
+            x+cellDimension.width<minlon-cellDimension.width/2 ||
+            y+cellDimension.height<minlat-cellDimension.height/2)) {
+        nextCellRefs.push_back(CellRef(cellIndexData.children[3],cx+1,cy));
+      }
     }
-
-    for (size_t i=0; i<cellHeight.size(); i++) {
-      cellHeight[i]=180.0/pow(2.0,(int)i);
-    }
-
-    return !scanner.HasError() && scanner.Close();
   }
 
-  bool AreaAreaIndex::GetOffsets(double minlon,
-                                 double minlat,
-                                 double maxlon,
-                                 double maxlat,
-                                 size_t maxLevel,
-                                 const TypeSet& types,
-                                 size_t maxCount,
-                                 std::vector<FileOffset>& offsets) const
+  bool AreaAreaIndex::Open(const std::string& path)
   {
-    std::vector<CellRef>    cellRefs;     // cells to scan in this level
-    std::vector<CellRef>    nextCellRefs; // cells to scan for the next level
-    std::vector<FileOffset> newOffsets;   // offsets collected in the current level
+    datafilename=AppendFileToDir(path,AREA_AREA_IDX);
 
-    minlon+=180;
-    maxlon+=180;
-    minlat+=90;
-    maxlat+=90;
+    try {
+      scanner.Open(datafilename,FileScanner::FastRandom,true);
 
-    // Clear result datastructures
-    offsets.clear();
+      scanner.ReadNumber(maxLevel);
+      scanner.ReadFileOffset(topLevelOffset);
+
+      return !scanner.HasError();
+    }
+    catch (IOException& e) {
+      log.Error() << e.GetDescription();
+      return false;
+    }
+  }
+
+  /**
+   * Returns references in form of DataBlockSpans to all areas within the
+   * given area,
+   *
+   * @param typeConfig
+   *    Type configuration
+   * @param maxLevel
+   *    The maximum index level to load areas from
+   * @param types
+   *    Set of types to load data for
+   * @param maxCount
+   *    Maximum number of elements to return
+   * @param spans
+   *    List of DataBlockSpans referencing the the found areas
+   */
+  bool AreaAreaIndex::GetAreasInArea(const TypeConfig& typeConfig,
+                                     const GeoBox& boundingBox,
+                                     size_t maxLevel,
+                                     const TypeInfoSet& types,
+                                     std::vector<DataBlockSpan>& spans,
+                                     TypeInfoSet& loadedTypes) const
+  {
+    StopClock            time;
+    std::vector<CellRef> cellRefs;     // cells to scan in this level
+    std::vector<CellRef> nextCellRefs; // cells to scan for the next level
+    double               minlon=boundingBox.GetMinLon()+180.0;
+    double               maxlon=boundingBox.GetMaxLon()+180.0;
+    double               minlat=boundingBox.GetMinLat()+90.0;
+    double               maxlat=boundingBox.GetMaxLat()+90.0;
+
+    // Clear result data structures
+    spans.clear();
+    loadedTypes.Clear();
 
     // Make the vector preallocate memory for the expected data size
     // This should void reallocation
-    offsets.reserve(std::min(100000u,(uint32_t)maxCount));
-    newOffsets.reserve(std::min(100000u,(uint32_t)maxCount));
+    spans.reserve(1000);
 
-    cellRefs.reserve(1000);
-
-    nextCellRefs.reserve(1000);
+    cellRefs.reserve(2000);
+    nextCellRefs.reserve(2000);
 
     cellRefs.push_back(CellRef(topLevelOffset,0,0));
 
-    // For all levels:
-    // * Take the tiles and offsets of the last level
-    // * Calculate the new tiles and offsets that still interfere with given area
-    // * Add the new offsets to the list of offsets and finish if we have
-    //   reached maxLevel or maxAreaCount.
-    // * copy no, ntx, nty to ctx, cty, co and go to next iteration
-    bool stopArea=false;
-    for (uint32_t level=0;
-         !stopArea &&
-         level<=this->maxLevel &&
-         level<=maxLevel &&
-         !cellRefs.empty();
-         level++) {
-      nextCellRefs.clear();
+    try {
+      // For all levels:
+      // * Take the tiles and offsets of the last level
+      // * Calculate the new tiles and offsets that still interfere with given area
+      // * Add the new offsets to the list of offsets and finish if we have
+      //   reached maxLevel or maxAreaCount.
+      // * copy no, ntx, nty to ctx, cty, co and go to next iteration
+      for (uint32_t level=0;
+           level<=this->maxLevel &&
+           level<=maxLevel &&
+           !cellRefs.empty();
+           level++) {
+        nextCellRefs.clear();
 
-      newOffsets.clear();
+        for (const auto& cellRef : cellRefs) {
+          IndexCell  cellIndexData;
+          FileOffset cellDataOffset;
 
-      for (size_t i=0; !stopArea && i<cellRefs.size(); i++) {
-        size_t               cx;
-        size_t               cy;
-        double               x;
-        double               y;
-        IndexCache::CacheRef cell;
+          if (!GetIndexCell(level,
+                            cellRef.offset,
+                            cellIndexData,
+                            cellDataOffset)) {
+            log.Error() << "Cannot find offset " << cellRef.offset << " in level " << level << " in file '" << scanner.GetFilename() << "'";
+            return false;
+          }
 
-        if (!GetIndexCell(level,cellRefs[i].offset,cell)) {
-          std::cerr << "Cannot find offset " << cellRefs[i].offset << " in level " << level << " => aborting!" << std::endl;
-          return false;
-        }
+          // Now read the area offsets by type in this index entry
 
-        if (offsets.size()+
-            newOffsets.size()+
-            cell->value.areas.size()>=maxCount) {
-          stopArea=true;
-          continue;
-        }
+          if (!ReadCellData(typeConfig,
+                            types,
+                            cellDataOffset,
+                            spans)) {
+            log.Error() << "Cannot read index data for level " << level << " at offset " << cellDataOffset << " in file '" << scanner.GetFilename() << "'";
+            return false;
+          }
 
-        for (std::vector<IndexEntry>::const_iterator entry=cell->value.areas.begin();
-             entry!=cell->value.areas.end();
-             ++entry) {
-          if (types.IsTypeSet(entry->type)) {
-            newOffsets.push_back(entry->offset);
+          if (level<this->maxLevel) {
+            size_t cx=cellRef.x*2;
+            size_t cy=cellRef.y*2;
+
+            PushCellsForNextLevel(minlon,
+                                  minlat,
+                                  maxlon,
+                                  maxlat,
+                                  cellIndexData,
+                                  cellDimension[level+1],
+                                  cx,cy,
+                                  nextCellRefs);
           }
         }
 
-        cx=cellRefs[i].x*2;
-        cy=cellRefs[i].y*2;
-
-        if (cell->value.children[0]!=0) {
-          // top left
-
-          x=cx*cellWidth[level+1];
-          y=(cy+1)*cellHeight[level+1];
-
-          if (!(x>maxlon+cellWidth[level+1]/2 ||
-                y>maxlat+cellHeight[level+1]/2 ||
-                x+cellWidth[level+1]<minlon-cellWidth[level+1]/2 ||
-                y+cellHeight[level+1]<minlat-cellHeight[level+1]/2)) {
-            nextCellRefs.push_back(CellRef(cell->value.children[0],cx,cy+1));
-          }
-        }
-
-        if (cell->value.children[1]!=0) {
-          // top right
-          x=(cx+1)*cellWidth[level+1];
-          y=(cy+1)*cellHeight[level+1];
-
-          if (!(x>maxlon+cellWidth[level+1]/2 ||
-                y>maxlat+cellHeight[level+1]/2 ||
-                x+cellWidth[level+1]<minlon-cellWidth[level+1]/2 ||
-                y+cellHeight[level+1]<minlat-cellHeight[level+1]/2)) {
-            nextCellRefs.push_back(CellRef(cell->value.children[1],cx+1,cy+1));
-          }
-        }
-
-        if (cell->value.children[2]!=0) {
-          // bottom left
-          x=cx*cellWidth[level+1];
-          y=cy*cellHeight[level+1];
-
-          if (!(x>maxlon+cellWidth[level+1]/2 ||
-                y>maxlat+cellHeight[level+1]/2 ||
-                x+cellWidth[level+1]<minlon-cellWidth[level+1]/2 ||
-                y+cellHeight[level+1]<minlat-cellHeight[level+1]/2)) {
-            nextCellRefs.push_back(CellRef(cell->value.children[2],cx,cy));
-          }
-        }
-
-        if (cell->value.children[3]!=0) {
-          // bottom right
-          x=(cx+1)*cellWidth[level+1];
-          y=cy*cellHeight[level+1];
-
-          if (!(x>maxlon+cellWidth[level+1]/2 ||
-                y>maxlat+cellHeight[level+1]/2 ||
-                x+cellWidth[level+1]<minlon-cellWidth[level+1]/2 ||
-                y+cellHeight[level+1]<minlat-cellHeight[level+1]/2)) {
-            nextCellRefs.push_back(CellRef(cell->value.children[3],cx+1,cy));
-          }
-        }
+        std::swap(cellRefs,nextCellRefs);
       }
-
-      if (!stopArea) {
-        offsets.insert(offsets.end(),newOffsets.begin(),newOffsets.end());
-      }
-
-      std::swap(cellRefs,nextCellRefs);
     }
+    catch (IOException& e) {
+      log.Error() << e.GetDescription();
+      return false;
+    }
+
+    time.Stop();
+
+    if (time.GetMilliseconds()>100) {
+      log.Warn() << "Retrieving " << spans.size() << " spans from area index for " << boundingBox.GetDisplayText() << " took " << time.ResultString();
+    }
+
+    loadedTypes=types;
 
     return true;
   }
 
   void AreaAreaIndex::DumpStatistics()
   {
-    indexCache.DumpStatistics(filepart.c_str(),IndexCacheValueSizer());
+    indexCache.DumpStatistics(AREA_AREA_IDX,IndexCacheValueSizer());
   }
 }
-

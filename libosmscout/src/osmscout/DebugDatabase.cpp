@@ -20,16 +20,13 @@
 #include <osmscout/DebugDatabase.h>
 
 #include <algorithm>
-#include <iostream>
-
-#include <osmscout/TypeConfigLoader.h>
 
 #include <osmscout/system/Assert.h>
 #include <osmscout/system/Math.h>
 
 #include <osmscout/util/File.h>
 #include <osmscout/util/FileScanner.h>
-#include <osmscout/util/HashMap.h>
+#include <osmscout/util/Logger.h>
 #include <osmscout/util/StopClock.h>
 
 #include "osmscout/ObjectRef.h"
@@ -42,15 +39,14 @@ namespace osmscout {
   }
 
   DebugDatabase::DebugDatabase(const DebugDatabaseParameter& /*parameter*/)
-   : isOpen(false),
-     typeConfig(NULL)
+   : isOpen(false)
   {
     // no code
   }
 
   DebugDatabase::~DebugDatabase()
   {
-    delete typeConfig;
+    // no code
   }
 
   bool DebugDatabase::Open(const std::string& path)
@@ -59,12 +55,10 @@ namespace osmscout {
 
     this->path=path;
 
-    typeConfig=new TypeConfig();
+    typeConfig=std::make_shared<TypeConfig>();
 
-    if (!LoadTypeData(path,*typeConfig)) {
-      std::cerr << "Cannot load 'types.dat'!" << std::endl;
-      delete typeConfig;
-      typeConfig=NULL;
+    if (!typeConfig->LoadFromDataFile(path)) {
+      log.Error() << "Cannot load 'types.dat'!";
       return false;
     }
 
@@ -84,18 +78,18 @@ namespace osmscout {
     isOpen=false;
   }
 
-  TypeConfig* DebugDatabase::GetTypeConfig() const
+  TypeConfigRef DebugDatabase::GetTypeConfig() const
   {
     return typeConfig;
   }
 
   bool DebugDatabase::GetCoords(std::set<OSMId>& ids,
-                                CoordDataFile::CoordResultMap& coordsMap) const
+                                CoordDataFile::ResultMap& coordsMap) const
   {
-    CoordDataFile dataFile("coord.dat");
+    CoordDataFile dataFile;
 
     if (!dataFile.Open(path,
-                       false)) {
+                       true)) {
       return false;
     }
 
@@ -118,46 +112,39 @@ namespace osmscout {
     uint32_t    entryCount;
     std::string filename=AppendFileToDir(path,mapName);
 
-    if (!scanner.Open(filename,FileScanner::LowMemRandom,false)) {
-      std::cerr << "Cannot open file '" << scanner.GetFilename() << "'!" << std::endl;
+    try {
+      scanner.Open(filename,FileScanner::LowMemRandom,false);
+
+      scanner.Read(entryCount);
+
+      for (size_t i=1; i<=entryCount; i++) {
+        Id         id;
+        uint8_t    typeByte;
+        FileOffset fileOffset;
+
+        scanner.Read(id);
+        scanner.Read(typeByte);
+        scanner.ReadFileOffset(fileOffset);
+
+        ObjectOSMRef  osmRef(id,(OSMRefType)typeByte);
+        ObjectFileRef fileRef(fileOffset,fileType);
+
+        if (ids.find(osmRef)!=ids.end() ||
+            fileOffsets.find(fileRef)!=fileOffsets.end()) {
+          idFileOffsetMap.insert(std::make_pair(osmRef,fileRef));
+          fileOffsetIdMap.insert(std::make_pair(fileRef,osmRef));
+        }
+      }
+
+      scanner.Close();
+
+      return true;
+    }
+    catch (IOException& e) {
+      log.Error() << e.GetDescription();
+      scanner.CloseFailsafe();
       return false;
     }
-
-    if (!scanner.Read(entryCount)) {
-      return false;
-    }
-
-    for (size_t i=1; i<=entryCount; i++) {
-      Id         id;
-      uint8_t    typeByte;
-      OSMRefType osmType;
-      FileOffset fileOffset;
-
-      if (!scanner.Read(id)) {
-        return false;
-      }
-
-      if (!scanner.Read(typeByte)) {
-        return false;
-      }
-
-      osmType=(OSMRefType)typeByte;
-
-      if (!scanner.ReadFileOffset(fileOffset)) {
-        return false;
-      }
-
-      ObjectOSMRef  osmRef(id,osmType);
-      ObjectFileRef fileRef(fileOffset,fileType);
-
-      if (ids.find(osmRef)!=ids.end() ||
-          fileOffsets.find(fileRef)!=fileOffsets.end()) {
-        idFileOffsetMap.insert(std::make_pair(osmRef,fileRef));
-        fileOffsetIdMap.insert(std::make_pair(fileRef,osmRef));
-      }
-    }
-
-    return scanner.Close();
   }
 
   bool DebugDatabase::ResolveReferences(const std::set<ObjectOSMRef>& ids,

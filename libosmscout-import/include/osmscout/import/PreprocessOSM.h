@@ -20,17 +20,22 @@
   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307  USA
 */
 
-#include <osmscout/import/Preprocess.h>
+#include <osmscout/import/Preprocessor.h>
 
 namespace osmscout {
 
-  class PreprocessOSM : public Preprocess
+  class PreprocessOSM : public Preprocessor
   {
+  private:
+    PreprocessorCallback& callback;
+
   public:
-    std::string GetDescription() const;
-    bool Import(const ImportParameter& parameter,
+    PreprocessOSM(PreprocessorCallback& callback);
+
+    bool Import(const TypeConfigRef& typeConfig,
+                const ImportParameter& parameter,
                 Progress& progress,
-                const TypeConfig& typeConfig);
+                const std::string& filename);
   };
 }
 

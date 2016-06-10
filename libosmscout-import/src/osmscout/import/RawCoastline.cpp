@@ -19,6 +19,7 @@
 
 #include <osmscout/import/RawCoastline.h>
 
+#include <algorithm>
 #include <limits>
 
 #include <osmscout/system/Math.h>
@@ -45,46 +46,34 @@ namespace osmscout {
     this->nodes=nodes;
   }
 
-  bool RawCoastline::Read(FileScanner& scanner)
+  void RawCoastline::Read(FileScanner& scanner)
   {
-    if (!scanner.ReadNumber(id)) {
-      return false;
-    }
+    scanner.ReadNumber(id);
 
-    if (!scanner.Read(flags)) {
-      return false;
-    }
+    scanner.Read(flags);
 
     uint32_t nodeCount;
 
-    if (!scanner.ReadNumber(nodeCount)) {
-      return false;
-    }
+    scanner.ReadNumber(nodeCount);
 
     nodes.resize(nodeCount);
 
     if (nodeCount>0) {
       OSMId minId;
 
-      if (!scanner.ReadNumber(minId)) {
-        return false;
-      }
+      scanner.ReadNumber(minId);
 
       for (size_t i=0; i<nodeCount; i++) {
         OSMId id;
 
-        if (!scanner.ReadNumber(id)) {
-          return false;
-        }
+        scanner.ReadNumber(id);
 
         nodes[i]=minId+id;
       }
     }
-
-    return !scanner.HasError();
   }
 
-  bool RawCoastline::Write(FileWriter& writer) const
+  void RawCoastline::Write(FileWriter& writer) const
   {
     writer.WriteNumber(id);
 
@@ -104,8 +93,6 @@ namespace osmscout {
         writer.WriteNumber(nodes[i]-minId);
       }
     }
-
-    return !writer.HasError();
   }
 }
 

@@ -20,77 +20,152 @@
   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307  USA
 */
 
+#include <unordered_map>
+
+#include <osmscout/Coord.h>
+#include <osmscout/Tag.h>
+#include <osmscout/TurnRestriction.h>
+
+#include <osmscout/util/FileWriter.h>
+#include <osmscout/util/WorkQueue.h>
+
 #include <osmscout/import/Import.h>
+#include <osmscout/import/Preprocessor.h>
+#include <osmscout/import/RawCoastline.h>
+#include <osmscout/import/RawCoord.h>
+#include <osmscout/import/RawNode.h>
+#include <osmscout/import/RawWay.h>
 #include <osmscout/import/RawRelation.h>
 
-#include <osmscout/util/HashMap.h>
-#include <osmscout/util/FileWriter.h>
 
 namespace osmscout {
   class Preprocess : public ImportModule
   {
-  private:
-    typedef OSMSCOUT_HASHMAP<PageId,FileOffset> CoordPageOffsetMap;
+  public:
+    static const char* BOUNDING_DAT;
+    static const char* DISTRIBUTION_DAT;
+    static const char* RAWCOORDS_DAT;
+    static const char* RAWNODES_DAT;
+    static const char* RAWWAYS_DAT;
+    static const char* RAWRELS_DAT;
+    static const char* RAWCOASTLINE_DAT;
+    static const char* RAWTURNRESTR_DAT;
 
   private:
-    FileWriter          nodeWriter;
-    FileWriter          wayWriter;
-    FileWriter          relationWriter;
-    FileWriter          coastlineWriter;
+    class Callback : public PreprocessorCallback
+    {
+    private:
+      struct ProcessedData
+      {
+        std::vector<RawCoord>        rawCoords;
+        std::vector<RawNode>         rawNodes;
+        std::vector<RawWay>          rawWays;
+        std::vector<RawCoastline>    rawCoastlines;
+        std::vector<RawRelation>     rawRelations;
+        std::vector<TurnRestriction> turnRestriction;
+      };
 
-    std::vector<Tag>    tags;
+      // Should be unique_ptr but I get compiler errors if passing it to the WriteWorkerQueue
+      typedef std::shared_ptr<ProcessedData> ProcessedDataRef;
 
-    uint32_t            nodeCount;
-    uint32_t            wayCount;
-    uint32_t            areaCount;
-    uint32_t            relationCount;
-    uint32_t            coastlineCount;
+    private:
+      const TypeConfigRef                      typeConfig;
+      const ImportParameter&                   parameter;
+      Progress&                                progress;
 
-    OSMId               lastNodeId;
-    OSMId               lastWayId;
-    OSMId               lastRelationId;
+      WorkQueue<ProcessedDataRef>              blockWorkerQueue;
+      std::vector<std::thread>                 blockWorkerThreads;
+      WorkQueue<void>                          writeWorkerQueue;
+      std::thread                              writeWorkerThread;
+      FileWriter                               rawCoordWriter;
+      FileWriter                               nodeWriter;
+      FileWriter                               wayWriter;
+      FileWriter                               coastlineWriter;
+      FileWriter                               turnRestrictionWriter;
+      FileWriter                               multipolygonWriter;
 
-    bool                nodeSortingError;
-    bool                waySortingError;
-    bool                relationSortingError;
+      uint32_t                                 coordCount;
+      uint32_t                                 nodeCount;
+      uint32_t                                 wayCount;
+      uint32_t                                 areaCount;
+      uint32_t                                 relationCount;
+      uint32_t                                 coastlineCount;
+      uint32_t                                 turnRestrictionCount;
+      uint32_t                                 multipolygonCount;
 
-    Id                  coordPageCount;
-    CoordPageOffsetMap  coordIndex;
-    FileWriter          coordWriter;
-    PageId              currentPageId;
-    FileOffset          currentPageOffset;
-    std::vector<double> lats;
-    std::vector<double> lons;
-    std::vector<bool>   isSet;
+      OSMId                                    lastNodeId;
+      OSMId                                    lastWayId;
+      OSMId                                    lastRelationId;
+
+      bool                                     nodeSortingError;
+      bool                                     waySortingError;
+      bool                                     relationSortingError;
+
+      GeoCoord                                 minCoord;
+      GeoCoord                                 maxCoord;
+
+      std::vector<uint32_t>                    nodeStat;
+      std::vector<uint32_t>                    areaStat;
+      std::vector<uint32_t>                    wayStat;
+
+    private:
+      bool IsTurnRestriction(const TagMap& tags,
+                             TurnRestriction::Type& type) const;
+
+
+      bool IsMultipolygon(const TagMap& tags,
+                          TypeInfoRef& type);
+
+      bool DumpDistribution();
+      bool DumpBoundingBox();
+
+      void NodeSubTask(const RawNodeData& data,
+                       ProcessedData& processed);
+      void WaySubTask(const RawWayData& data,
+                      ProcessedData& processed);
+      void TurnRestrictionSubTask(const std::vector<RawRelation::Member>& members,
+                                  TurnRestriction::Type type,
+                                  ProcessedData& processed);
+      void MultipolygonSubTask(const TagMap& tags,
+                               const std::vector<RawRelation::Member>& members,
+                               OSMId id,
+                               const TypeInfoRef& type,
+                               ProcessedData& processed);
+      void RelationSubTask(const RawRelationData& data,
+                           ProcessedData& processed);
+
+      ProcessedDataRef BlockTask(RawBlockDataRef data);
+      void BlockWorkerLoop();
+
+      void WriteTask(std::shared_future<ProcessedDataRef>& processed);
+      void WriteWorkerLoop();
+
+    public:
+      Callback(const TypeConfigRef& typeConfig,
+               const ImportParameter& parameter,
+               Progress& progress);
+      virtual ~Callback();
+
+      bool Initialize();
+
+      void ProcessBlock(RawBlockDataRef data);
+
+      bool Cleanup(bool success);
+    };
 
   private:
-    bool StoreCurrentPage();
-    bool StoreCoord(OSMId id,
-                    double lat,
-                    double lon);
+    bool ProcessFiles(const TypeConfigRef& typeConfig,
+                      const ImportParameter& parameter,
+                      Progress& progress,
+                      Callback& callback);
 
   public:
-    std::string GetDescription() const;
-    bool Import(const ImportParameter& parameter,
-                Progress& progress,
-                const TypeConfig& typeConfig);
+    void GetDescription(const ImportParameter& parameter,
+                        ImportModuleDescription& description) const;
 
-    bool Initialize(const ImportParameter& parameter);
-
-    void ProcessNode(const TypeConfig& typeConfig,
-                     const OSMId& id,
-                     const double& lon, const double& lat,
-                     const std::map<TagId,std::string>& tags);
-    void ProcessWay(const TypeConfig& typeConfig,
-                    const OSMId& id,
-                    std::vector<OSMId>& nodes,
-                    const std::map<TagId,std::string>& tags);
-    void ProcessRelation(const TypeConfig& typeConfig,
-                         const OSMId& id,
-                         const std::vector<RawRelation::Member>& members,
-                         const std::map<TagId,std::string>& tags);
-
-    bool Cleanup(Progress& progress);
+    bool Import(const TypeConfigRef& typeConfig,
+                const ImportParameter& parameter,
+                Progress& progress);
   };
 }
 

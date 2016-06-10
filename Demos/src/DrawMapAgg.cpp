@@ -21,8 +21,9 @@
 #include <iomanip>
 
 #include <osmscout/Database.h>
+#include <osmscout/MapService.h>
+
 #include <osmscout/MapPainterAgg.h>
-#include <osmscout/StyleConfigLoader.h>
 
 /*
   Example for the nordrhein-westfalen.osm (to be executed in the Demos top
@@ -31,6 +32,8 @@
   src/DrawMapAgg ../TravelJinni/ ../TravelJinni/standard.oss 640 480 7.13 50.69 10000 test.ppm
   src/DrawMapAgg ../TravelJinni/ ../TravelJinni/standard.oss 640 480 7.45274 51.49256 50000 test.ppm
 */
+
+static const double DPI=96.0;
 
 bool write_ppm(const unsigned char* buf,
                unsigned width,
@@ -93,17 +96,18 @@ int main(int argc, char* argv[])
   output=argv[8];
 
   osmscout::DatabaseParameter databaseParameter;
-  osmscout::Database          database(databaseParameter);
+  osmscout::DatabaseRef       database(new osmscout::Database(databaseParameter));
+  osmscout::MapServiceRef     mapService(new osmscout::MapService(database));
 
-  if (!database.Open(map.c_str())) {
+  if (!database->Open(map.c_str())) {
     std::cerr << "Cannot open database" << std::endl;
 
     return 1;
   }
 
-  osmscout::StyleConfig styleConfig(database.GetTypeConfig());
+  osmscout::StyleConfigRef styleConfig(new osmscout::StyleConfig(database->GetTypeConfig()));
 
-  if (!osmscout::LoadStyleConfig(style.c_str(),styleConfig)) {
+  if (!styleConfig->Load(style)) {
     std::cerr << "Cannot open style" << std::endl;
   }
 
@@ -122,45 +126,24 @@ int main(int argc, char* argv[])
   osmscout::MapParameter        drawParameter;
   osmscout::AreaSearchParameter searchParameter;
   osmscout::MapData             data;
-  osmscout::MapPainterAgg       painter;
+  osmscout::MapPainterAgg       painter(styleConfig);
 
-  drawParameter.SetFontName("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf");
+  drawParameter.SetFontName("/usr/share/fonts/TTF/LiberationSans-Regular.ttf");
 
   projection.Set(lon,
                  lat,
-                 zoom,
+                 osmscout::Magnification(zoom),
+                 DPI,
                  width,
                  height);
 
+  std::list<osmscout::TileRef> tiles;
 
-  osmscout::TypeSet              nodeTypes;
-  std::vector<osmscout::TypeSet> wayTypes;
-  osmscout::TypeSet              areaTypes;
+  mapService->LookupTiles(projection,tiles);
+  mapService->LoadMissingTileData(searchParameter,*styleConfig,tiles);
+  mapService->ConvertTilesToMapData(tiles,data);
 
-  styleConfig.GetNodeTypesWithMaxMag(projection.GetMagnification(),
-                                     nodeTypes);
-
-  styleConfig.GetWayTypesByPrioWithMaxMag(projection.GetMagnification(),
-                                          wayTypes);
-
-  styleConfig.GetAreaTypesWithMaxMag(projection.GetMagnification(),
-                                     areaTypes);
-
-  database.GetObjects(nodeTypes,
-                      wayTypes,
-                      areaTypes,
-                      projection.GetLonMin(),
-                      projection.GetLatMin(),
-                      projection.GetLonMax(),
-                      projection.GetLatMax(),
-                      projection.GetMagnification(),
-                      searchParameter,
-                      data.nodes,
-                      data.ways,
-                      data.areas);
-
-  if (painter.DrawMap(styleConfig,
-                      projection,
+  if (painter.DrawMap(projection,
                       drawParameter,
                       data,
                       &pf)) {

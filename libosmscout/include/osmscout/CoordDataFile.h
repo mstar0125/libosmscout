@@ -20,59 +20,45 @@
   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307  USA
 */
 
-#include <set>
-#include <list>
-#include <vector>
-
-#include <osmscout/Point.h>
+#include <osmscout/DataFile.h>
+#include <osmscout/Coord.h>
 
 #include <osmscout/util/Cache.h>
-#include <osmscout/util/FileScanner.h>
-#include <osmscout/util/HashMap.h>
-#include <osmscout/util/Reference.h>
 
 namespace osmscout {
 
+  /**
+   * \ingroup Database
+   */
   class OSMSCOUT_API CoordDataFile
   {
-  private:
-    typedef OSMSCOUT_HASHMAP<PageId,FileOffset> CoordPageOffsetMap;
-
   public:
-    struct CoordEntry
-    {
-      Point point;
-
-      CoordEntry(Id id,
-                 double lat,
-                 double lon)
-      : point(id,lat,lon)
-      {
-        // no code
-      }
-    };
-
-    typedef OSMSCOUT_HASHMAP<OSMId,CoordEntry> CoordResultMap;
+    static const char* COORD_DAT;
 
   private:
-    bool                isOpen;             //! If true,the data file is opened
-    std::string         datafile;           //! Basename part of the data file name
-    std::string         datafilename;       //! complete filename for data file
-    mutable FileScanner scanner;            //! File stream to the data file
-    uint32_t            coordPageSize;
-    CoordPageOffsetMap  coordPageOffsetMap;
+    typedef std::unordered_map<PageId,FileOffset> PageIdFileOffsetMap;
 
   public:
-    CoordDataFile(const std::string& datafile);
+    typedef std::unordered_map<OSMId,Coord> ResultMap;
 
+  private:
+    bool                isOpen;             //!< If true,the data file is opened
+    std::string         datafilename;       //!< complete filename for data file
+    mutable FileScanner scanner;            //!< File stream to the data file
+    uint32_t            pageSize;
+    PageIdFileOffsetMap pageFileOffsetMap;
+
+  public:
+    CoordDataFile();
     virtual ~CoordDataFile();
 
     bool Open(const std::string& path,
               bool memoryMapedData);
     bool Close();
 
-    bool Get(std::set<OSMId>& ids,
-             CoordResultMap& coordsMap) const;
+    std::string GetFilename() const;
+
+    bool Get(const std::set<OSMId>& ids, ResultMap& resultMap) const;
   };
 }
 

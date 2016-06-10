@@ -14,5 +14,5 @@ Name: libosmscout
 Description: libosmscout base library
 Version: 0.1
 Requires: 
-Libs: -L${libdir} -std=c++0x -I/usr/local/Cellar/marisa/0.2.4/include -losmscout -L/usr/local/Cellar/marisa/0.2.4/lib -lmarisa
-Cflags: -I${includedir} -std=c++0x -I/usr/local/Cellar/marisa/0.2.4/include
+Libs: -L${libdir}  -losmscout -D_THREAD_SAFE -pthread -L/usr/local/Cellar/libmarisa/0.2.4_1/lib -lmarisa
+Cflags: -I${includedir} -D_THREAD_SAFE -pthread -mmmx -msse -msse2 -msse3 -mssse3 -msse4.1 -msse4.2 -mavx -I/usr/local/Cellar/libmarisa/0.2.4_1/include

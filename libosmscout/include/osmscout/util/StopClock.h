@@ -20,6 +20,7 @@
   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307  USA
 */
 
+#include <chrono>
 #include <string>
 
 #include <osmscout/private/CoreImportExport.h>
@@ -27,14 +28,18 @@
 namespace osmscout {
 
   /**
-    Simple stop clock implementation.
-    */
+   * \ingroup Util
+   * Simple stop clock implementation.
+   */
   class OSMSCOUT_API StopClock
   {
   private:
-    struct StopClockPIMPL;
+    std::chrono::steady_clock::time_point start;
+    std::chrono::steady_clock::time_point stop;
 
-    StopClockPIMPL *pimpl;
+  private:
+    // We do not want you to make copies of a stop clock
+    StopClock(const StopClock& other);
 
   public:
     StopClock();

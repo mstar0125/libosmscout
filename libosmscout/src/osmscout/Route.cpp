@@ -28,29 +28,31 @@
 namespace osmscout {
 
   /** Constant for a description of the start node (StartDescription) */
-  const char* const RouteDescription::NODE_START_DESC       = "NodeStart";
+  const char* const RouteDescription::NODE_START_DESC        = "NodeStart";
   /** Constant for a description of the target node (TargetDescription) */
-  const char* const RouteDescription::NODE_TARGET_DESC      = "NodeTarget";
+  const char* const RouteDescription::NODE_TARGET_DESC       = "NodeTarget";
   /** Constant for a description of name of the way (NameDescription) */
-  const char* const RouteDescription::WAY_NAME_DESC         = "WayName";
+  const char* const RouteDescription::WAY_NAME_DESC          = "WayName";
   /** Constant for a description of a change of way name (NameChangedDescription) */
-  const char* const RouteDescription::WAY_NAME_CHANGED_DESC = "WayChangedName";
+  const char* const RouteDescription::WAY_NAME_CHANGED_DESC  = "WayChangedName";
   /** Constant for a description of list of way name crossing a node (CrossingWaysDescription) */
-  const char* const RouteDescription::CROSSING_WAYS_DESC    = "CrossingWays";
+  const char* const RouteDescription::CROSSING_WAYS_DESC     = "CrossingWays";
   /** Constant for a description of a turn (TurnDescription) */
-  const char* const RouteDescription::DIRECTION_DESC        = "Direction";
+  const char* const RouteDescription::DIRECTION_DESC         = "Direction";
   /** Constant for doing description of an explicit turn (TurnDescription) */
-  const char* const RouteDescription::TURN_DESC             = "Turn";
+  const char* const RouteDescription::TURN_DESC              = "Turn";
   /** Constant for a description of entering a roundabout (RoundaboutEnterDescription) */
-  const char* const RouteDescription::ROUNDABOUT_ENTER_DESC = "RountaboutEnter";
+  const char* const RouteDescription::ROUNDABOUT_ENTER_DESC  = "RountaboutEnter";
   /** Constant for a description of entering a roundabout (RoundaboutLeaveDescription) */
-  const char* const RouteDescription::ROUNDABOUT_LEAVE_DESC = "RountaboutLeave";
+  const char* const RouteDescription::ROUNDABOUT_LEAVE_DESC  = "RountaboutLeave";
   /** Constant for a description of entering a motorway (MotorwayEnterDescription) */
-  const char* const RouteDescription::MOTORWAY_ENTER_DESC   = "MotorwayEnter";
+  const char* const RouteDescription::MOTORWAY_ENTER_DESC    = "MotorwayEnter";
   /** Constant for a description of changing a motorway (MotorwayChangeDescription) */
-  const char* const RouteDescription::MOTORWAY_CHANGE_DESC  = "MotorwayChange";
+  const char* const RouteDescription::MOTORWAY_CHANGE_DESC   = "MotorwayChange";
   /** Constant for a description of leaving a motorway (MotorwayLeaveDescription) */
-  const char* const RouteDescription::MOTORWAY_LEAVE_DESC   = "MotorwayLeave";
+  const char* const RouteDescription::MOTORWAY_LEAVE_DESC    = "MotorwayLeave";
+  /** Constant for a description of motorway junction (MotorwayJunctionDescription) */
+  const char* const RouteDescription::MOTORWAY_JUNCTION_DESC = "MotorwayJunction";
 
   RouteDescription::Description::~Description()
   {
@@ -153,8 +155,8 @@ namespace osmscout {
     return stream.str();
   }
 
-  RouteDescription::NameChangedDescription::NameChangedDescription(NameDescription* originDescription,
-                                                                   NameDescription* targetDescription)
+  RouteDescription::NameChangedDescription::NameChangedDescription(const NameDescriptionRef& originDescription,
+                                                                   const NameDescriptionRef& targetDescription)
   : originDescription(originDescription),
     targetDescription(targetDescription)
   {
@@ -165,13 +167,13 @@ namespace osmscout {
   {
     std::string result="Name Change: ";
 
-    if (originDescription.Valid()) {
+    if (originDescription) {
       result+="'"+originDescription->GetDescription()+"'";
     }
 
     result+=" => ";
 
-    if (targetDescription.Valid()) {
+    if (targetDescription) {
       result+="'"+targetDescription->GetDescription()+"'";
     }
 
@@ -179,8 +181,8 @@ namespace osmscout {
   }
 
   RouteDescription::CrossingWaysDescription::CrossingWaysDescription(size_t exitCount,
-                                                                     NameDescription* originDescription,
-                                                                     NameDescription* targetDescription)
+                                                                     const NameDescriptionRef& originDescription,
+                                                                     const NameDescriptionRef& targetDescription)
   : exitCount(exitCount),
     originDescription(originDescription),
     targetDescription(targetDescription)
@@ -188,7 +190,7 @@ namespace osmscout {
     // no code
   }
 
-  void RouteDescription::CrossingWaysDescription::AddDescription(NameDescription* description)
+  void RouteDescription::CrossingWaysDescription::AddDescription(const NameDescriptionRef& description)
   {
     descriptions.push_back(description);
   }
@@ -199,7 +201,7 @@ namespace osmscout {
 
     result+="Crossing";
 
-    if (originDescription.Valid()) {
+    if (originDescription) {
       if (!result.empty()) {
         result+=" ";
       }
@@ -207,7 +209,7 @@ namespace osmscout {
       result+="from '"+originDescription->GetDescription()+"'";
     }
 
-    if (targetDescription.Valid()) {
+    if (targetDescription) {
       if (!result.empty()) {
         result+=" ";
       }
@@ -330,7 +332,7 @@ namespace osmscout {
     return "Leave roundabout";
   }
 
-  RouteDescription::MotorwayEnterDescription::MotorwayEnterDescription(NameDescription* targetDescription)
+  RouteDescription::MotorwayEnterDescription::MotorwayEnterDescription(const NameDescriptionRef& targetDescription)
   : toDescription(targetDescription)
   {
     // no code
@@ -340,7 +342,7 @@ namespace osmscout {
   {
     std::string result="Enter motorway";
 
-    if (toDescription.Valid() &&
+    if (toDescription &&
         toDescription->HasName()) {
       result+=" '"+toDescription->GetDescription()+"'";
     }
@@ -348,8 +350,8 @@ namespace osmscout {
     return result;
   }
 
-  RouteDescription::MotorwayChangeDescription::MotorwayChangeDescription(NameDescription* fromDescription,
-                                                                         NameDescription* toDescription)
+  RouteDescription::MotorwayChangeDescription::MotorwayChangeDescription(const NameDescriptionRef& fromDescription,
+                                                                         const NameDescriptionRef& toDescription)
   : fromDescription(fromDescription),
     toDescription(toDescription)
   {
@@ -361,7 +363,7 @@ namespace osmscout {
     return "Change motorway";
   }
 
-  RouteDescription::MotorwayLeaveDescription::MotorwayLeaveDescription(NameDescription* fromDescription)
+  RouteDescription::MotorwayLeaveDescription::MotorwayLeaveDescription(const NameDescriptionRef& fromDescription)
   : fromDescription(fromDescription)
   {
     // no code
@@ -370,6 +372,17 @@ namespace osmscout {
   std::string RouteDescription::MotorwayLeaveDescription::GetDebugString() const
   {
     return "Leave motorway";
+  }
+
+  RouteDescription::MotorwayJunctionDescription::MotorwayJunctionDescription(const NameDescriptionRef& junctionDescription)
+  : junctionDescription(junctionDescription)
+  {
+    // no code
+  }
+
+  std::string RouteDescription::MotorwayJunctionDescription::GetDebugString() const
+  {
+    return "motorway junction";
   }
 
   RouteDescription::Node::Node(size_t currentNodeIndex,
@@ -381,23 +394,24 @@ namespace osmscout {
     pathObject(pathObject),
     targetNodeIndex(targetNodeIndex),
     distance(0.0),
-    time(0.0)
+    time(0.0),
+    location(GeoCoord(NAN, NAN))
   {
     // no code
   }
 
   bool RouteDescription::Node::HasDescription(const char* name) const
   {
-    OSMSCOUT_HASHMAP<std::string,DescriptionRef>::const_iterator entry;
+    std::unordered_map<std::string,DescriptionRef>::const_iterator entry;
 
     entry=descriptionMap.find(name);
 
-    return entry!=descriptionMap.end() && entry->second.Valid();
+    return entry!=descriptionMap.end() && entry->second;
   }
 
-  RouteDescription::Description* RouteDescription::Node::GetDescription(const char* name) const
+  RouteDescription::DescriptionRef RouteDescription::Node::GetDescription(const char* name) const
   {
-    OSMSCOUT_HASHMAP<std::string,DescriptionRef>::const_iterator entry;
+    std::unordered_map<std::string,DescriptionRef>::const_iterator entry;
 
     entry=descriptionMap.find(name);
 
@@ -414,13 +428,19 @@ namespace osmscout {
     this->distance=distance;
   }
 
+  void RouteDescription::Node::SetLocation(const GeoCoord &coord)
+  {
+    this->location=coord;
+  }
+
+
   void RouteDescription::Node::SetTime(double time)
   {
     this->time=time;
   }
 
   void RouteDescription::Node::AddDescription(const char* name,
-                                              Description* description)
+                                              const DescriptionRef& description)
   {
     descriptions.push_back(description);
     descriptionMap[name]=description;

@@ -23,77 +23,91 @@
 
 namespace osmscout {
 
+  RawNode::RawNode()
+  : id(0)
+  {
+    // no code
+  }
+
   void RawNode::SetId(OSMId id)
   {
     this->id=id;
   }
 
-  void RawNode::SetType(TypeId type)
+  void RawNode::SetType(const TypeInfoRef& type)
   {
-    this->type=type;
+    assert(type);
+
+    featureValueBuffer.SetType(type);
   }
 
-  void RawNode::SetCoords(double lon, double lat)
+  void RawNode::SetCoord(const GeoCoord& coord)
   {
-    coords.Set(lat,lon);
+    this->coord=coord;
   }
 
-  void RawNode::SetTags(const std::vector<Tag>& tags)
+  void RawNode::UnsetFeature(size_t idx)
   {
-    this->tags=tags;
+    featureValueBuffer.FreeValue(idx);
   }
 
-  bool RawNode::Read(FileScanner& scanner)
+  void RawNode::Parse(Progress& progress,
+                      const TypeConfig& typeConfig,
+                      const TagMap& tags)
   {
-    if (!scanner.ReadNumber(id)) {
-      return false;
-    }
+    ObjectOSMRef object(id,
+                        osmRefNode);
 
-    uint32_t tmpType;
-    uint32_t tagCount;
-
-    if (!scanner.ReadNumber(tmpType)) {
-      return false;
-    }
-
-    type=(TypeId)tmpType;
-
-    if (!scanner.ReadCoord(coords)) {
-      return false;
-    }
-
-    if (!scanner.ReadNumber(tagCount)) {
-      return false;
-    }
-
-    tags.resize(tagCount);
-    for (size_t i=0; i<tagCount; i++) {
-      if (!scanner.ReadNumber(tags[i].key)) {
-        return false;
-      }
-
-      if (!scanner.Read(tags[i].value)) {
-        return false;
-      }
-    }
-
-    return !scanner.HasError();
+    featureValueBuffer.Parse(progress,
+                             typeConfig,
+                             object,
+                             tags);
   }
 
-  bool RawNode::Write(FileWriter& writer) const
+  /**
+   * Reads the data from the given FileScanner
+   *
+   * @throws IOException
+   */
+  void RawNode::Read(const TypeConfig& typeConfig,
+                     FileScanner& scanner)
+  {
+    scanner.ReadNumber(id);
+
+    TypeId typeId;
+
+    scanner.ReadTypeId(typeId,
+                       typeConfig.GetNodeTypeIdBytes());
+
+    TypeInfoRef type=typeConfig.GetNodeTypeInfo(typeId);
+
+    featureValueBuffer.SetType(type);
+
+    if (!type->GetIgnore()) {
+      featureValueBuffer.Read(scanner);
+    }
+
+    scanner.ReadCoord(coord);
+  }
+
+  /**
+   * Writes the data to the given FileWriter
+   *
+   * @throws IOException
+   */
+  void RawNode::Write(const TypeConfig& typeConfig,
+                      FileWriter& writer) const
   {
     writer.WriteNumber(id);
 
-    writer.WriteNumber(type);
-    writer.WriteCoord(coords);
+    writer.WriteTypeId(featureValueBuffer.GetType()->GetNodeId(),
+                       typeConfig.GetNodeTypeIdBytes());
 
-    writer.WriteNumber((uint32_t)tags.size());
-    for (size_t i=0; i<tags.size(); i++) {
-      writer.WriteNumber(tags[i].key);
-      writer.Write(tags[i].value);
+    if (!featureValueBuffer.GetType()->GetIgnore()) {
+      featureValueBuffer.Write(writer);
     }
 
-    return !writer.HasError();
+    writer.WriteCoord(coord);
   }
 }
 

@@ -28,6 +28,15 @@
 
 namespace osmscout {
 
+    typedef struct {
+        bool closeWay;
+        size_t transStart;
+        size_t transEnd;
+        size_t i;
+        size_t nVertex;
+        size_t direction;
+    } FollowPathHandle;
+
   class OSMSCOUT_MAP_QT_API MapPainterQt : public MapPainter
   {
   private:
@@ -42,7 +51,8 @@ namespace osmscout {
     std::vector<double>       sin;           //! Lookup table for sin calculation
 
   private:
-    QFont GetFont(const MapParameter& parameter,
+    QFont GetFont(const Projection& projection,
+                  const MapParameter& parameter,
                   double fontSize);
 
     void SetPen(const LineStyle& style,
@@ -52,6 +62,10 @@ namespace osmscout {
                  const MapParameter& parameter,
                  const FillStyle& fillStyle);
 
+    bool FollowPath(FollowPathHandle &hnd, double l, Vertex2D &origin);
+    void FollowPathInit(FollowPathHandle &hnd, Vertex2D &origin, size_t transStart, size_t transEnd,
+                        bool isClosed, bool keepOrientation);
+
   protected:
     bool HasIcon(const StyleConfig& styleConfig,
                  const MapParameter& parameter,
@@ -60,7 +74,13 @@ namespace osmscout {
     bool HasPattern(const MapParameter& parameter,
                     const FillStyle& style);
 
-    void GetTextDimension(const MapParameter& parameter,
+    void GetFontHeight(const Projection& projection,
+                       const MapParameter& parameter,
+                       double fontSize,
+                       double& height);
+
+    void GetTextDimension(const Projection& projection,
+                          const MapParameter& parameter,
                           double fontSize,
                           const std::string& text,
                           double& xOff,
@@ -110,12 +130,11 @@ namespace osmscout {
                   const AreaData& area);
 
   public:
-    MapPainterQt();
+    MapPainterQt(const StyleConfigRef& styleConfig);
     virtual ~MapPainterQt();
 
 
-    bool DrawMap(const StyleConfig& styleConfig,
-                 const Projection& projection,
+    bool DrawMap(const Projection& projection,
                  const MapParameter& parameter,
                  const MapData& data,
                  QPainter* painter);

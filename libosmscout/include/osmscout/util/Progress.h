@@ -23,6 +23,8 @@
 #include <ctime>
 #include <string>
 
+#include <osmscout/CoreFeatures.h>
+
 #include <osmscout/private/CoreImportExport.h>
 
 namespace osmscout {
@@ -44,7 +46,9 @@ namespace osmscout {
     virtual void SetStep(const std::string& step);
     virtual void SetAction(const std::string& action);
     virtual void SetProgress(double current, double total);
-
+    virtual void SetProgress(unsigned int current, unsigned int total);
+    virtual void SetProgress(unsigned long current, unsigned long total);
+    virtual void SetProgress(unsigned long long current, unsigned long long total);
     virtual void Debug(const std::string& text);
     virtual void Info(const std::string& text);
     virtual void Warning(const std::string& text);
@@ -53,6 +57,8 @@ namespace osmscout {
 
   class OSMSCOUT_API SilentProgress : public Progress
   {
+  public:
+    virtual ~SilentProgress();
   };
 
   class OSMSCOUT_API ConsoleProgress : public Progress
@@ -64,6 +70,9 @@ namespace osmscout {
     void SetStep(const std::string& step);
     void SetAction(const std::string& action);
     void SetProgress(double current, double total);
+    void SetProgress(unsigned int current, unsigned int total);
+    void SetProgress(unsigned long current, unsigned long total);
+    virtual void SetProgress(unsigned long long current, unsigned long long total);
 
     void Debug(const std::string& text);
     void Info(const std::string& text);

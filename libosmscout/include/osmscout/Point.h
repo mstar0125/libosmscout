@@ -25,81 +25,101 @@
 
 namespace osmscout {
 
+  /**
+   * \ingroup Geometry
+   * A point is a identifiable (has an id) geo-coordinate.
+   */
   class OSMSCOUT_API Point
   {
   private:
-    Id       id;
-    GeoCoord coords;
+    uint8_t  serial;
+    GeoCoord coord;
 
   public:
     inline Point()
-    : id(0)
+    : serial(0)
     {
       // no code
     }
 
-    inline Point(Id id,
+    inline Point(uint8_t serial,
                  const GeoCoord& coords)
-     : id(id),
-       coords(coords)
+     : serial(serial),
+       coord(coords)
      {
        // no code
      }
 
-    inline Point(Id id,
-                 double lat,
-                 double lon)
-    : id(id),
-      coords(lat,lon)
-    {
-      // no code
-    }
-
-    inline void Set(Id id,
+    inline void Set(uint8_t serial,
                     const GeoCoord& coords)
     {
-      this->id=id;
-      this->coords=coords;
+      this->serial=serial;
+      this->coord=coords;
     }
 
-    inline void Set(const GeoCoord& coords)
+    inline void SetSerial(uint8_t serial)
     {
-      this->coords=coords;
+      this->serial=serial;
     }
 
-    inline Id GetId() const
+    inline void ClearSerial()
     {
-      return id;
+      serial=0;
     }
 
-    inline const GeoCoord& GetCoords() const
+    inline void SetCoord(const GeoCoord& coords)
     {
-      return coords;
+      this->coord=coords;
+    }
+
+    inline uint8_t GetSerial() const
+    {
+      return serial;
+    }
+
+    inline bool IsRelevant() const
+    {
+      return serial!=0;
+    }
+
+    /**
+     * Returns a fast calculable unique id for the coordinate under consideration
+     * that different OSM nodes with the same coordinate will have different ids if the
+     * identity of the node is important - else th serial id will 0.
+     *
+     * The id does not have any semantics regarding sorting. Coordinates with close ids
+     * do not need to be close in location.
+     */
+    Id GetId() const;
+
+    inline const GeoCoord& GetCoord() const
+    {
+      return coord;
     }
 
     inline double GetLat() const
     {
-      return coords.GetLat();
+      return coord.GetLat();
     }
 
     inline double GetLon() const
     {
-      return coords.GetLon();
+      return coord.GetLon();
     }
 
     inline bool IsIdentical(const Point& other) const
     {
-      return id==other.id;
+      return serial==other.serial && coord==other.coord;
     }
 
     inline bool IsSame(const Point& other) const
     {
-      return coords==other.coords;
+      return coord==other.coord;
     }
 
     inline bool IsEqual(const Point& other) const
     {
-      return id==other.id || (coords==other.coords);
+      return serial==other.serial || (coord==other.coord);
     }
   };
 }

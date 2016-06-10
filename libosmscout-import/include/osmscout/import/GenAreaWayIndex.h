@@ -51,7 +51,7 @@ namespace osmscout {
       uint32_t   cellXCount;
       uint32_t   cellYCount;
 
-      FileOffset indexOffset; //! Position in file where the offset of the bitmap is written
+      FileOffset indexOffset; //! Position in file where the offset of the bitmap is written to
 
       TypeData();
 
@@ -63,14 +63,22 @@ namespace osmscout {
     };
 
   private:
-    void CalculateStatistics(size_t level,
-                             TypeData& typeData,
-                             const CoordCountMap& cellFillCount);
     bool FitsIndexCriteria(const ImportParameter& parameter,
                            Progress& progress,
                            const TypeInfo& typeInfo,
                            const TypeData& typeData,
-                           const CoordCountMap& cellFillCount);
+                           const CoordCountMap& cellFillCount) const;
+
+    void CalculateStatistics(size_t level,
+                             TypeData& typeData,
+                             const CoordCountMap& cellFillCount) const;
+
+    bool CalculateDistribution(const TypeConfig& typeConfig,
+                               const ImportParameter& parameter,
+                               Progress& progress,
+                               std::vector<TypeData>& wayTypeData,
+                               size_t& maxLevel) const;
+
     bool WriteBitmap(Progress& progress,
                      FileWriter& writer,
                      const TypeInfo& typeInfo,
@@ -78,10 +86,12 @@ namespace osmscout {
                      const CoordOffsetsMap& typeCellOffsets);
 
   public:
-    std::string GetDescription() const;
-    bool Import(const ImportParameter& parameter,
-                Progress& progress,
-                const TypeConfig& typeConfig);
+    void GetDescription(const ImportParameter& parameter,
+                        ImportModuleDescription& description) const;
+
+    bool Import(const TypeConfigRef& typeConfig,
+                const ImportParameter& parameter,
+                Progress& progress);
   };
 }
 

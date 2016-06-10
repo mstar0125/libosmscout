@@ -27,6 +27,8 @@
 
 #include <osmscout/DataFile.h>
 #include <osmscout/CoordDataFile.h>
+#include <osmscout/TypeFeatures.h>
+#include <osmscout/WaterIndex.h>
 
 #include <osmscout/system/Assert.h>
 #include <osmscout/system/Math.h>
@@ -35,8 +37,10 @@
 #include <osmscout/util/FileScanner.h>
 #include <osmscout/util/String.h>
 
+#include <osmscout/import/Preprocess.h>
 #include <osmscout/import/RawCoastline.h>
 #include <osmscout/import/RawNode.h>
+#include <osmscout/WayDataFile.h>
 
 //#define DEBUG_COASTLINE
 //#define DEBUG_TILING
@@ -59,23 +63,17 @@ namespace osmscout {
   /**
    * Sets the size of the bitmap and initializes state of all tiles to "unknown"
    */
-  void WaterIndexGenerator::Level::SetBox(uint32_t minLat, uint32_t maxLat,
-                                          uint32_t minLon, uint32_t maxLon,
+  void WaterIndexGenerator::Level::SetBox(const GeoCoord& minCoord,
+                                          const GeoCoord& maxCoord,
                                           double cellWidth, double cellHeight)
   {
     this->cellWidth=cellWidth;
     this->cellHeight=cellHeight;
 
-    // Convert to the real double values
-    this->minLat=minLat/conversionFactor-90.0;
-    this->maxLat=maxLat/conversionFactor-90.0;
-    this->minLon=minLon/conversionFactor-180.0;
-    this->maxLon=maxLon/conversionFactor-180.0;
-
-    cellXStart=(uint32_t)floor((this->minLon+180.0)/cellWidth);
-    cellXEnd=(uint32_t)floor((this->maxLon+180.0)/cellWidth);
-    cellYStart=(uint32_t)floor((this->minLat+90.0)/cellHeight);
-    cellYEnd=(uint32_t)floor((this->maxLat+90.0)/cellHeight);
+    cellXStart=(uint32_t)floor((minCoord.GetLon()+180.0)/cellWidth);
+    cellXEnd=(uint32_t)floor((maxCoord.GetLon()+180.0)/cellWidth);
+    cellYStart=(uint32_t)floor((minCoord.GetLat()+90.0)/cellHeight);
+    cellYEnd=(uint32_t)floor((maxCoord.GetLat()+90.0)/cellHeight);
 
     cellXCount=cellXEnd-cellXStart+1;
     cellYCount=cellYEnd-cellYStart+1;
@@ -136,126 +134,115 @@ namespace osmscout {
 
     progress.SetAction("Scanning for coastlines");
 
-    if (!scanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
-                                      "rawcoastline.dat"),
-                      FileScanner::Sequential,
-                      true)) {
-      progress.Error("Cannot open 'rawcoastline.dat'");
-      return false;
-    }
+    try {
+      scanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
+                                   Preprocess::RAWCOASTLINE_DAT),
+                   FileScanner::Sequential,
+                   true);
 
-    if (!scanner.Read(coastlineCount)) {
-      progress.Error("Error while reading number of data entries in file");
-      return false;
-    }
+      scanner.Read(coastlineCount);
 
-    for (uint32_t c=1; c<=coastlineCount; c++) {
-      progress.SetProgress(c,coastlineCount);
+      progress.Info(NumberToString(coastlineCount)+" coastlines");
 
-      RawCoastlineRef coastline(new RawCoastline());
+      for (uint32_t c=1; c<=coastlineCount; c++) {
+        progress.SetProgress(c,coastlineCount);
 
-      if (!coastline->Read(scanner)) {
-        progress.Error(std::string("Error while reading data entry ")+
-                       NumberToString(c)+" of "+
-                       NumberToString(coastlineCount)+
-                       " in file '"+
-                       scanner.GetFilename()+"'");
+        RawCoastlineRef coastline=std::make_shared<RawCoastline>();
+
+        coastline->Read(scanner);
+
+        rawCoastlines.push_back(coastline);
+      }
+
+      progress.SetAction("Resolving nodes of coastline");
+
+      CoordDataFile coordDataFile;
+
+      if (!coordDataFile.Open(parameter.GetDestinationDirectory(),
+                              parameter.GetCoordDataMemoryMaped())) {
+        progress.Error("Cannot open coord file!");
         return false;
       }
 
-      rawCoastlines.push_back(coastline);
-    }
+      std::set<OSMId> nodeIds;
 
-    progress.SetAction("Resolving nodes of coastline");
-
-    CoordDataFile coordDataFile("coord.dat");
-
-    if (!coordDataFile.Open(parameter.GetDestinationDirectory(),
-                            parameter.GetCoordDataMemoryMaped())) {
-      std::cerr << "Cannot open coord data file!" << std::endl;
-      return false;
-    }
-
-    std::set<OSMId> nodeIds;
-
-    for (std::list<RawCoastlineRef>::const_iterator c=rawCoastlines.begin();
-         c!=rawCoastlines.end();
-         ++c) {
-      RawCoastlineRef coastline(*c);
-
-      for (size_t n=0; n<coastline->GetNodeCount(); n++) {
-        nodeIds.insert(coastline->GetNodeId(n));
-      }
-    }
-
-    CoordDataFile::CoordResultMap coordsMap;
-
-    if (!coordDataFile.Get(nodeIds,
-                           coordsMap)) {
-      std::cerr << "Cannot read nodes!" << std::endl;
-      return false;
-    }
-
-    nodeIds.clear();
-
-    progress.SetAction("Enriching coastline with node data");
-
-    while (!rawCoastlines.empty()) {
-      RawCoastlineRef coastline=rawCoastlines.front();
-      bool            processingError=false;
-
-      rawCoastlines.pop_front();
-
-      CoastRef coast=new Coast();
-
-      coast->id=coastline->GetId();
-      coast->isArea=coastline->IsArea();
-
-      coast->coast.resize(coastline->GetNodeCount());
-
-      for (size_t n=0; n<coastline->GetNodeCount(); n++) {
-        CoordDataFile::CoordResultMap::const_iterator coord=coordsMap.find(coastline->GetNodeId(n));
-
-        if (coord==coordsMap.end()) {
-          processingError=true;
-
-          progress.Error("Cannot resolve node with id "+
-                         NumberToString(coastline->GetNodeId(n))+
-                         " for coastline "+
-                         NumberToString(coastline->GetId()));
-
-          break;
+      for (const auto& coastline : rawCoastlines) {
+        for (size_t n=0; n<coastline->GetNodeCount(); n++) {
+          nodeIds.insert(coastline->GetNodeId(n));
         }
-
-        if (n==0) {
-          coast->frontNodeId=coord->second.point.GetId();
-        }
-
-        if (n==coastline->GetNodeCount()-1) {
-          coast->backNodeId=coord->second.point.GetId();
-        }
-
-        coast->coast[n]=coord->second.point.GetCoords();
       }
 
-      if (!processingError) {
-        if (coast->isArea) {
-          areaCoastCount++;
-        }
-        else {
-          wayCoastCount++;
-        }
+      CoordDataFile::ResultMap coordsMap;
 
-        coastlines.push_back(coast);
+      if (!coordDataFile.Get(nodeIds,
+                             coordsMap)) {
+        progress.Error("Cannot read nodes!");
+        return false;
       }
-    }
 
-    if (!scanner.Close()) {
-      progress.Error("Error while reading/closing 'ways.dat'");
+      nodeIds.clear();
+
+      progress.SetAction("Enriching coastline with node data");
+
+      while (!rawCoastlines.empty()) {
+        RawCoastlineRef coastline=rawCoastlines.front();
+        bool            processingError=false;
+
+        rawCoastlines.pop_front();
+
+        CoastRef coast=std::make_shared<Coast>();
+
+        coast->id=coastline->GetId();
+        coast->isArea=coastline->IsArea();
+
+        coast->coast.resize(coastline->GetNodeCount());
+
+        for (size_t n=0; n<coastline->GetNodeCount(); n++) {
+          CoordDataFile::ResultMap::const_iterator coord=coordsMap.find(coastline->GetNodeId(n));
+
+          if (coord==coordsMap.end()) {
+            processingError=true;
+
+            progress.Error("Cannot resolve node with id "+
+                           NumberToString(coastline->GetNodeId(n))+
+                           " for coastline "+
+                           NumberToString(coastline->GetId()));
+
+            break;
+          }
+
+          if (n==0) {
+            coast->frontNodeId=coord->second.GetOSMScoutId();
+          }
+
+          if (n==coastline->GetNodeCount()-1) {
+            coast->backNodeId=coord->second.GetOSMScoutId();
+          }
+
+          coast->coast[n].Set(coord->second.GetSerial(),
+                              coord->second.GetCoord());
+        }
+
+        if (!processingError) {
+          if (coast->isArea) {
+            areaCoastCount++;
+          }
+          else {
+            wayCoastCount++;
+          }
+
+          coastlines.push_back(coast);
+        }
+      }
+
+      progress.Info(NumberToString(wayCoastCount)+" way coastline(s), "+NumberToString(areaCoastCount)+" area coastline(s)");
+
+      scanner.Close();
+    }
+    catch (IOException& e) {
+      progress.Error(e.GetDescription());
       return false;
     }
-
-    progress.Info(NumberToString(wayCoastCount)+" way coastline(s), "+NumberToString(areaCoastCount)+" area coastline(s)");
 
     return true;
   }
@@ -275,16 +262,16 @@ namespace osmscout {
     while( c!=coastlines.end()) {
       CoastRef coast=*c;
 
-      if (!coast->isArea) {
-        coastStartMap.insert(std::make_pair(coast->frontNodeId,coast));
-
-        c++;
-      }
-      else {
+      if (coast->isArea) {
         areaCoastCount++;
         mergedCoastlines.push_back(coast);
 
         c=coastlines.erase(c);
+      }
+      else {
+        coastStartMap.insert(std::make_pair(coast->frontNodeId,coast));
+
+        c++;
       }
     }
 
@@ -293,14 +280,10 @@ namespace osmscout {
     while (merged) {
       merged=false;
 
-      for (std::list<CoastRef>::iterator c=coastlines.begin();
-          c!=coastlines.end();
-          ++c) {
-        if (blacklist.find((*c)->id)!=blacklist.end()) {
+      for (const auto& coast : coastlines) {
+        if (blacklist.find(coast->id)!=blacklist.end()) {
           continue;
         }
-
-        CoastRef coast=*c;
 
         std::map<Id,CoastRef>::iterator other=coastStartMap.find(coast->backNodeId);
 
@@ -323,11 +306,7 @@ namespace osmscout {
     }
 
     // Gather merged coastlines
-    for (std::list<CoastRef>::iterator c=coastlines.begin();
-        c!=coastlines.end();
-        ++c) {
-      CoastRef coastline(*c);
-
+    for (const auto& coastline : coastlines) {
       if (blacklist.find(coastline->id)!=blacklist.end()) {
         continue;
       }
@@ -340,6 +319,11 @@ namespace osmscout {
       }
       else {
         wayCoastCount++;
+      }
+
+      if (coastline->coast.size()<=2) {
+        progress.Warning("Dropping to short coastline");
+        continue;
       }
 
       mergedCoastlines.push_back(coastline);
@@ -361,26 +345,20 @@ namespace osmscout {
   {
     progress.Info("Marking cells containing coastlines");
 
-    for (std::list<CoastRef>::const_iterator c=coastlines.begin();
-        c!=coastlines.end();
-        ++c) {
-      const CoastRef& coastline=*c;
-
+    for (const auto& coastline : coastlines) {
       // Marks cells on the path as coast
 
       std::set<Pixel> coords;
 
       GetCells(level,coastline->coast,coords);
 
-      for (std::set<Pixel>::const_iterator coord=coords.begin();
-          coord!=coords.end();
-          ++coord) {
-        if (level.IsInAbsolute(coord->x,coord->y)) {
-          if (level.GetState(coord->x-level.cellXStart,coord->y-level.cellYStart)==unknown) {
+      for (const auto& coord : coords) {
+        if (level.IsInAbsolute(coord.x,coord.y)) {
+          if (level.GetState(coord.x-level.cellXStart,coord.y-level.cellYStart)==unknown) {
 #if defined(DEBUG_TILING)
-            std::cout << "Coastline: " << coord->x-level.cellXStart << "," << coord->y-level.cellYStart << std::endl;
+            std::cout << "Coastline: " << coord.x-level.cellXStart << "," << coord.y-level.cellYStart << std::endl;
 #endif
-            level.SetStateAbsolute(coord->x,coord->y,coast);
+            level.SetStateAbsolute(coord.x,coord.y,coast);
           }
         }
       }
@@ -424,24 +402,22 @@ namespace osmscout {
         state[3]=level.GetState(coord->first.x-1,coord->first.y);
       }
 
-      for (std::list<GroundTile>::const_iterator tile=coord->second.begin();
-           tile!=coord->second.end();
-           ++tile) {
-        for (size_t c=0; c<tile->coords.size()-1;c++) {
+      for (const auto& tile : coord->second) {
+        for (size_t c=0; c<tile.coords.size()-1;c++) {
           // Top
-          if (tile->coords[c].x==0 &&
-              tile->coords[c].y==GroundTile::Coord::CELL_MAX &&
-              tile->coords[c+1].x==GroundTile::Coord::CELL_MAX &&
-              tile->coords[c+1].y==GroundTile::Coord::CELL_MAX) {
+          if (tile.coords[c].x==0 &&
+              tile.coords[c].y==GroundTile::Coord::CELL_MAX &&
+              tile.coords[c+1].x==GroundTile::Coord::CELL_MAX &&
+              tile.coords[c+1].y==GroundTile::Coord::CELL_MAX) {
             if (state[0]!=unknown) {
               continue;
             }
 
             state[0]=land;
           }
-          else if (tile->coords[c].y==GroundTile::Coord::CELL_MAX &&
-                   tile->coords[c].x!=0 &&
-                   tile->coords[c].x!=GroundTile::Coord::CELL_MAX) {
+          else if (tile.coords[c].y==GroundTile::Coord::CELL_MAX &&
+                   tile.coords[c].x!=0 &&
+                   tile.coords[c].x!=GroundTile::Coord::CELL_MAX) {
             if (state[0]!=unknown) {
               continue;
             }
@@ -450,19 +426,19 @@ namespace osmscout {
           }
 
           // Right
-          if (tile->coords[c].x==GroundTile::Coord::CELL_MAX &&
-              tile->coords[c].y==GroundTile::Coord::CELL_MAX &&
-              tile->coords[c+1].x==GroundTile::Coord::CELL_MAX &&
-              tile->coords[c+1].y==0) {
+          if (tile.coords[c].x==GroundTile::Coord::CELL_MAX &&
+              tile.coords[c].y==GroundTile::Coord::CELL_MAX &&
+              tile.coords[c+1].x==GroundTile::Coord::CELL_MAX &&
+              tile.coords[c+1].y==0) {
             if (state[1]!=unknown) {
               continue;
             }
 
             state[1]=land;
           }
-          else if (tile->coords[c].x==GroundTile::Coord::CELL_MAX &&
-                   tile->coords[c].y!=0 &&
-                   tile->coords[c].y!=GroundTile::Coord::CELL_MAX) {
+          else if (tile.coords[c].x==GroundTile::Coord::CELL_MAX &&
+                   tile.coords[c].y!=0 &&
+                   tile.coords[c].y!=GroundTile::Coord::CELL_MAX) {
             if (state[1]!=unknown) {
               continue;
             }
@@ -471,19 +447,19 @@ namespace osmscout {
           }
 
           // Below
-          if (tile->coords[c].x==GroundTile::Coord::CELL_MAX &&
-              tile->coords[c].y==0 &&
-              tile->coords[c+1].x==0 &&
-              tile->coords[c+1].y==0) {
+          if (tile.coords[c].x==GroundTile::Coord::CELL_MAX &&
+              tile.coords[c].y==0 &&
+              tile.coords[c+1].x==0 &&
+              tile.coords[c+1].y==0) {
             if (state[2]!=unknown) {
               continue;
             }
 
             state[2]=land;
           }
-          else if (tile->coords[c].y==0 &&
-                   tile->coords[c].x!=0 &&
-                   tile->coords[c].x!=GroundTile::Coord::CELL_MAX) {
+          else if (tile.coords[c].y==0 &&
+                   tile.coords[c].x!=0 &&
+                   tile.coords[c].x!=GroundTile::Coord::CELL_MAX) {
             if (state[2]!=unknown) {
               continue;
             }
@@ -492,19 +468,19 @@ namespace osmscout {
           }
 
           // left
-          if (tile->coords[c].x==0 &&
-              tile->coords[c].y==0 &&
-              tile->coords[c+1].x==0 &&
-              tile->coords[c+1].y==GroundTile::Coord::CELL_MAX) {
+          if (tile.coords[c].x==0 &&
+              tile.coords[c].y==0 &&
+              tile.coords[c+1].x==0 &&
+              tile.coords[c+1].y==GroundTile::Coord::CELL_MAX) {
             if (state[3]!=unknown) {
               continue;
             }
 
             state[3]=land;
           }
-          else if (tile->coords[c].x==0 &&
-                   tile->coords[c].y!=0 &&
-                   tile->coords[c].y!=GroundTile::Coord::CELL_MAX) {
+          else if (tile.coords[c].x==0 &&
+                   tile.coords[c].y!=0 &&
+                   tile.coords[c].y!=GroundTile::Coord::CELL_MAX) {
             if (state[3]!=unknown) {
               continue;
             }
@@ -563,59 +539,56 @@ namespace osmscout {
   {
     progress.Info("Assume land");
 
-    FileScanner scanner;
-
-    uint32_t    wayCount=0;
+    BridgeFeatureReader bridgeFeatureRader(typeConfig);
+    TunnelFeatureReader tunnelFeatureRader(typeConfig);
+    FileScanner         scanner;
+    uint32_t            wayCount=0;
 
     // We do not yet know if we handle borders as ways or areas
 
-    if (!scanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
-                                      "ways.dat"),
-                      FileScanner::Sequential,
-                      parameter.GetWayDataMemoryMaped())) {
-      progress.Error("Cannot open 'ways.dat'");
-      return false;
-    }
+    try {
+      scanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
+                                   WayDataFile::WAYS_DAT),
+                   FileScanner::Sequential,
+                   parameter.GetWayDataMemoryMaped());
 
-    if (!scanner.Read(wayCount)) {
-      progress.Error("Error while reading number of data entries in file");
-      return false;
-    }
+      scanner.Read(wayCount);
 
-    for (uint32_t w=1; w<=wayCount; w++) {
-      progress.SetProgress(w,wayCount);
+      for (uint32_t w=1; w<=wayCount; w++) {
+        progress.SetProgress(w,wayCount);
 
-      Way way;
+        Way way;
 
-      if (!way.Read(scanner)) {
-        progress.Error(std::string("Error while reading data entry ")+
-                       NumberToString(w)+" of "+
-                       NumberToString(wayCount)+
-                       " in file '"+
-                       scanner.GetFilename()+"'");
-        return false;
-      }
+        way.Read(typeConfig,
+                 scanner);
 
-      if (!typeConfig.GetTypeInfo(way.GetType()).GetIgnoreSeaLand()) {
-        if (way.nodes.size()>=2) {
+        if (way.GetType()!=typeConfig.typeInfoIgnore &&
+            !way.GetType()->GetIgnoreSeaLand() &&
+            !tunnelFeatureRader.IsSet(way.GetFeatureValueBuffer()) &&
+            !bridgeFeatureRader.IsSet(way.GetFeatureValueBuffer()) &&
+            way.nodes.size()>=2) {
           std::set<Pixel> coords;
 
           GetCells(level,way.nodes,coords);
 
-          for (std::set<Pixel>::const_iterator coord=coords.begin();
-              coord!=coords.end();
-              ++coord) {
-            if (level.IsInAbsolute(coord->x,coord->y)) {
-              if (level.GetState(coord->x-level.cellXStart,coord->y-level.cellYStart)==unknown) {
+          for (const auto& coord : coords) {
+            if (level.IsInAbsolute(coord.x,coord.y)) {
+              if (level.GetState(coord.x-level.cellXStart,coord.y-level.cellYStart)==unknown) {
 #if defined(DEBUG_TILING)
-          std::cout << "Assume land: " << coord->x-level.cellXStart << "," << coord->y-level.cellYStart << " Way " << way.GetId() << " " << typeConfig.GetTypeInfo(way.GetType()).GetName() << " is defining area as land" << std::endl;
+                std::cout << "Assume land: " << coord.x-level.cellXStart << "," << coord.y-level.cellYStart << " Way " << way.GetFileOffset() << " " << way.GetType()->GetName() << " is defining area as land" << std::endl;
 #endif
-                level.SetStateAbsolute(coord->x,coord->y,land);
+                level.SetStateAbsolute(coord.x,coord.y,land);
               }
             }
           }
         }
       }
+
+      scanner.Close();
+    }
+    catch (IOException& e) {
+      progress.Error(e.GetDescription());
+      return false;
     }
 
     return true;
@@ -632,7 +605,6 @@ namespace osmscout {
     progress.Info("Filling water");
 
     for (size_t i=1; i<=tileCount; i++) {
-
       Level newLevel(level);
 
       for (uint32_t y=0; y<level.cellYCount; y++) {
@@ -808,14 +780,14 @@ namespace osmscout {
     writer.WriteNumber((uint32_t)(parameter.GetWaterIndexMinMag()));
     writer.WriteNumber((uint32_t)(parameter.GetWaterIndexMaxMag()));
 
-    for (size_t level=0; level<levels.size(); level++) {
+    for (auto& level : levels) {
       FileOffset offset=0;
-      writer.GetPos(levels[level].indexEntryOffset);
+      level.indexEntryOffset=writer.GetPos();
       writer.WriteFileOffset(offset);
-      writer.WriteNumber(levels[level].cellXStart);
-      writer.WriteNumber(levels[level].cellXEnd);
-      writer.WriteNumber(levels[level].cellYStart);
-      writer.WriteNumber(levels[level].cellYEnd);
+      writer.WriteNumber(level.cellXStart);
+      writer.WriteNumber(level.cellXEnd);
+      writer.WriteNumber(level.cellYStart);
+      writer.WriteNumber(level.cellYEnd);
     }
   }
 
@@ -827,31 +799,29 @@ namespace osmscout {
     progress.Info("Handle area coastline completely in a cell");
 
     size_t currentCoastline=1;
-    for (std::vector<CoastlineData>::iterator coastline=data.coastlines.begin();
-         coastline!=data.coastlines.end();
-         ++coastline) {
+    for (const auto& coastline : data.coastlines) {
       progress.SetProgress(currentCoastline,data.coastlines.size());
 
       currentCoastline++;
 
-      if (coastline->isArea &&
-          coastline->isCompletelyInCell &&
-          coastline->pixelWidth>=1.0 &&
-          coastline->pixelHeight>=1.0) {
-        if (!level.IsInAbsolute(coastline->cell.x,coastline->cell.y)) {
+      if (coastline.isArea &&
+          coastline.isCompletelyInCell &&
+          coastline.pixelWidth>=1.0 &&
+          coastline.pixelHeight>=1.0) {
+        if (!level.IsInAbsolute(coastline.cell.x,coastline.cell.y)) {
           continue;
         }
 
-        Pixel      coord(coastline->cell.x-level.cellXStart,coastline->cell.y-level.cellYStart);
+        Pixel      coord(coastline.cell.x-level.cellXStart,coastline.cell.y-level.cellYStart);
         GroundTile groundTile(GroundTile::land);
 
-        double cellMinLat=level.cellHeight*coastline->cell.y-90.0;
-        double cellMinLon=level.cellWidth*coastline->cell.x-180.0;
+        double cellMinLat=level.cellHeight*coastline.cell.y-90.0;
+        double cellMinLon=level.cellWidth*coastline.cell.x-180.0;
 
-        groundTile.coords.reserve(coastline->points.size());
+        groundTile.coords.reserve(coastline.points.size());
 
-        for (size_t p=0; p<coastline->points.size(); p++) {
-          groundTile.coords.push_back(Transform(coastline->points[p],level,cellMinLat,cellMinLon,true));
+        for (size_t p=0; p<coastline.points.size(); p++) {
+          groundTile.coords.push_back(Transform(coastline.points[p],level,cellMinLat,cellMinLon,true));
         }
 
         if (!groundTile.coords.empty()) {
@@ -933,11 +903,11 @@ namespace osmscout {
   }
 
   void WaterIndexGenerator::GetCells(const Level& level,
-                                     const std::vector<GeoCoord>& points,
+                                     const std::vector<Point>& points,
                                      std::set<Pixel>& cellIntersections)
   {
     for (size_t p=0; p<points.size()-1; p++) {
-      GetCells(level,points[p],points[p+1],cellIntersections);
+      GetCells(level,points[p].GetCoord(),points[p+1].GetCoord(),cellIntersections);
     }
   }
 
@@ -1145,10 +1115,7 @@ namespace osmscout {
     data.coastlines.resize(coastlines.size());
 
     size_t curCoast=0;
-    for (std::list<CoastRef>::const_iterator c=coastlines.begin();
-        c!=coastlines.end();
-        ++c) {
-      const  CoastRef& coast=*c;
+    for (const auto& coast : coastlines) {
       GeoBoundingBox   boundingBox;
 
       progress.SetProgress(curCoast,coastlines.size());
@@ -1405,12 +1372,10 @@ namespace osmscout {
 
       intersectionsPathOrder.resize(coastlines.size());
 
-      for (std::list<size_t>::const_iterator currentCoastline=cell->second.begin();
-          currentCoastline!=cell->second.end();
-          ++currentCoastline) {
-        std::map<Pixel,std::list<Intersection> >::iterator cellData=data.coastlines[*currentCoastline].cellIntersections.find(cell->first);
+      for (const auto& currentCoastline : cell->second) {
+        std::map<Pixel,std::list<Intersection> >::iterator cellData=data.coastlines[currentCoastline].cellIntersections.find(cell->first);
 
-        if (cellData==data.coastlines[*currentCoastline].cellIntersections.end()) {
+        if (cellData==data.coastlines[currentCoastline].cellIntersections.end()) {
           continue;
         }
 
@@ -1420,21 +1385,21 @@ namespace osmscout {
             ++inter) {
           const IntersectionPtr intersection=&(*inter);
 
-          intersectionsPathOrder[*currentCoastline].push_back(intersection);
+          intersectionsPathOrder[currentCoastline].push_back(intersection);
           intersectionsCW.push_back(intersection);
         }
 
-        intersectionsPathOrder[*currentCoastline].sort(IntersectionByPathComparator());
+        intersectionsPathOrder[currentCoastline].sort(IntersectionByPathComparator());
 
         // Fix intersection order for areas
-        if (data.coastlines[*currentCoastline].isArea &&
-            intersectionsPathOrder[*currentCoastline].front()->direction==-1) {
-          intersectionsPathOrder[*currentCoastline].push_back(intersectionsPathOrder[*currentCoastline].front());
-          intersectionsPathOrder[*currentCoastline].pop_front();
+        if (data.coastlines[currentCoastline].isArea &&
+            intersectionsPathOrder[currentCoastline].front()->direction==-1) {
+          intersectionsPathOrder[currentCoastline].push_back(intersectionsPathOrder[currentCoastline].front());
+          intersectionsPathOrder[currentCoastline].pop_front();
         }
 
-        for (std::list<IntersectionPtr>::reverse_iterator inter=intersectionsPathOrder[*currentCoastline].rbegin();
-            inter!=intersectionsPathOrder[*currentCoastline].rend();
+        for (std::list<IntersectionPtr>::reverse_iterator inter=intersectionsPathOrder[currentCoastline].rbegin();
+            inter!=intersectionsPathOrder[currentCoastline].rend();
             inter++) {
           if ((*inter)->direction==-1) {
             intersectionsOuter.push_back(*inter);
@@ -1446,7 +1411,7 @@ namespace osmscout {
       intersectionsCW.sort(IntersectionCWComparator());
 
       double    lonMin,lonMax,latMin,latMax;
-      Point     borderPoints[4];
+      Coord     borderPoints[4];
       GroundTile::Coord borderCoords[4];
 
       lonMin=(level.cellXStart+cell->first.x)*level.cellWidth-180.0;
@@ -1454,10 +1419,10 @@ namespace osmscout {
       latMin=(level.cellYStart+cell->first.y)*level.cellHeight-90.0;
       latMax=(level.cellYStart+cell->first.y+1)*level.cellHeight-90.0;
 
-      borderPoints[0]=Point(1,latMax,lonMin); // top left
-      borderPoints[1]=Point(2,latMax,lonMax); // top right
-      borderPoints[2]=Point(3,latMin,lonMax); // bottom right
-      borderPoints[3]=Point(4,latMin,lonMin); // bottom left
+      borderPoints[0]=Coord(0,GeoCoord(latMax,lonMin)); // top left
+      borderPoints[1]=Coord(0,GeoCoord(latMax,lonMax)); // top right
+      borderPoints[2]=Coord(0,GeoCoord(latMin,lonMax)); // bottom right
+      borderPoints[3]=Coord(0,GeoCoord(latMin,lonMin)); // bottom left
 
       borderCoords[0].Set(0,GroundTile::Coord::CELL_MAX,false);                           // top left
       borderCoords[1].Set(GroundTile::Coord::CELL_MAX,GroundTile::Coord::CELL_MAX,false); // top right
@@ -1635,23 +1600,33 @@ namespace osmscout {
     }
   }
 
-  std::string WaterIndexGenerator::GetDescription() const
+  void WaterIndexGenerator::GetDescription(const ImportParameter& /*parameter*/,
+                                              ImportModuleDescription& description) const
   {
-    return "Generate 'water.idx'";
+    description.SetName("WaterIndexGenerator");
+    description.SetDescription("Create index for lookup of ground/See tiles");
+
+    description.AddRequiredFile(Preprocess::BOUNDING_DAT);
+
+    description.AddRequiredFile(Preprocess::RAWCOASTLINE_DAT);
+
+    description.AddRequiredFile(CoordDataFile::COORD_DAT);
+
+    description.AddRequiredFile(WayDataFile::WAYS_DAT);
+
+    description.AddProvidedFile(WaterIndex::WATER_IDX);
   }
 
-  bool WaterIndexGenerator::Import(const ImportParameter& parameter,
-                                   Progress& progress,
-                                   const TypeConfig& typeConfig)
+  bool WaterIndexGenerator::Import(const TypeConfigRef& typeConfig,
+                                   const ImportParameter& parameter,
+                                   Progress& progress)
   {
     std::list<CoastRef> coastlines;
 
     FileScanner         scanner;
 
-    uint32_t            minLonDat;
-    uint32_t            minLatDat;
-    uint32_t            maxLonDat;
-    uint32_t            maxLatDat;
+    GeoCoord            minCoord;
+    GeoCoord            maxCoord;
 
     std::vector<Level>  levels;
 
@@ -1663,21 +1638,20 @@ namespace osmscout {
     // Read bounding box
     //
 
-    if (!scanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
-                                      "bounding.dat"),
-                      FileScanner::Sequential,
-                      true)) {
-      progress.Error("Cannot open 'bounding.dat'");
-      return false;
+    try {
+      scanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
+                                   Preprocess::BOUNDING_DAT),
+                   FileScanner::Sequential,
+                   true);
+
+      scanner.ReadCoord(minCoord);
+      scanner.ReadCoord(maxCoord);
+
+      scanner.Close();
     }
-
-    scanner.ReadNumber(minLatDat);
-    scanner.ReadNumber(minLonDat);
-    scanner.ReadNumber(maxLatDat);
-    scanner.ReadNumber(maxLonDat);
-
-    if (scanner.HasError() || !scanner.Close()) {
-      progress.Error("Error while reading/closing 'bounding.dat'");
+    catch (IOException& e) {
+      progress.Error(e.GetDescription());
+      scanner.CloseFailsafe();
       return false;
     }
 
@@ -1693,8 +1667,8 @@ namespace osmscout {
     for (size_t level=0; level<=parameter.GetWaterIndexMaxMag(); level++) {
       if (level>=parameter.GetWaterIndexMinMag() &&
           level<=parameter.GetWaterIndexMaxMag()) {
-        levels[level-parameter.GetWaterIndexMinMag()].SetBox(minLatDat,maxLatDat,
-                                                             minLonDat,maxLonDat,
+        levels[level-parameter.GetWaterIndexMinMag()].SetBox(minCoord,
+                                                             maxCoord,
                                                              cellWidth,cellHeight);
       }
 
@@ -1706,9 +1680,11 @@ namespace osmscout {
     // Load and merge coastlines
     //
 
-    LoadCoastlines(parameter,
-                   progress,
-                   coastlines);
+    if (!LoadCoastlines(parameter,
+                        progress,
+                        coastlines)) {
+      return false;
+    }
 
     MergeCoastlines(progress,
                     coastlines);
@@ -1718,131 +1694,130 @@ namespace osmscout {
 
     FileWriter writer;
 
-    if (!writer.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
-                                     "water.idx"))) {
-      progress.Error("Error while opening 'water.idx' for writing");
-      return false;
-    }
+    try {
+      writer.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
+                                  WaterIndex::WATER_IDX));
 
-    DumpIndexHeader(parameter,
-                    writer,
-                    levels);
+      DumpIndexHeader(parameter,
+                      writer,
+                      levels);
 
-    for (size_t level=0; level<levels.size(); level++) {
-      FileOffset                             indexOffset;
-      Magnification                          magnification;
-      MercatorProjection                     projection;
-      Data                                   data;
-      std::map<Pixel,std::list<GroundTile> > cellGroundTileMap;
+      for (size_t level=0; level<levels.size(); level++) {
+        FileOffset                             indexOffset;
+        Magnification                          magnification;
+        MercatorProjection                     projection;
+        Data                                   data;
+        std::map<Pixel,std::list<GroundTile> > cellGroundTileMap;
 
-      magnification.SetLevel((uint32_t)(level+parameter.GetWaterIndexMinMag()));
+        magnification.SetLevel((uint32_t)(level+parameter.GetWaterIndexMinMag()));
 
-      projection.Set(0,0,magnification,640,480);
+        projection.Set(0,0,magnification,72,640,480);
 
-      progress.SetAction("Building tiles for level "+NumberToString(level+parameter.GetWaterIndexMinMag()));
+        progress.SetAction("Building tiles for level "+NumberToString(level+parameter.GetWaterIndexMinMag()));
 
-      writer.GetPos(indexOffset);
-      writer.SetPos(levels[level].indexEntryOffset);
-      writer.WriteFileOffset(indexOffset);
-      writer.SetPos(indexOffset);
+        indexOffset=writer.GetPos();
+        writer.SetPos(levels[level].indexEntryOffset);
+        writer.WriteFileOffset(indexOffset);
+        writer.SetPos(indexOffset);
 
-      if (!coastlines.empty()) {
-        MarkCoastlineCells(progress,
+        if (!coastlines.empty()) {
+          MarkCoastlineCells(progress,
+                             coastlines,
+                             levels[level]);
+
+          GetCoastlineData(parameter,
+                           progress,
+                           projection,
+                           levels[level],
                            coastlines,
-                           levels[level]);
+                           data);
 
-        GetCoastlineData(parameter,
-                         progress,
-                         projection,
-                         levels[level],
-                         coastlines,
-                         data);
+          HandleAreaCoastlinesCompletelyInACell(progress,
+                                                levels[level],
+                                                data,
+                                                cellGroundTileMap);
 
-        HandleAreaCoastlinesCompletelyInACell(progress,
-                                              levels[level],
-                                              data,
-                                              cellGroundTileMap);
-
-        HandleCoastlinesPartiallyInACell(progress,
-                                         coastlines,
-                                         levels[level],
-                                         cellGroundTileMap,
-                                         data);
-      }
-
-      CalculateLandCells(progress,
-                         levels[level],
-                         cellGroundTileMap);
-
-      if (parameter.GetAssumeLand()) {
-        AssumeLand(parameter,
-                   progress,
-                   typeConfig,
-                   levels[level]);
-      }
-
-      if (!coastlines.empty()) {
-        FillWater(progress,
-                  levels[level],20);
-      }
-
-      FillLand(progress,
-               levels[level]);
-
-      for (uint32_t y=0; y<levels[level].cellYCount; y++) {
-        for (uint32_t x=0; x<levels[level].cellXCount; x++) {
-          State state=levels[level].GetState(x,y);
-
-          writer.WriteFileOffset((FileOffset)state);
+          HandleCoastlinesPartiallyInACell(progress,
+                                           coastlines,
+                                           levels[level],
+                                           cellGroundTileMap,
+                                           data);
         }
-      }
 
-      for (std::map<Pixel,std::list<GroundTile> >::const_iterator coord=cellGroundTileMap.begin();
-          coord!=cellGroundTileMap.end();
-          ++coord) {
-        FileOffset startPos;
+        CalculateLandCells(progress,
+                           levels[level],
+                           cellGroundTileMap);
 
-        writer.GetPos(startPos);
+        if (parameter.GetAssumeLand()) {
+          AssumeLand(parameter,
+                     progress,
+                     *typeConfig,
+                     levels[level]);
+        }
 
-        writer.WriteNumber((uint32_t)coord->second.size());
+        if (!coastlines.empty()) {
+          FillWater(progress,
+                    levels[level],20);
+        }
 
-        for (std::list<GroundTile>::const_iterator tile=coord->second.begin();
-             tile!=coord->second.end();
-             ++tile) {
-          writer.Write((uint8_t)tile->type);
+        FillLand(progress,
+                 levels[level]);
 
-          writer.WriteNumber((uint32_t)tile->coords.size());
+        for (uint32_t y=0; y<levels[level].cellYCount; y++) {
+          for (uint32_t x=0; x<levels[level].cellXCount; x++) {
+            State state=levels[level].GetState(x,y);
 
-          for (size_t c=0; c<tile->coords.size(); c++) {
-            if (tile->coords[c].coast) {
-              uint16_t x=tile->coords[c].x | uint16_t(1 << 15);
-
-              writer.Write(x);
-            }
-            else {
-              writer.Write(tile->coords[c].x);
-            }
-            writer.Write(tile->coords[c].y);
+            writer.WriteFileOffset((FileOffset)state);
           }
         }
 
-        FileOffset endPos;
-        uint32_t cellId=coord->first.y*levels[level].cellXCount+coord->first.x;
-        size_t index=cellId*sizeof(FileOffset);
+        for (const auto& coord : cellGroundTileMap) {
+          FileOffset startPos;
 
-        writer.GetPos(endPos);
+          startPos=writer.GetPos();
 
-        writer.SetPos(indexOffset+index);
-        writer.WriteFileOffset(startPos);
+          writer.WriteNumber((uint32_t)coord.second.size());
 
-        writer.SetPos(endPos);
+          for (const auto& tile : coord.second) {
+            writer.Write((uint8_t)tile.type);
+
+            writer.WriteNumber((uint32_t)tile.coords.size());
+
+            for (size_t c=0; c<tile.coords.size(); c++) {
+              if (tile.coords[c].coast) {
+                uint16_t x=tile.coords[c].x | uint16_t(1 << 15);
+
+                writer.Write(x);
+              }
+              else {
+                writer.Write(tile.coords[c].x);
+              }
+              writer.Write(tile.coords[c].y);
+            }
+          }
+
+          FileOffset endPos;
+          uint32_t cellId=coord.first.y*levels[level].cellXCount+coord.first.x;
+          size_t index=cellId*sizeof(FileOffset);
+
+          endPos=writer.GetPos();
+
+          writer.SetPos(indexOffset+index);
+          writer.WriteFileOffset(startPos);
+
+          writer.SetPos(endPos);
+        }
       }
+
+      coastlines.clear();
+
+      writer.Close();
     }
+    catch (IOException& e) {
+      progress.Error(e.GetDescription());
 
-    coastlines.clear();
+      writer.CloseFailsafe();
 
-    if (writer.HasError() || !writer.Close()) {
-      progress.Error("Error while closing 'water.idx'");
       return false;
     }
 

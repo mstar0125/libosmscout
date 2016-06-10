@@ -23,10 +23,9 @@
 #include <osmscout/private/CoreImportExport.h>
 
 #include <string>
+#include <unordered_map>
 
 #include <osmscout/system/Types.h>
-
-#include <osmscout/util/HashMap.h>
 
 namespace osmscout {
 
@@ -43,17 +42,18 @@ namespace osmscout {
       magProximity =                      512, //  9
       magCityOver  =                     1024, // 10
       magCity      =                   2*1024, // 11
-      magSuburb    =                 2*2*1014, // 12
+      magSuburb    =                 2*2*1024, // 12
       magDetail    =               2*2*2*1024, // 13
       magClose     =             2*2*2*2*1024, // 14
-      magVeryClose =           2*2*2*2*2*1024, // 16
-      magBlock     =         2*2*2*2*2*2*1024, // 18
+      magCloser    =           2*2*2*2*2*1024, // 15
+      magVeryClose =         2*2*2*2*2*2*1024, // 16
+      magBlock     =     2*2*2*2*2*2*2*2*1024, // 18
       magStreet    =   2*2*2*2*2*2*2*2*2*1024, // 19
       magHouse     = 2*2*2*2*2*2*2*2*2*2*1024  // 20
     };
 
   private:
-    double magnification;
+    double   magnification;
     uint32_t level;
 
   public:
@@ -134,13 +134,17 @@ namespace osmscout {
   class OSMSCOUT_API MagnificationConverter
   {
   private:
-    OSMSCOUT_HASHMAP<std::string,Magnification::Mag> stringToMagMap;
+    std::unordered_map<std::string,Magnification::Mag> stringToMagMap;
+    std::unordered_map<size_t,std::string>             levelToStringMap;
 
   public:
     MagnificationConverter();
 
     bool Convert(const std::string& name,
                  Magnification& magnification);
+
+    bool Convert(const size_t level,
+                 std::string& name);
   };
 
 }

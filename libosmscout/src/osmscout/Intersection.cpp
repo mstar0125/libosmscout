@@ -19,6 +19,8 @@
 
 #include <osmscout/Intersection.h>
 
+#include <osmscout/util/Logger.h>
+
 namespace osmscout {
 
   Intersection::Intersection()
@@ -34,39 +36,33 @@ namespace osmscout {
 
   bool Intersection::Read(FileScanner& scanner)
   {
-    if (!scanner.ReadNumber(nodeId)) {
+    try {
+      scanner.ReadNumber(nodeId);
+
+      uint32_t objectCount;
+
+      scanner.ReadNumber(objectCount);
+
+      objects.resize(objectCount);
+
+      ObjectFileRefStreamReader objectFileRefReader(scanner);
+
+      for (size_t i=0; i<objectCount; i++) {
+        objectFileRefReader.Read(objects[i]);
+      }
+    }
+    catch (IOException& e) {
+      log.Error() << e.GetDescription();
       return false;
     }
 
-    uint32_t objectCount;
-
-    if (!scanner.ReadNumber(objectCount)) {
-      return false;
-    }
-
-    objects.resize(objectCount);
-
-    Id previousFileOffset=0;
-
-    for (size_t i=0; i<objectCount; i++) {
-      uint8_t    type;
-      FileOffset fileOffset;
-
-      if (!scanner.Read(type)) {
-        return false;
-      }
-
-      if (!scanner.ReadNumber(fileOffset)) {
-        return false;
-      }
-
-      fileOffset+=previousFileOffset;
-
-      objects[i].Set(fileOffset,(RefType)type);
-
-      previousFileOffset=fileOffset;
-    }
-
-    return !scanner.HasError();
+    return true;
   }
+
+  bool Intersection::Read(const TypeConfig& /*typeConfig*/,
+                          FileScanner& scanner)
+  {
+    return Read(scanner);
+  }
+
 }

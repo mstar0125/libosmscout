@@ -22,7 +22,6 @@
 
 #include <limits>
 #include <list>
-#include <sstream>
 #include <string>
 
 #include <osmscout/CoreFeatures.h>
@@ -34,6 +33,13 @@
 namespace osmscout {
 
   /**
+   * \defgroup Util Utility stuff
+   *
+   * General utility stuff like enhanced string operations, special data structures...
+   */
+
+  /**
+   * \ingroup Util
    * Returns the numerical value of the given character, if the character
    * is a digit in a numerical value. The current code allows digits
    * in the range from 0-9 and a-f and A-F. And thus supports
@@ -57,7 +63,7 @@ namespace osmscout {
 
     while (value!=0) {
       res++;
-      value=value/base;
+      value=value/(N)base;
     }
 
     return res;
@@ -136,6 +142,7 @@ namespace osmscout {
   };
 
   /**
+   * \ingroup Util
    * Converts the given (possibly negative) decimal number to a std::string.
    */
   template<typename N>
@@ -145,7 +152,14 @@ namespace osmscout {
       ::f(number);
   }
 
+  /**
+   * \ingroup Util
+   */
   extern OSMSCOUT_API bool StringToNumber(const char* string, double& value);
+
+  /**
+   * \ingroup Util
+   */
   extern OSMSCOUT_API bool StringToNumber(const std::string& string, double& value);
 
   template<typename N>
@@ -174,7 +188,8 @@ namespace osmscout {
     else {
       size_t digitValue;
 
-      if (!GetDigitValue(string[pos],digitValue)) {
+      if (!GetDigitValue(string[pos],
+                         digitValue)) {
         return false;
       }
 
@@ -188,10 +203,10 @@ namespace osmscout {
       if (digitValue==base-1 &&
           string.length()==NumberDigits(std::numeric_limits<N>::max())) {
         minus=true;
-        number=base/2;
+        number=(N)(base/2);
       }
       else {
-        number=digitValue;
+        number=(N)digitValue;
       }
 
       pos=1;
@@ -212,7 +227,7 @@ namespace osmscout {
         return false;
       }
 
-      number=number*base+digitValue;
+      number=(N)(number*base+digitValue);
 
       pos++;
     }
@@ -256,14 +271,15 @@ namespace osmscout {
       return false;
     }
 
-    number=digitValue;
+    number=(N)digitValue;
 
     pos=1;
 
     while (pos<string.length()) {
       size_t digitValue;
 
-      if (!GetDigitValue(string[pos],digitValue)) {
+      if (!GetDigitValue(string[pos],
+                         digitValue)) {
         return false;
       }
 
@@ -275,7 +291,7 @@ namespace osmscout {
         return false;
       }
 
-      number=number*base+digitValue;
+      number=(N)(number*base+digitValue);
 
       pos++;
     }
@@ -311,6 +327,7 @@ namespace osmscout {
   };
 
   /**
+   * \ingroup Util
    * Converts a string holding a (possibly negative) numerical
    * value of the given base to the numerical value itself.
    *
@@ -326,16 +343,29 @@ namespace osmscout {
       ::f(string,number,base);
   }
 
+  /**
+   * \ingroup Util
+   *
+   */
   extern OSMSCOUT_API std::string StringListToString(const std::list<std::string>& list,
                                                      const std::string& separator="/");
 
   /**
+   * \ingroup Util
+   * Converts the given string into a list of whitespace separated (std::isspace()) strings.
+   */
+  extern OSMSCOUT_API void SplitStringAtSpace(const std::string& input,
+                                              std::list<std::string>& tokens);
+
+  /**
+   * \ingroup Util
    * Converts the given string into a list of whitespace or colon-separated strings.
    */
   extern OSMSCOUT_API void TokenizeString(const std::string& input,
                                           std::list<std::string>& tokens);
 
   /**
+   * \ingroup Util
    * Simplifying a token list by merging tokens that start with an
    * upper case letter followed by a token starting with a lower
    * case letter.
@@ -343,6 +373,7 @@ namespace osmscout {
   extern OSMSCOUT_API void SimplifyTokenList(std::list<std::string>& tokens);
 
   /**
+   * \ingroup Util
    * Given a list of strings, individual strings will be combined into a given
    * number of sub groups (individual string concatenated and separated by a space).
    *
@@ -355,9 +386,16 @@ namespace osmscout {
                                                     std::list<std::list<std::string> >& lists);
 
 
+  /**
+   * \ingroup Util
+   *
+   */
   extern OSMSCOUT_API std::string ByteSizeToString(double size);
 
 #if defined(OSMSCOUT_HAVE_STD_WSTRING)
+  /**
+   * \ingroup Util
+   */
   extern OSMSCOUT_API std::wstring UTF8StringToWString(const std::string& text);
 #endif
 }

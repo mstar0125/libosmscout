@@ -18,30 +18,39 @@ libosmscoutimport_la_LDFLAGS  = -no-undefined \
                                 $(MARISA_LIBS)
 
 libosmscoutimport_la_SOURCES = osmscout/import/RawCoastline.cpp \
+                               osmscout/import/RawCoord.cpp \
                                osmscout/import/RawNode.cpp \
                                osmscout/import/RawRelation.cpp \
+                               osmscout/import/RawRelIndexedDataFile.cpp \
                                osmscout/import/RawWay.cpp \
+                               osmscout/import/RawWayIndexedDataFile.cpp \
                                osmscout/import/GenAreaAreaIndex.cpp \
                                osmscout/import/GenAreaNodeIndex.cpp \
                                osmscout/import/GenAreaWayIndex.cpp \
+                               osmscout/import/GenCoordDat.cpp \
+                               osmscout/import/GenIntersectionIndex.cpp \
                                osmscout/import/GenLocationIndex.cpp \
+                               osmscout/import/GenMergeAreas.cpp \
                                osmscout/import/GenNumericIndex.cpp \
+                               osmscout/import/GenRawNodeIndex.cpp \
+                               osmscout/import/GenRawWayIndex.cpp \
+                               osmscout/import/GenRawRelIndex.cpp \
                                osmscout/import/GenNodeDat.cpp \
                                osmscout/import/GenOptimizeAreaWayIds.cpp \
                                osmscout/import/GenOptimizeAreasLowZoom.cpp \
                                osmscout/import/GenOptimizeWaysLowZoom.cpp \
                                osmscout/import/GenRelAreaDat.cpp \
                                osmscout/import/GenRouteDat.cpp \
-                               osmscout/import/GenTurnRestrictionDat.cpp \
                                osmscout/import/GenTypeDat.cpp \
                                osmscout/import/GenWaterIndex.cpp \
                                osmscout/import/GenWayAreaDat.cpp \
                                osmscout/import/GenWayWayDat.cpp \
+                               osmscout/import/MergeAreaData.cpp \
                                osmscout/import/SortDat.cpp \
-                               osmscout/import/SortAreaDat.cpp \
                                osmscout/import/SortNodeDat.cpp \
                                osmscout/import/SortWayDat.cpp \
                                osmscout/import/Import.cpp \
+                               osmscout/import/Preprocessor.cpp \
                                osmscout/import/Preprocess.cpp
 
 if HAVE_LIB_XML

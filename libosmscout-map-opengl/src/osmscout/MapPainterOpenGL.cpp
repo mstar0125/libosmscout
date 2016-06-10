@@ -21,7 +21,14 @@
 
 #include <iostream>
 
+#if defined(__APPLE__) && defined(__MACH__)
+#include <OpenGL/gl.h>
+#else
 #include <GL/gl.h>
+#endif
+#ifndef CALLBACK
+#define CALLBACK
+#endif
 
 namespace osmscout {
 
@@ -43,8 +50,9 @@ namespace osmscout {
      std::cerr << "Tessellation Error: " << estring << std::endl;
   }
 
-  MapPainterOpenGL::MapPainterOpenGL()
-  : MapPainter(new CoordBufferImpl<Vertex3D>()),
+  MapPainterOpenGL::MapPainterOpenGL(const StyleConfigRef& styleConfig)
+  : MapPainter(styleConfig,
+               new CoordBufferImpl<Vertex3D>()),
     coordBuffer((CoordBufferImpl<Vertex3D>*)transBuffer.buffer),
     tesselator(gluNewTess())
   {
@@ -53,19 +61,19 @@ namespace osmscout {
 
     gluTessCallback(tesselator,
                     GLU_TESS_BEGIN,
-                    (GLvoid (*) ()) &tessalatorBeginCallback);
+                    (GLvoid(CALLBACK *)()) &tessalatorBeginCallback);
 
     gluTessCallback(tesselator,
                     GLU_TESS_VERTEX,
-                    (GLvoid (*) ()) &glVertex3dv);
+                    (GLvoid(CALLBACK *)()) &glVertex3dv);
 
     gluTessCallback(tesselator,
                     GLU_TESS_END,
-                    (GLvoid (*) ()) &tessalatorEndCallback);
+                    (GLvoid(CALLBACK *)()) &tessalatorEndCallback);
 
     gluTessCallback(tesselator,
                     GLU_TESS_ERROR,
-                    (GLvoid (*) ()) &tesselatorErrorCallback);
+                    (GLvoid(CALLBACK *)()) &tesselatorErrorCallback);
 
   }
 
@@ -76,90 +84,99 @@ namespace osmscout {
 
 
 
-  bool MapPainterOpenGL::HasIcon(const StyleConfig& styleConfig,
-                                 const MapParameter& parameter,
-                                 IconStyle& style)
+  bool MapPainterOpenGL::HasIcon(const StyleConfig& /*styleConfig*/,
+                                 const MapParameter& /*parameter*/,
+                                 IconStyle& /*style*/)
   {
     // TODO
     return false;
   }
 
-  bool MapPainterOpenGL::HasPattern(const MapParameter& parameter,
-                                    const FillStyle& style)
+  bool MapPainterOpenGL::HasPattern(const MapParameter& /*parameter*/,
+                                    const FillStyle& /*style*/)
   {
     // TODO
     return false;
   }
 
-  void MapPainterOpenGL::GetTextDimension(const MapParameter& parameter,
-                                          double fontSize,
-                                          const std::string& text,
-                                          double& xOff,
-                                          double& yOff,
-                                          double& width,
-                                          double& height)
+  void MapPainterOpenGL::GetFontHeight(const Projection& /*projection*/,
+                                       const MapParameter& /*parameter*/,
+                                       double /*fontSize*/,
+                                       double& /*height*/)
   {
     // TODO
   }
 
-  void MapPainterOpenGL::DrawContourSymbol(const Projection& projection,
-                                           const MapParameter& parameter,
-                                           const Symbol& symbol,
-                                           double space,
-                                           size_t transStart, size_t transEnd)
+  void MapPainterOpenGL::GetTextDimension(const Projection& /*projection*/,
+                                          const MapParameter& /*parameter*/,
+                                          double /*fontSize*/,
+                                          const std::string& /*text*/,
+                                          double& /*xOff*/,
+                                          double& /*yOff*/,
+                                          double& /*width*/,
+                                          double& /*height*/)
   {
     // TODO
   }
 
-  void MapPainterOpenGL::DrawLabel(const Projection& projection,
-                                   const MapParameter& parameter,
-                                   const LabelData& label)
+  void MapPainterOpenGL::DrawContourSymbol(const Projection& /*projection*/,
+                                           const MapParameter& /*parameter*/,
+                                           const Symbol& /*symbol*/,
+                                           double /*space*/,
+                                           size_t /*transStart*/, size_t /*transEnd*/)
   {
     // TODO
   }
 
-  void MapPainterOpenGL::DrawContourLabel(const Projection& projection,
-                                          const MapParameter& parameter,
-                                          const PathTextStyle& style,
-                                          const std::string& text,
-                                          size_t transStart, size_t transEnd)
+  void MapPainterOpenGL::DrawLabel(const Projection& /*projection*/,
+                                   const MapParameter& /*parameter*/,
+                                   const LabelData& /*label*/)
   {
     // TODO
   }
 
-  void MapPainterOpenGL::DrawPrimitivePath(const Projection& projection,
-                                           const MapParameter& parameter,
-                                           const DrawPrimitiveRef& p,
-                                           double x, double y,
-                                           double minX,
-                                           double minY,
-                                           double maxX,
-                                           double maxY)
+  void MapPainterOpenGL::DrawContourLabel(const Projection& /*projection*/,
+                                          const MapParameter& /*parameter*/,
+                                          const PathTextStyle& /*style*/,
+                                          const std::string& /*text*/,
+                                          size_t /*transStart*/, size_t /*transEnd*/)
   {
     // TODO
   }
 
-  void MapPainterOpenGL::DrawSymbol(const Projection& projection,
-                                    const MapParameter& parameter,
-                                    const Symbol& symbol,
-                                    double x, double y)
+  void MapPainterOpenGL::DrawPrimitivePath(const Projection& /*projection*/,
+                                           const MapParameter& /*parameter*/,
+                                           const DrawPrimitiveRef& /*p*/,
+                                           double /*x*/, double /*y*/,
+                                           double /*minX*/,
+                                           double /*minY*/,
+                                           double /*maxX*/,
+                                           double /*maxY*/)
   {
     // TODO
   }
 
-  void MapPainterOpenGL::DrawIcon(const IconStyle* style,
-                                  double x, double y)
+  void MapPainterOpenGL::DrawSymbol(const Projection& /*projection*/,
+                                    const MapParameter& /*parameter*/,
+                                    const Symbol& /*symbol*/,
+                                    double /*x*/, double /*y*/)
   {
     // TODO
   }
 
-  void MapPainterOpenGL::DrawPath(const Projection& projection,
-                                  const MapParameter& parameter,
+  void MapPainterOpenGL::DrawIcon(const IconStyle* /*style*/,
+                                  double /*x*/, double /*y*/)
+  {
+    // TODO
+  }
+
+  void MapPainterOpenGL::DrawPath(const Projection& /*projection*/,
+                                  const MapParameter& /*parameter*/,
                                   const Color& color,
                                   double width,
-                                  const std::vector<double>& dash,
-                                  LineStyle::CapStyle startCap,
-                                  LineStyle::CapStyle endCap,
+                                  const std::vector<double>& /*dash*/,
+                                  LineStyle::CapStyle /*startCap*/,
+                                  LineStyle::CapStyle /*endCap*/,
                                   size_t transStart, size_t transEnd)
   {
     // TODO:
@@ -185,7 +202,7 @@ namespace osmscout {
   }
 
   void MapPainterOpenGL::DrawArea(const Projection& projection,
-                                  const MapParameter& parameter,
+                                  const MapParameter& /*parameter*/,
                                   const MapPainter::AreaData& area)
   {
     if (area.fillStyle->GetFillColor().IsVisible()) {
@@ -236,8 +253,7 @@ namespace osmscout {
 
     if (area.fillStyle->GetBorderWidth()>0 &&
         area.fillStyle->GetBorderColor().IsVisible()) {
-      double borderWidth=ConvertWidthToPixel(parameter,
-                                             area.fillStyle->GetBorderWidth());
+      double borderWidth=projection.ConvertWidthToPixel(area.fillStyle->GetBorderWidth());
 
       glColor4d(area.fillStyle->GetBorderColor().GetR(),
                 area.fillStyle->GetBorderColor().GetG(),
@@ -259,7 +275,7 @@ namespace osmscout {
   }
 
   void MapPainterOpenGL::DrawGround(const Projection& projection,
-                                    const MapParameter& parameter,
+                                    const MapParameter& /*parameter*/,
                                     const FillStyle& style)
   {
     glColor4d(style.GetFillColor().GetR(),
@@ -275,13 +291,11 @@ namespace osmscout {
     glEnd();
   }
 
-  bool MapPainterOpenGL::DrawMap(const StyleConfig& styleConfig,
-                                const Projection& projection,
-                                const MapParameter& parameter,
-                                const MapData& data)
+  bool MapPainterOpenGL::DrawMap(const Projection& projection,
+                                 const MapParameter& parameter,
+                                 const MapData& data)
   {
-    Draw(styleConfig,
-         projection,
+    Draw(projection,
          parameter,
          data);
 

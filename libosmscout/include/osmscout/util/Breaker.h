@@ -22,18 +22,16 @@
 
 #include <osmscout/CoreFeatures.h>
 
-#if defined(OSMSCOUT_HAVE_THREAD)
+
 #include <atomic>
+#include <memory>
 #include <thread>
-#endif
 
 #include <osmscout/private/CoreImportExport.h>
 
-#include <osmscout/util/Reference.h>
-
 namespace osmscout {
 
-  class OSMSCOUT_API Breaker : public Referencable
+  class OSMSCOUT_API Breaker
   {
   public:
     Breaker();
@@ -41,9 +39,10 @@ namespace osmscout {
 
     virtual bool Break() = 0;
     virtual bool IsAborted() const = 0;
+    virtual void Reset() = 0;
   };
 
-  typedef Ref<Breaker> BreakerRef;
+  typedef std::shared_ptr<Breaker> BreakerRef;
 
   class OSMSCOUT_API DummyBreaker : public Breaker
   {
@@ -52,20 +51,20 @@ namespace osmscout {
 
     virtual bool Break();
     virtual bool IsAborted() const;
+    virtual void Reset();
   };
 
-#if defined(OSMSCOUT_HAVE_THREAD)
   class OSMSCOUT_API ThreadedBreaker : public Breaker
   {
   private:
-    std::atomic_bool aborted;
+    std::atomic<bool> aborted;
   public:
     ThreadedBreaker();
 
     virtual bool Break();
     virtual bool IsAborted() const;
+    virtual void Reset();
   };
-#endif
 }
 
 #endif

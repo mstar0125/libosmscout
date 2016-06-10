@@ -22,7 +22,10 @@
 
 #include <osmscout/ImportFeatures.h>
 
-#include <map>
+#include <list>
+#include <set>
+#include <unordered_map>
+#include <vector>
 
 #include <osmscout/import/Import.h>
 
@@ -31,37 +34,33 @@
 
 #include <osmscout/util/FileScanner.h>
 #include <osmscout/util/FileWriter.h>
-#include <osmscout/util/HashMap.h>
 
 namespace osmscout {
 
   class OptimizeWaysLowZoomGenerator : public ImportModule
   {
-  public:
-    static const char* FILE_WAYSOPT_DAT;
-
   private:
-    typedef OSMSCOUT_HASHMAP<FileOffset,FileOffset> FileOffsetFileOffsetMap;
+    typedef std::unordered_map<FileOffset,FileOffset> FileOffsetFileOffsetMap;
 
     struct TypeData
     {
-      TypeId     type;            //! The type
-      uint32_t   optLevel;        //! The display level this data was optimized for
-      uint32_t   indexLevel;      //! Magnification level of index
+      TypeInfoRef type;            //! The type
+      uint32_t    optLevel;        //! The display level this data was optimized for
+      uint32_t    indexLevel;      //! Magnification level of index
 
-      uint32_t   cellXStart;
-      uint32_t   cellXEnd;
-      uint32_t   cellYStart;
-      uint32_t   cellYEnd;
+      uint32_t    cellXStart;
+      uint32_t    cellXEnd;
+      uint32_t    cellYStart;
+      uint32_t    cellYEnd;
 
-      FileOffset bitmapOffset;    //! Position in file where the offset of the bitmap is written
-      uint8_t    dataOffsetBytes; //! Number of bytes per entry in bitmap
+      FileOffset  bitmapOffset;    //! Position in file where the offset of the bitmap is written
+      uint8_t     dataOffsetBytes; //! Number of bytes per entry in bitmap
 
-      uint32_t   cellXCount;
-      uint32_t   cellYCount;
+      uint32_t    cellXCount;
+      uint32_t    cellYCount;
 
-      size_t     indexCells;      //! Number of filled cells in index
-      size_t     indexEntries;    //! Number of entries over all cells
+      size_t      indexCells;      //! Number of filled cells in index
+      size_t      indexEntries;    //! Number of entries over all cells
 
       TypeData();
 
@@ -74,7 +73,7 @@ namespace osmscout {
 
   private:
     void GetWayTypesToOptimize(const TypeConfig& typeConfig,
-                               std::set<TypeId>& types);
+                               std::set<TypeInfoRef>& types);
 
     bool WriteTypeData(FileWriter& writer,
                        const TypeData& data);
@@ -83,11 +82,12 @@ namespace osmscout {
                      const std::list<TypeData>& wayTypesData,
                      uint32_t optimizeMaxMap);
 
-    bool GetWays(const ImportParameter& parameter,
-                           Progress& progress,
-                           FileScanner& scanner,
-                           std::set<TypeId>& types,
-                           std::vector<std::list<WayRef> >& ways);
+    bool GetWays(const TypeConfig& typeConfig,
+                 const ImportParameter& parameter,
+                 Progress& progress,
+                 FileScanner& scanner,
+                 std::set<TypeInfoRef>& types,
+                 std::vector<std::list<WayRef> >& ways);
 
     void MergeWays(Progress& progress,
                    const std::list<WayRef>& ways,
@@ -101,10 +101,13 @@ namespace osmscout {
                       std::list<WayRef>& optimizedWays,
                       size_t width,
                       size_t height,
+                      double dpi,
+                      double pixel,
                       const Magnification& magnification,
                       TransPolygon::OptimizeMethod optimizeWayMethod);
 
-    bool WriteWays(FileWriter& writer,
+    void WriteWays(const TypeConfig& typeConfig,
+                   FileWriter& writer,
                    const std::list<WayRef>& ways,
                    FileOffsetFileOffsetMap& offsets);
 
@@ -118,14 +121,16 @@ namespace osmscout {
                     Progress& progress,
                     const TypeConfig& typeConfig,
                     FileWriter& writer,
-                    const std::set<TypeId>& types,
+                    const std::set<TypeInfoRef>& types,
                     std::list<TypeData>& typesData);
 
   public:
-    std::string GetDescription() const;
-    bool Import(const ImportParameter& parameter,
-                Progress& progress,
-                const TypeConfig& typeConfig);
+    void GetDescription(const ImportParameter& parameter,
+                        ImportModuleDescription& description) const;
+
+    bool Import(const TypeConfigRef& typeConfig,
+                const ImportParameter& parameter,
+                Progress& progress);
   };
 }
 

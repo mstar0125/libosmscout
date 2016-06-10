@@ -8,7 +8,7 @@
   This library is free software; you can redistribute it and/or
   modify it under the terms of the GNU Lesser General Public
   License as published by the Free Software Foundation; either
-  version 2.1 of the License, or (at your option) any later version.
+  version 2.1 of the License, or (at youbase option) any later version.
 
   This library is distributed in the hope that it will be useful,
   but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -20,55 +20,89 @@
   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307  USA
 */
 
+#include <memory>
+#include <mutex>
 #include <set>
+#include <unordered_map>
 #include <vector>
 
 #include <osmscout/NumericIndex.h>
 
 #include <osmscout/util/Cache.h>
 #include <osmscout/util/FileScanner.h>
-#include <osmscout/util/Reference.h>
+#include <osmscout/util/Logger.h>
 
 namespace osmscout {
 
+  /**
+   * \ingroup Database
+   * Reference a range of data entries by giving the offset of the first entry in the file
+   * and the number of data elements.
+   */
+  struct DataBlockSpan
+  {
+    FileOffset startOffset; //!< Offset for the first data entry referenced in the file. Data will be read starting from this position
+    uint32_t   count;       //!< Number of entries to read.
+
+    inline bool operator<(const DataBlockSpan& other) const
+    {
+      return startOffset<other.startOffset;
+    }
+
+    inline bool operator==(const DataBlockSpan& other) const
+    {
+      return startOffset==other.startOffset && count==other.count;
+    }
+
+    inline bool operator!=(const DataBlockSpan& other) const
+    {
+      return startOffset!=other.startOffset || count!=other.count;
+    }
+  };
+
+  /**
+   * \ingroup Database
+   *
+   * Access to standard format data files.
+   *
+   * Allows to load data objects by offset using various standard library data structures.
+   */
   template <class N>
   class DataFile
   {
   public:
-    typedef Ref<N> ValueType;
+    typedef std::shared_ptr<N> ValueType;
 
   private:
-    typedef Cache<FileOffset,ValueType> DataCache;
+    std::string         datafile;        //!< Basename part of the data file name
+    std::string         datafilename;    //!< complete filename for data file
 
-    struct DataCacheValueSizer : public DataCache::ValueSizer
-    {
-      unsigned long GetSize(const ValueType& value) const
-      {
-        return sizeof(value);
-      }
-    };
+    mutable FileScanner scanner;         //!< File stream to the data file
 
-  private:
-    std::string         datafile;        //! Basename part fo the data file name
-    std::string         datafilename;    //! complete filename for data file
-    FileScanner::Mode   modeData;        //! Type of file access
-    bool                memoryMapedData; //! Use memory mapped files for data access
-    mutable DataCache   cache;           //! Entry cache
-    mutable FileScanner scanner;         //! File stream to the data file
+    mutable std::mutex  accessMutex;     //!< Mutex to secure multi-thread access
 
   protected:
-    bool                isOpen;          //! If true,the data file is opened
+    TypeConfigRef       typeConfig;
+
+  private:
+    bool ReadData(const TypeConfig& typeConfig,
+                  FileScanner& scanner,
+                  N& data) const;
+    bool ReadData(const TypeConfig& typeConfig,
+                  FileScanner& scanner,
+                  FileOffset offset,
+                  N& data) const;
 
   public:
-    DataFile(const std::string& datafile,
-             unsigned long dataCacheSize);
+    DataFile(const std::string& datafile);
 
     virtual ~DataFile();
 
-    bool Open(const std::string& path,
-              FileScanner::Mode modeData,
+    bool Open(const TypeConfigRef& typeConfig,
+              const std::string& path,
               bool memoryMapedData);
-    bool Close();
+    virtual bool IsOpen() const;
+    virtual bool Close();
 
     bool GetByOffset(const std::vector<FileOffset>& offsets,
                      std::vector<ValueType>& data) const;
@@ -78,24 +112,20 @@ namespace osmscout {
                      std::vector<ValueType>& data) const;
 
     bool GetByOffset(const std::set<FileOffset>& offsets,
-                     OSMSCOUT_HASHMAP<FileOffset,ValueType>& dataMap) const;
+                     std::unordered_map<FileOffset,ValueType>& dataMap) const;
 
     bool GetByOffset(const FileOffset& offset,
                      ValueType& entry) const;
 
-    void FlushCache();
-    void DumpStatistics() const;
+    bool GetByBlockSpan(const DataBlockSpan& span,
+                        std::vector<ValueType>& data) const;
+    bool GetByBlockSpans(const std::vector<DataBlockSpan>& spans,
+                         std::vector<ValueType>& data) const;
   };
 
   template <class N>
-  DataFile<N>::DataFile(const std::string& datafile,
-                        unsigned long dataCacheSize)
-  : datafile(datafile),
-    modeData(FileScanner::LowMemRandom),
-    memoryMapedData(false),
-    cache(dataCacheSize),
-    isOpen(false)
-
+  DataFile<N>::DataFile(const std::string& datafile)
+  : datafile(datafile)
   {
     // no code
   }
@@ -103,239 +133,217 @@ namespace osmscout {
   template <class N>
   DataFile<N>::~DataFile()
   {
-    if (isOpen) {
+    if (IsOpen()) {
       Close();
     }
   }
 
+  /**
+   * Read one data value from the given file offset.
+   *
+   * Method is thread-safe.
+   */
   template <class N>
-  bool DataFile<N>::Open(const std::string& path,
-                         FileScanner::Mode modeData,
-                         bool memoryMapedData)
+  bool DataFile<N>::ReadData(const TypeConfig& typeConfig,
+                             FileScanner& scanner,
+                             FileOffset offset,
+                             N& data) const
   {
-    datafilename=AppendFileToDir(path,datafile);
+    std::lock_guard<std::mutex> lock(accessMutex);
 
-    this->memoryMapedData=memoryMapedData;
-    this->modeData=modeData;
+    try {
+      scanner.SetPos(offset);
 
-    isOpen=scanner.Open(datafilename,modeData,memoryMapedData);
+      data.Read(typeConfig,
+                scanner);
+    }
+    catch (IOException& e) {
+      log.Error() << e.GetDescription();
+      return false;
+    }
 
-    return isOpen;
+    return true;
   }
 
+  /**
+   * Read one data value from the current position of the stream
+   *
+   * Method is not thread-safe.
+   */
+  template <class N>
+  bool DataFile<N>::ReadData(const TypeConfig& typeConfig,
+                             FileScanner& scanner,
+                             N& data) const
+  {
+    try {
+      data.Read(typeConfig,
+                scanner);
+    }
+    catch (IOException& e) {
+      log.Error() << e.GetDescription();
+      return false;
+    }
+
+    return true;
+  }
+
+  /**
+   * Open the index file.
+   *
+   * Method is not thread-safe.
+   */
+  template <class N>
+  bool DataFile<N>::Open(const TypeConfigRef& typeConfig,
+                         const std::string& path,
+                         bool memoryMapedData)
+  {
+    this->typeConfig=typeConfig;
+
+    datafilename=AppendFileToDir(path,datafile);
+
+    try {
+      scanner.Open(datafilename,
+                   FileScanner::LowMemRandom,
+                   memoryMapedData);
+    }
+    catch (IOException& e) {
+      log.Error() << e.GetDescription();
+      scanner.CloseFailsafe();
+      return false;
+    }
+
+    return true;
+  }
+
+  /**
+   * Return true, if index is currently opened.
+   *
+   * Method is not thread-safe.
+   */
+  template <class N>
+  bool DataFile<N>::IsOpen() const
+  {
+    return scanner.IsOpen();
+  }
+
+  /**
+   * Close the index.
+   *
+   * Method is not thread-safe.
+   */
   template <class N>
   bool DataFile<N>::Close()
   {
-    bool success=true;
+    typeConfig=NULL;
 
-    if (scanner.IsOpen()) {
-      if (!scanner.Close()) {
-        success=false;
+    try  {
+      if (scanner.IsOpen()) {
+        scanner.Close();
       }
     }
+    catch (IOException& e) {
+      log.Error() << e.GetDescription();
+      scanner.CloseFailsafe();
+      return false;
+    }
 
-    isOpen=false;
-    cache.Flush();
-
-    return success;
+    return true;
   }
 
+  /**
+   * Read data values from the given file offsets.
+   *
+   * Method is thread-safe.
+   */
   template <class N>
   bool DataFile<N>::GetByOffset(const std::vector<FileOffset>& offsets,
                                 std::vector<ValueType>& data) const
   {
-    assert(isOpen);
-
-    if (!scanner.IsOpen()) {
-      if (!scanner.Open(datafilename,modeData,memoryMapedData)) {
-        std::cerr << "Error while opening " << datafilename << " for reading!" << std::endl;
-        return false;
-      }
-    }
-
     data.reserve(data.size()+offsets.size());
 
-    if (!cache.IsActive()) {
-      for (std::vector<FileOffset>::const_iterator offset=offsets.begin();
-           offset!=offsets.end();
-           ++offset) {
-        N *value=new N();
+    for (const auto& offset : offsets) {
+      ValueType value=std::make_shared<N>();
 
-        scanner.SetPos(*offset);
-
-        value->Read(scanner);
-
-        if (scanner.HasError()) {
-          std::cerr << "Error while reading data from offset " << *offset << " of file " << datafilename << "!" << std::endl;
-          // TODO: Remove broken entry from cache
-          scanner.Close();
-          return false;
-        }
-
-        data.push_back(value);
+      if (!ReadData(*typeConfig,
+                    scanner,
+                    offset,
+                    *value)) {
+        log.Error() << "Error while reading data from offset " << offset << " of file " << datafilename << "!";
+        return false;
       }
-    }
-    else {
-      typename DataCache::CacheRef cacheRef;
 
-      for (std::vector<FileOffset>::const_iterator offset=offsets.begin();
-           offset!=offsets.end();
-           ++offset) {
-        if (!cache.GetEntry(*offset,cacheRef)) {
-          typename DataCache::CacheEntry cacheEntry(*offset);
-
-          cacheRef=cache.SetEntry(cacheEntry);
-
-          scanner.SetPos(*offset);
-          cacheRef->value=new N();
-          cacheRef->value->Read(scanner);
-
-          if (scanner.HasError()) {
-            std::cerr << "Error while reading data from offset " << *offset << " of file " << datafilename << "!" << std::endl;
-            // TODO: Remove broken entry from cache
-            scanner.Close();
-            return false;
-          }
-        }
-
-        data.push_back(cacheRef->value);
-      }
+      data.push_back(value);
     }
 
     return true;
   }
 
+  /**
+   * Read data values from the given file offsets.
+   *
+   * Method is thread-safe.
+   */
   template <class N>
   bool DataFile<N>::GetByOffset(const std::list<FileOffset>& offsets,
                                 std::vector<ValueType>& data) const
   {
-    assert(isOpen);
-
-    if (!scanner.IsOpen()) {
-      if (!scanner.Open(datafilename,modeData,memoryMapedData)) {
-        std::cerr << "Error while opening " << datafilename << " for reading!" << std::endl;
-        return false;
-      }
-    }
-
     data.reserve(data.size()+offsets.size());
 
-    if (!cache.IsActive()) {
-      for (std::list<FileOffset>::const_iterator offset=offsets.begin();
-           offset!=offsets.end();
-           ++offset) {
-        N *value=new N();
+    for (const auto& offset : offsets) {
+      ValueType value=std::make_shared<N>();
 
-        scanner.SetPos(*offset);
-        value->Read(scanner);
-
-        if (scanner.HasError()) {
-          std::cerr << "Error while reading data from offset " << *offset << " of file " << datafilename << "!" << std::endl;
-          // TODO: Remove broken entry from cache
-          scanner.Close();
-          return false;
-        }
-
-        data.push_back(value);
+      if (!ReadData(*typeConfig,
+                    scanner,
+                    offset,
+                    *value)) {
+        log.Error() << "Error while reading data from offset " << offset << " of file " << datafilename << "!";
+        // TODO: Remove broken entry from cache
+        return false;
       }
-    }
-    else {
-      typename DataCache::CacheRef cacheRef;
 
-      for (std::list<FileOffset>::const_iterator offset=offsets.begin();
-           offset!=offsets.end();
-           ++offset) {
-        if (!cache.GetEntry(*offset,cacheRef)) {
-          typename DataCache::CacheEntry cacheEntry(*offset);
-
-          cacheRef=cache.SetEntry(cacheEntry);
-
-          scanner.SetPos(*offset);
-          cacheRef->value=new N();
-          cacheRef->value->Read(scanner);
-
-          if (scanner.HasError()) {
-            std::cerr << "Error while reading data from offset " << *offset << " of file " << datafilename << "!" << std::endl;
-            // TODO: Remove broken entry from cache
-            scanner.Close();
-            return false;
-          }
-        }
-
-        data.push_back(cacheRef->value);
-      }
+      data.push_back(value);
     }
 
     return true;
   }
 
+  /**
+   * Read data values from the given file offsets.
+   *
+   * Method is thread-safe.
+   */
   template <class N>
   bool DataFile<N>::GetByOffset(const std::set<FileOffset>& offsets,
                                 std::vector<ValueType>& data) const
   {
-    assert(isOpen);
-
-    if (!scanner.IsOpen()) {
-      if (!scanner.Open(datafilename,modeData,memoryMapedData)) {
-        std::cerr << "Error while opening " << datafilename << " for reading!" << std::endl;
-        return false;
-      }
-    }
-
     data.reserve(data.size()+offsets.size());
 
-    if (!cache.IsActive()) {
-      for (std::set<FileOffset>::const_iterator offset=offsets.begin();
-           offset!=offsets.end();
-           ++offset) {
-        N *value=new N();
+    for (const auto& offset : offsets) {
+      ValueType value=std::make_shared<N>();
 
-        scanner.SetPos(*offset);
-        value->Read(scanner);
-
-        if (scanner.HasError()) {
-          std::cerr << "Error while reading data from offset " << *offset << " of file " << datafilename << "!" << std::endl;
-          // TODO: Remove broken entry from cache
-          scanner.Close();
-          return false;
-        }
-
-        data.push_back(value);
+      if (!ReadData(*typeConfig,
+                    scanner,
+                    offset,
+                    *value)) {
+        log.Error() << "Error while reading data from offset " << offset << " of file " << datafilename << "!";
+        // TODO: Remove broken entry from cache
+        return false;
       }
-    }
-    else {
-      typename DataCache::CacheRef cacheRef;
 
-      for (std::set<FileOffset>::const_iterator offset=offsets.begin();
-           offset!=offsets.end();
-           ++offset) {
-        if (!cache.GetEntry(*offset,cacheRef)) {
-          typename DataCache::CacheEntry cacheEntry(*offset);
-
-          cacheRef=cache.SetEntry(cacheEntry);
-
-          scanner.SetPos(*offset);
-          cacheRef->value=new N();
-          cacheRef->value->Read(scanner);
-
-          if (scanner.HasError()) {
-            std::cerr << "Error while reading data from offset " << *offset << " of file " << datafilename << "!" << std::endl;
-            // TODO: Remove broken entry from cache
-            scanner.Close();
-            return false;
-          }
-        }
-
-        data.push_back(cacheRef->value);
-      }
+      data.push_back(value);
     }
 
     return true;
   }
 
+  /**
+   * Read data values from the given file offsets.
+   *
+   * Method is thread-safe.
+   */
   template <class N>
   bool DataFile<N>::GetByOffset(const std::set<FileOffset>& offsets,
-                                OSMSCOUT_HASHMAP<FileOffset,ValueType>& dataMap) const
+                                std::unordered_map<FileOffset,ValueType>& dataMap) const
   {
     std::vector<ValueType> data;
 
@@ -343,105 +351,161 @@ namespace osmscout {
       return false;
     }
 
-    for (typename std::vector<ValueType>::const_iterator v=data.begin();
-            v!=data.end();
-            ++v) {
-      dataMap.insert(std::make_pair((*v)->GetFileOffset(),*v));
+    for (const auto entry : data) {
+      dataMap.insert(std::make_pair(entry->GetFileOffset(),entry));
     }
 
     return true;
   }
 
+  /**
+   * Read one data value from the given file offset.
+   *
+   * Method is thread-safe.
+   */
   template <class N>
   bool DataFile<N>::GetByOffset(const FileOffset& offset,
                                 ValueType& entry) const
   {
-    assert(isOpen);
+    ValueType value=std::make_shared<N>();
 
-    if (!scanner.IsOpen()) {
-      if (!scanner.Open(datafilename,modeData,memoryMapedData)) {
-        std::cerr << "Error while opening " << datafilename << " for reading!" << std::endl;
-        return false;
-      }
+    if (!ReadData(*typeConfig,
+                  scanner,
+                  offset,
+                  *value)) {
+      log.Error() << "Error while reading data from offset " << offset << " of file " << datafilename << "!";
+      // TODO: Remove broken entry from cache
+      return false;
     }
 
-    if (!cache.IsActive()) {
-      N *value=new N();
+    entry=value;
 
-      scanner.SetPos(offset);
-      value->Read(scanner);
+    return true;
+  }
 
-      if (scanner.HasError()) {
-        std::cerr << "Error while reading data from offset " << offset << " of file " << datafilename << "!" << std::endl;
-        // TODO: Remove broken entry from cache
-        scanner.Close();
-        return false;
-      }
-
-      entry=value;
+  /**
+   * Read data values from the given DataBlockSpan.
+   *
+   * Method is thread-safe.
+   */
+  template <class N>
+  bool DataFile<N>::GetByBlockSpan(const DataBlockSpan& span,
+                                   std::vector<ValueType>& area) const
+  {
+    if (span.count==0) {
+      return true;
     }
-    else {
-      typename DataCache::CacheRef cacheRef;
 
-      if (!cache.GetEntry(offset,cacheRef)) {
-        typename DataCache::CacheEntry cacheEntry(offset);
+    std::lock_guard<std::mutex> lock(accessMutex);
 
-        cacheRef=cache.SetEntry(cacheEntry);
+    try {
+      scanner.SetPos(span.startOffset);
 
-        scanner.SetPos(offset);
-        cacheRef->value=new N();
-        cacheRef->value->Read(scanner);
+      area.reserve(area.size()+span.count);
 
-        if (scanner.HasError()) {
-          std::cerr << "Error while reading data from offset " << offset << " of file " << datafilename << "!" << std::endl;
-          // TODO: Remove broken entry from cache
-          scanner.Close();
+      for (uint32_t i=1; i<=span.count; i++) {
+        ValueType value=std::make_shared<N>();
+
+        if (!ReadData(*typeConfig,
+                      scanner,
+                      *value)) {
+          log.Error() << "Error while reading data #" << i << " starting from offset " << span.startOffset << " of file " << datafilename << "!";
           return false;
         }
+
+        area.push_back(value);
       }
 
-      entry=cacheRef->value;
+      return true;
+    }
+    catch (IOException& e) {
+      log.Error() << e.GetDescription();
+      return false;
+    }
+  }
+
+  /**
+   * Read data values from the given DataBlockSpans.
+   *
+   * Method is thread-safe.
+   */
+  template <class N>
+  bool DataFile<N>::GetByBlockSpans(const std::vector<DataBlockSpan>& spans,
+                                    std::vector<ValueType>& data) const
+  {
+    uint32_t overallCount=0;
+
+    for (const auto& span : spans) {
+      overallCount+=span.count;
+    }
+
+    data.reserve(data.size()+overallCount);
+
+    try {
+      for (const auto& span : spans) {
+        if (span.count==0) {
+          continue;
+        }
+
+        std::lock_guard<std::mutex> lock(accessMutex);
+
+        scanner.SetPos(span.startOffset);
+
+        for (uint32_t i=1; i<=span.count; i++) {
+          ValueType value=std::make_shared<N>();
+
+          if (!ReadData(*typeConfig,
+                        scanner,
+                        *value)) {
+            log.Error() << "Error while reading data #" << i << " starting from offset " << span.startOffset <<
+            " of file " << datafilename << "!";
+            return false;
+          }
+
+          data.push_back(value);
+        }
+      }
+    }
+    catch (IOException& e) {
+      log.Error() << e.GetDescription();
+      return false;
     }
 
     return true;
   }
 
-  template <class N>
-  void DataFile<N>::FlushCache()
-  {
-    cache.Flush();
-  }
-
-  template <class N>
-  void DataFile<N>::DumpStatistics() const
-  {
-    cache.DumpStatistics(datafile.c_str(),DataCacheValueSizer());
-  }
-
+  /**
+   * \ingroup Database
+   *
+   * Extension of DataFile to allow loading data not only by offset but
+   * by id using an additional index file, mapping objects id to object
+   * file offset.
+   */
   template <class I, class N>
   class IndexedDataFile : public DataFile<N>
   {
   public:
-    typedef Ref<N> ValueType;
+    typedef std::shared_ptr<N> ValueType;
 
   private:
     typedef NumericIndex<I> DataIndex;
 
   private:
-    DataIndex index;
+    DataIndex     index;
+    TypeConfigRef typeConfig;
 
   public:
     IndexedDataFile(const std::string& datafile,
                     const std::string& indexfile,
-                    unsigned long dataCacheSize,
                     unsigned long indexCacheSize);
 
-    bool Open(const std::string& path,
-              FileScanner::Mode modeIndex,
+    bool Open(const TypeConfigRef& typeConfig,
+              const std::string& path,
               bool memoryMapedIndex,
-              FileScanner::Mode modeData,
               bool memoryMapedData);
     bool Close();
+
+    bool IsOpen() const;
 
     bool GetOffsets(const std::set<I>& ids,
                     std::vector<FileOffset>& offsets) const;
@@ -456,48 +520,60 @@ namespace osmscout {
              std::vector<ValueType>& data) const;
     bool Get(const std::set<I>& ids,
              std::vector<ValueType>& data) const;
+    bool Get(const std::set<I>& ids,
+             std::unordered_map<I,ValueType>& data) const;
 
     bool Get(const I& id,
              ValueType& entry) const;
-
-    void DumpStatistics() const;
   };
 
   template <class I, class N>
   IndexedDataFile<I,N>::IndexedDataFile(const std::string& datafile,
                                         const std::string& indexfile,
-                                        unsigned long dataCacheSize,
                                         unsigned long indexCacheSize)
-  : DataFile<N>(datafile,dataCacheSize),
+  : DataFile<N>(datafile),
     index(indexfile,indexCacheSize)
   {
     // no code
   }
 
   template <class I, class N>
-  bool IndexedDataFile<I,N>::Open(const std::string& path,
-                                  FileScanner::Mode modeIndex,
+  bool IndexedDataFile<I,N>::Open(const TypeConfigRef& typeConfig,
+                                  const std::string& path,
                                   bool memoryMapedIndex,
-                                  FileScanner::Mode modeData,
                                   bool memoryMapedData)
   {
-    if (!DataFile<N>::Open(path,modeData,memoryMapedData)) {
+    if (!DataFile<N>::Open(typeConfig,
+                           path,
+                           memoryMapedData)) {
       return false;
     }
 
-    return index.Open(path,modeIndex,memoryMapedIndex);
+    return index.Open(path,
+                      memoryMapedIndex);
   }
 
   template <class I, class N>
   bool IndexedDataFile<I,N>::Close()
   {
-    bool success=DataFile<N>::Close();
+    bool result=true;
 
-    if (!index.Close()) {
-      success=false;
+    if (!DataFile<N>::Close()) {
+      result=false;
     }
 
-    return success;
+    if (!index.Close()) {
+      result=false;
+    }
+
+    return result;
+  }
+
+  template <class I, class N>
+  bool IndexedDataFile<I,N>::IsOpen() const
+  {
+    return DataFile<N>::IsOpen() &&
+           index.IsOpen();
   }
 
   template <class I, class N>
@@ -525,8 +601,6 @@ namespace osmscout {
   bool IndexedDataFile<I,N>::Get(const std::vector<I>& ids,
                                  std::vector<ValueType>& data) const
   {
-    assert(DataFile<N>::isOpen);
-
     std::vector<FileOffset> offsets;
 
     if (!index.GetOffsets(ids,offsets)) {
@@ -540,8 +614,6 @@ namespace osmscout {
   bool IndexedDataFile<I,N>::Get(const std::list<I>& ids,
                                  std::vector<ValueType>& data) const
   {
-    assert(DataFile<N>::isOpen);
-
     std::vector<FileOffset> offsets;
 
     if (!index.GetOffsets(ids,offsets)) {
@@ -555,8 +627,6 @@ namespace osmscout {
   bool IndexedDataFile<I,N>::Get(const std::set<I>& ids,
                                  std::vector<ValueType>& data) const
   {
-    assert(DataFile<N>::isOpen);
-
     std::vector<FileOffset> offsets;
 
     if (!index.GetOffsets(ids,offsets)) {
@@ -567,11 +637,31 @@ namespace osmscout {
   }
 
   template <class I, class N>
+  bool IndexedDataFile<I,N>::Get(const std::set<I>& ids,
+                                 std::unordered_map<I,ValueType>& data) const
+  {
+    std::vector<FileOffset> offsets;
+    std::vector<ValueType>  d;
+
+    if (!index.GetOffsets(ids,offsets)) {
+      return false;
+    }
+
+    if (!DataFile<N>::GetByOffset(offsets,d)) {
+      return false;
+    }
+
+    for (const auto& value : d) {
+      data[value->GetId()]=value;
+    }
+
+    return true;
+  }
+
+  template <class I, class N>
   bool IndexedDataFile<I,N>::Get(const I& id,
                                  ValueType& entry) const
   {
-    assert(DataFile<N>::isOpen);
-
     FileOffset offset;
 
     if (!index.GetOffset(id,offset)) {
@@ -580,16 +670,6 @@ namespace osmscout {
 
     return DataFile<N>::GetByOffset(offset,entry);
   }
-
-  template <class I, class N>
-  void IndexedDataFile<I,N>::DumpStatistics() const
-  {
-    DataFile<N>::DumpStatistics();
-
-    index.DumpStatistics();
-  }
-
-
 }
 
 #endif

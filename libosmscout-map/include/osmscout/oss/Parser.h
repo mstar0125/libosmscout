@@ -26,7 +26,7 @@
 #include <list>
 #include <sstream>
 
-#include <osmscout/Coord.h>
+#include <osmscout/Pixel.h>
 
 #include <osmscout/TypeConfig.h>
 
@@ -37,6 +37,10 @@
 #include <osmscout/oss/Scanner.h>
 
 #include <osmscout/StyleConfig.h>
+
+#ifdef CONST
+  #undef CONST
+#endif
 
 namespace osmscout {
 namespace oss {
@@ -117,6 +121,7 @@ typedef std::list<PathShieldStyleRef> PathShieldStyleList;
 
 StyleConfig&                          config;
 MagnificationConverter                magnificationConverter;
+bool                                  state;
 
 inline std::string Destring(const char* str)
 {
@@ -152,6 +157,7 @@ inline size_t GetHexDigitValue(char c)
   }
 
   assert(false);
+  return 0;
 }
 
 inline void ToRGBA(const std::string& str, Color& color)
@@ -181,44 +187,67 @@ inline void ToRGBA(const std::string& str, Color& color)
   void SemWarning(const char* msg);
 
 	void OSS();
+	void FLAGSECTION();
 	void WAYORDER();
-	void CONST();
-	void SYMBOL();
-	void STYLE(StyleFilter filter);
-	void WAYGROUP(size_t priority);
+	void CONSTSECTION();
+	void SYMBOLSECTION();
+	void STYLESECTION();
+	void FLAGBLOCK(bool state);
+	void FLAGDEF();
+	void FLAGCONDBLOCK(bool state);
+	void IFCOND(bool& state);
 	void IDENT(std::string& value);
+	void BOOL(bool& value);
+	void WAYGROUP(size_t priority);
 	void POLYGON(Symbol& symbol);
 	void RECTANGLE(Symbol& symbol);
 	void CIRCLE(Symbol& symbol);
-	void COORD(Coord& coord);
+	void COORD(Vertex2D& coord);
 	void FILLSTYLEATTR(FillPartialStyle& style);
 	void UDOUBLE(double& value);
 	void DOUBLE(double& value);
+	void CONSTBLOCK(bool state);
+	void CONSTCONDBLOCK(bool state);
 	void CONSTDEF();
 	void COLORCONSTDEF();
+	void MAGCONSTDEF();
+	void UINTCONSTDEF();
 	void COLOR(Color& color);
-	void STYLEFILTER(StyleFilter& filter);
-	void STYLEDEF(StyleFilter filter);
 	void MAG(Magnification& magnification);
-	void SIZECONDITION(SizeCondition*& condition);
-	void NODESTYLEDEF(StyleFilter filter);
-	void WAYSTYLEDEF(StyleFilter filter);
-	void AREASTYLEDEF(StyleFilter filter);
-	void NODETEXTSTYLE(StyleFilter filter);
-	void NODEICONSTYLE(StyleFilter filter);
+	void UINT(size_t& value);
+	void STYLEBLOCK(StyleFilter filter, bool state);
+	void STYLE(StyleFilter filter, bool state);
+	void STYLECONDBLOCK(StyleFilter filter, bool state);
+	void STYLEFILTER(StyleFilter& filter);
+	void STYLEDEF(StyleFilter filter, bool state);
+	void STYLEFILTER_GROUP(StyleFilter& filter);
+	void STYLEFILTER_FEATURE(StyleFilter& filter);
+	void STYLEFILTER_PATH(StyleFilter& filter);
+	void STYLEFILTER_TYPE(StyleFilter& filter);
+	void STYLEFILTER_MAG(StyleFilter& filter);
+	void STYLEFILTER_ONEWAY(StyleFilter& filter);
+	void STYLEFILTER_BRIDGE(StyleFilter& filter);
+	void STYLEFILTER_TUNNEL(StyleFilter& filter);
+	void STYLEFILTER_SIZE(StyleFilter& filter);
+	void SIZECONDITION(SizeConditionRef& condition);
+	void NODESTYLEDEF(StyleFilter filter, bool state);
+	void WAYSTYLEDEF(StyleFilter filter, bool state);
+	void AREASTYLEDEF(StyleFilter filter, bool state);
+	void NODETEXTSTYLE(StyleFilter filter, bool state);
+	void NODEICONSTYLE(StyleFilter filter, bool state);
 	void TEXTSTYLEATTR(TextPartialStyle& style);
 	void ICONSTYLEATTR(IconPartialStyle& style);
-	void WAYSTYLE(StyleFilter filter);
-	void WAYPATHTEXTSTYLE(StyleFilter filter);
-	void WAYPATHSYMBOLSTYLE(StyleFilter filter);
-	void WAYSHIELDSTYLE(StyleFilter filter);
+	void WAYSTYLE(StyleFilter filter, bool state);
+	void WAYPATHTEXTSTYLE(StyleFilter filter, bool state);
+	void WAYPATHSYMBOLSTYLE(StyleFilter filter, bool state);
+	void WAYSHIELDSTYLE(StyleFilter filter, bool state);
 	void LINESTYLEATTR(LinePartialStyle& style);
 	void PATHTEXTSTYLEATTR(PathTextPartialStyle& style);
 	void PATHSYMBOLSTYLEATTR(PathSymbolPartialStyle& style);
 	void PATHSHIELDSTYLEATTR(PathShieldPartialStyle& style);
-	void AREASTYLE(StyleFilter filter);
-	void AREATEXTSTYLE(StyleFilter filter);
-	void AREAICONSTYLE(StyleFilter filter);
+	void AREASTYLE(StyleFilter filter, bool state);
+	void AREATEXTSTYLE(StyleFilter filter, bool state);
+	void AREAICONSTYLE(StyleFilter filter, bool state);
 	void UDISPLAYSIZE(double& value);
 	void UMAPSIZE(double& value);
 	void DISPLAYSIZE(double& value);
@@ -226,11 +255,8 @@ inline void ToRGBA(const std::string& str, Color& color)
 	void CAPSTYLE(LineStyle::CapStyle& style);
 	void INT(int& value);
 	void STRING(std::string& value);
-	void TEXTLABEL(TextStyle::Label& label);
+	void TEXTLABEL(LabelProviderRef& label);
 	void LABELSTYLE(TextStyle::Style& style);
-	void UINT(size_t& value);
-	void SHIELDLABEL(ShieldStyle::Label& label);
-	void PATHTEXTLABEL(PathTextStyle::Label& label);
 
   void Parse();
 

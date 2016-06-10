@@ -20,6 +20,8 @@
   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307  USA
 */
 
+#include <memory>
+#include <unordered_map>
 #include <vector>
 
 #include <osmscout/GeoCoord.h>
@@ -28,54 +30,68 @@
 
 #include <osmscout/util/FileScanner.h>
 #include <osmscout/util/FileWriter.h>
-#include <osmscout/util/Reference.h>
 
 namespace osmscout {
 
-  class RawNode : public Referencable
+  class RawNode
   {
   private:
-    OSMId             id;
-    TypeId            type;
-    GeoCoord          coords;
-    std::vector<Tag>  tags;
+    OSMId              id;
+    GeoCoord           coord;
+    FeatureValueBuffer featureValueBuffer;
 
+  private:
   public:
-    inline RawNode()
-    : id(0),
-      type(typeIgnore)
-    {
-      // no code
-    }
+    RawNode();
 
     inline OSMId GetId() const
     {
       return id;
     }
 
-    inline TypeId GetType() const
+    inline TypeInfoRef GetType() const
     {
-      return type;
+      return featureValueBuffer.GetType();
     }
 
     inline const GeoCoord& GetCoords() const
     {
-      return coords;
+      return coord;
     }
 
     inline double GetLat() const
     {
-      return coords.GetLat();
+      return coord.GetLat();
     }
 
     inline double GetLon() const
     {
-      return coords.GetLon();
+      return coord.GetLon();
     }
 
-    inline const std::vector<Tag>& GetTags() const
+    inline size_t GetFeatureCount() const
     {
-      return tags;
+      return featureValueBuffer.GetType()->GetFeatureCount();
+    }
+
+    inline bool HasFeature(size_t idx) const
+    {
+      return featureValueBuffer.HasFeature(idx);
+    }
+
+    inline const FeatureInstance& GetFeature(size_t idx) const
+    {
+      return featureValueBuffer.GetType()->GetFeature(idx);
+    }
+
+    inline FeatureValue* GetFeatureValue(size_t idx) const
+    {
+      return featureValueBuffer.GetValue(idx);
+    }
+
+    inline const FeatureValueBuffer& GetFeatureValueBuffer() const
+    {
+      return featureValueBuffer;
     }
 
     inline bool IsIdentical(const RawNode& other) const
@@ -85,24 +101,31 @@ namespace osmscout {
 
     inline bool IsSame(const RawNode& other) const
     {
-      return coords==other.coords;
+      return coord==other.coord;
     }
 
     inline bool IsEqual(const RawNode& other) const
     {
-      return id==other.id || coords==other.coords;
+      return id==other.id || coord==other.coord;
     }
 
     void SetId(OSMId id);
-    void SetType(TypeId type);
-    void SetCoords(double lon, double lat);
-    void SetTags(const std::vector<Tag>& tags);
+    void SetType(const TypeInfoRef& type);
 
-    bool Read(FileScanner& scanner);
-    bool Write(FileWriter& writer) const;
+    void SetCoord(const GeoCoord& coord);
+
+    void UnsetFeature(size_t idx);
+
+    void Parse(Progress& progress,
+               const TypeConfig& typeConfig,
+               const TagMap& tags);
+    void Read(const TypeConfig& typeConfig,
+              FileScanner& scanner);
+    void Write(const TypeConfig& typeConfig,
+               FileWriter& writer) const;
   };
 
-  typedef Ref<RawNode> RawNodeRef;
+  typedef std::shared_ptr<RawNode> RawNodeRef;
 }
 
 #endif

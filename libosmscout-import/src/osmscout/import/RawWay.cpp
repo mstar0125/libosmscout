@@ -19,32 +19,41 @@
 
 #include <osmscout/import/RawWay.h>
 
+#include <algorithm>
 #include <limits>
+
+#include <osmscout/TypeFeatures.h>
 
 #include <osmscout/system/Math.h>
 
 namespace osmscout {
+
+  bool RawWay::IsOneway() const
+  {
+    for (size_t i=0; i<featureValueBuffer.GetFeatureCount(); i++) {
+      if (featureValueBuffer.HasFeature(i) &&
+          featureValueBuffer.GetFeature(i).GetFeature()->HasValue()) {
+        AccessFeatureValue* value=dynamic_cast<AccessFeatureValue*>(featureValueBuffer.GetValue(i));
+
+        if (value!=NULL) {
+          return value->IsOneway();
+        }
+      }
+    }
+
+    return false;
+  }
 
   void RawWay::SetId(OSMId id)
   {
     this->id=id;
   }
 
-  void RawWay::SetType(TypeId type, bool area)
+  void RawWay::SetType(const TypeInfoRef& type,
+                       bool area)
   {
-    this->type=type;
-
-    if (area) {
-      this->flags|=isArea;
-    }
-    else {
-      this->flags&=~isArea;
-    }
-  }
-
-  void RawWay::SetTags(const std::vector<Tag>& tags)
-  {
-    this->tags=tags;
+    this->isArea=area;
+    featureValueBuffer.SetType(type);
   }
 
   void RawWay::SetNodes(const std::vector<OSMId>& nodes)
@@ -52,109 +61,98 @@ namespace osmscout {
     this->nodes=nodes;
   }
 
-  bool RawWay::Read(FileScanner& scanner)
+  void RawWay::Parse(Progress& progress,
+                     const TypeConfig& typeConfig,
+                     const TagMap& tags)
   {
-    if (!scanner.ReadNumber(id)) {
-      return false;
-    }
+    ObjectOSMRef object(id,
+                        osmRefWay);
 
-    if (!scanner.Read(flags)) {
-      return false;
-    }
+    featureValueBuffer.Parse(progress,
+                             typeConfig,
+                             object,
+                             tags);
+  }
 
-    if ((flags & hasType)!=0) {
-      uint32_t tmpType;
+  /**
+   * Reads data from the given FileScanner
+   *
+   * @throws IOException
+   */
+  void RawWay::Read(const TypeConfig& typeConfig,
+                    FileScanner& scanner)
+  {
+    scanner.ReadNumber(id);
 
-      if (!scanner.ReadNumber(tmpType)) {
-        return false;
-      }
+    TypeId tmpType;
 
-      type=(TypeId)tmpType;
+    scanner.ReadNumber(tmpType);
+
+    if (tmpType>typeConfig.GetMaxTypeId()) {
+      isArea=true;
+      tmpType=tmpType-typeConfig.GetMaxTypeId()-1;
     }
     else {
-      type=typeIgnore;
+      isArea=false;
+    }
+
+    TypeInfoRef type;
+
+    if (isArea) {
+      type=typeConfig.GetAreaTypeInfo((TypeId)tmpType);
+    }
+    else {
+      type=typeConfig.GetWayTypeInfo((TypeId)tmpType);
+    }
+
+    featureValueBuffer.SetType(type);
+
+    if (!type->GetIgnore()) {
+      featureValueBuffer.Read(scanner);
     }
 
     uint32_t nodeCount;
 
-    if ((flags & hasTags)!=0) {
-      uint32_t tagCount;
-
-      if (!scanner.ReadNumber(tagCount)) {
-        return false;
-      }
-
-      tags.resize(tagCount);
-      for (size_t i=0; i<tagCount; i++) {
-        if (!scanner.ReadNumber(tags[i].key)) {
-          return false;
-        }
-        if (!scanner.Read(tags[i].value)) {
-          return false;
-        }
-      }
-    }
-    else {
-      tags.clear();
-    }
-
-    if (!scanner.ReadNumber(nodeCount)) {
-      return false;
-    }
+    scanner.ReadNumber(nodeCount);
 
     nodes.resize(nodeCount);
 
     if (nodeCount>0) {
       OSMId minId;
 
-      if (!scanner.ReadNumber(minId)) {
-        return false;
-      }
+      scanner.ReadNumber(minId);
 
       for (size_t i=0; i<nodeCount; i++) {
         OSMId id;
 
-        if (!scanner.ReadNumber(id)) {
-          return false;
-        }
+        scanner.ReadNumber(id);
 
         nodes[i]=minId+id;
       }
     }
-
-    return !scanner.HasError();
   }
 
-  bool RawWay::Write(FileWriter& writer) const
+  /**
+   * Writes data to the given FileWriter
+   *
+   * @throws IOException
+   */
+  void RawWay::Write(const TypeConfig& typeConfig,
+                     FileWriter& writer) const
   {
     writer.WriteNumber(id);
 
-    if (type!=typeIgnore) {
-      flags|=hasType;
-    }
-    else {
-      flags&=~hasType;
-    }
-
-    if (!tags.empty()) {
-      flags|=hasTags;
-    }
-    else {
-      flags&=~hasTags;
-    }
-
-    writer.Write(flags);
-
-    if (type!=typeIgnore) {
+    if (isArea) {
+      TypeId type=typeConfig.GetMaxTypeId()+1+
+                  featureValueBuffer.GetType()->GetAreaId();
       writer.WriteNumber(type);
     }
+    else {
+      writer.WriteNumber(featureValueBuffer.GetType()->GetWayId());
+    }
 
-    if (!tags.empty()) {
-      writer.WriteNumber((uint32_t)tags.size());
-      for (size_t i=0; i<tags.size(); i++) {
-        writer.WriteNumber(tags[i].key);
-        writer.Write(tags[i].value);
-      }
+    if (!featureValueBuffer.GetType()->GetIgnore()) {
+      featureValueBuffer.Write(writer);
     }
 
     writer.WriteNumber((uint32_t)nodes.size());
@@ -171,8 +169,6 @@ namespace osmscout {
         writer.WriteNumber(nodes[i]-minId);
       }
     }
-
-    return !writer.HasError();
   }
 }
 

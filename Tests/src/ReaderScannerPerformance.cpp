@@ -31,36 +31,46 @@
   Call this program repeately to avoid different timing because of OS file caching.
 */
 
-int main(int argc, char* argv[])
+int main(int /*argc*/, char* /*argv*/[])
 {
-  std::string filename="ways.dat";
-  size_t      scannerWayCount;
+  std::string           wayFilename="ways.dat";
 
-  osmscout::StopClock scannerTimer;
+  osmscout::StopClock   scannerTimer;
 
+  osmscout::TypeConfig  typeConfig;
   osmscout::FileScanner scanner;
 
-  if (!scanner.Open(filename,osmscout::FileScanner::Sequential,true)) {
-    std::cerr << "Cannot open of file '" << filename << "'!" << std::endl;
+  if (!typeConfig.LoadFromDataFile(".")) {
+    std::cerr << "Cannot open type configuration!" << std::endl;
     return 1;
   }
 
-  std::cout << "Start reading files using FileScanner..." << std::endl;
+  try {
+    scanner.Open(wayFilename,osmscout::FileScanner::Sequential,true);
 
-  scannerWayCount=0;
-  while (!scanner.HasError()) {
-    osmscout::Way way;
+    std::cout << "Start reading files using FileScanner..." << std::endl;
 
-    if (way.Read(scanner)) {
-      scannerWayCount++;
+    uint32_t wayCount;
+
+    scanner.Read(wayCount);
+
+    for (size_t w=1; w<=wayCount; w++) {
+      osmscout::Way way;
+
+      way.Read(typeConfig,
+               scanner);
     }
+
+    scanner.Close();
+
+    scannerTimer.Stop();
+
+    std::cout << "Reading " << wayCount << " ways via FileScanner took " << scannerTimer << std::endl;
   }
-
-  scanner.Close();
-
-  scannerTimer.Stop();
-
-  std::cout << "Reading " << scannerWayCount << " ways via FileScanner took " << scannerTimer << std::endl;
+  catch (osmscout::IOException& e) {
+    std::cerr << e.GetDescription() << std::endl;
+    return 1;
+  }
 
   return 0;
 }

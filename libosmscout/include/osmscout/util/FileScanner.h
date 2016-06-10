@@ -22,11 +22,19 @@
 
 #include <cstdio>
 #include <string>
+#include <vector>
+
+#include <osmscout/private/CoreImportExport.h>
 
 #include <osmscout/CoreFeatures.h>
 
 #include <osmscout/GeoCoord.h>
+#include <osmscout/ObjectRef.h>
+#include <osmscout/Point.h>
 #include <osmscout/Types.h>
+
+#include <osmscout/util/Exception.h>
+#include <osmscout/util/GeoBox.h>
 
 #if defined(__WIN32__) || defined(WIN32)
   #include <windows.h>
@@ -35,8 +43,11 @@
 #endif
 
 namespace osmscout {
+
   /**
-    FileScanner implements platform independend sequential
+    \ingroup File
+
+    FileScanner implements platform independent sequential
     scanning-like access to data in files. File access is buffered.
 
     FileScanner will use mmap in read-only mode if available (and will
@@ -57,14 +68,18 @@ namespace osmscout {
     };
 
   private:
-    std::string  filename;
-    std::FILE    *file;
-    mutable bool hasError;
+    std::string          filename;       //!< Filename
+    std::FILE            *file;          //!< Internal low level file handle
+    mutable bool         hasError;       //!< Flag to signal errors in the stream
 
     // For mmap usage
-    char         *buffer;
-    FileOffset   size;
-    FileOffset   offset;
+    char                 *buffer;        //!< Pointer to the file memory
+    FileOffset           size;           //!< Size of the memory/file
+    FileOffset           offset;         //!< Current offset into the file memory
+
+    // For std::vector<GeoCoord> loading
+    uint8_t              *byteBuffer;    //!< Temporary buffer for loading of std::vector<GeoCoord>
+    size_t               byteBufferSize; //!< Size of the temporary byte buffer
 
     // For Windows mmap usage
 #if defined(__WIN32__) || defined(WIN32)
@@ -72,16 +87,18 @@ namespace osmscout {
 #endif
 
   private:
+    void AssureByteBufferSize(size_t size);
     void FreeBuffer();
 
   public:
     FileScanner();
     virtual ~FileScanner();
 
-    bool Open(const std::string& filename,
+    void Open(const std::string& filename,
               Mode mode,
               bool useMmap);
-    bool Close();
+    void Close();
+    void CloseFailsafe();
 
     inline bool IsOpen() const
     {
@@ -97,48 +114,73 @@ namespace osmscout {
 
     std::string GetFilename() const;
 
-    bool GotoBegin();
-    bool SetPos(FileOffset pos);
-    bool GetPos(FileOffset &pos) const;
+    void GotoBegin();
+    void SetPos(FileOffset pos);
+    FileOffset GetPos() const;
 
-    bool Read(char* buffer, size_t bytes);
+    void Read(char* buffer, size_t bytes);
 
-    bool Read(std::string& value);
+    void Read(std::string& value);
 
-    bool Read(bool& boolean);
+    void Read(bool& boolean);
 
-    bool Read(int8_t& number);
-    bool Read(int16_t& number);
-    bool Read(int32_t& number);
-#if defined(OSMSCOUT_HAVE_INT64_T)
-    bool Read(int64_t& number);
-#endif
+    void Read(int8_t& number);
+    void Read(int16_t& number);
+    void Read(int32_t& number);
+    void Read(int64_t& number);
 
-    bool Read(uint8_t& number);
-    bool Read(uint16_t& number);
-    bool Read(uint32_t& number);
-#if defined(OSMSCOUT_HAVE_UINT64_T)
-    bool Read(uint64_t& number);
-#endif
+    void Read(uint8_t& number);
+    void Read(uint16_t& number);
+    void Read(uint32_t& number);
+    void Read(uint64_t& number);
 
-    bool ReadFileOffset(FileOffset& offset);
-    bool ReadFileOffset(FileOffset& offset,
+    void Read(uint16_t& number, size_t bytes);
+    void Read(uint32_t& number, size_t bytes);
+    void Read(uint64_t& number, size_t bytes);
+
+    void Read(ObjectFileRef& ref);
+
+    void ReadFileOffset(FileOffset& offset);
+    void ReadFileOffset(FileOffset& offset,
                         size_t bytes);
 
-    bool ReadNumber(int16_t& number);
-    bool ReadNumber(int32_t& number);
-#if defined(OSMSCOUT_HAVE_INT64_T)
-    bool ReadNumber(int64_t& number);
-#endif
+    void ReadNumber(int16_t& number);
+    void ReadNumber(int32_t& number);
+    void ReadNumber(int64_t& number);
 
-    bool ReadNumber(uint16_t& number);
-    bool ReadNumber(uint32_t& number);
-#if defined(OSMSCOUT_HAVE_UINT64_T)
-    bool ReadNumber(uint64_t& number);
-#endif
+    void ReadNumber(uint16_t& number);
+    void ReadNumber(uint32_t& number);
+    void ReadNumber(uint64_t& number);
 
-    bool ReadCoord(GeoCoord& coord);
+    void ReadCoord(GeoCoord& coord);
+    void ReadConditionalCoord(GeoCoord& coord,
+                              bool& isSet);
+
+    void Read(std::vector<Point>& nodes, bool readIds);
+
+    void ReadBox(GeoBox& box);
+
+    void ReadTypeId(TypeId& id,
+                    uint8_t maxBytes);
   };
+
+  /**
+   * Read back a stream of sorted ObjectFileRefs as written by the ObjectFileRefStreamWriter.
+   */
+  class OSMSCOUT_API ObjectFileRefStreamReader
+  {
+  private:
+    FileScanner& reader;
+    FileOffset   lastFileOffset;
+
+  public:
+    ObjectFileRefStreamReader(FileScanner& reader);
+
+    void Reset();
+
+    void Read(ObjectFileRef& ref);
+  };
+
 }
 
 #endif

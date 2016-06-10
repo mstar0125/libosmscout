@@ -21,6 +21,8 @@
 */
 
 #include <list>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -33,9 +35,13 @@
 namespace osmscout {
 
   /**
-    */
+   * \ingroup Database
+   */
   class OSMSCOUT_API WaterIndex
   {
+  public:
+    static const char* WATER_IDX;
+
   private:
     struct Level
     {
@@ -53,30 +59,32 @@ namespace osmscout {
     };
 
   private:
-    std::string                filepart;       //! name of the data file
-    std::string                datafilename;   //! Fullpath and name of the data file
-    mutable FileScanner        scanner;        //! Scanner instance for reading this file
+    std::string                datafilename;   //!< Full path and name of the data file
+    mutable FileScanner        scanner;        //!< Scanner instance for reading this file
 
     uint32_t                   waterIndexMinMag;
     uint32_t                   waterIndexMaxMag;
     std::vector<Level>         levels;
 
+    mutable std::mutex         lookupMutex;
+
   private:
 
   public:
     WaterIndex();
+    virtual ~WaterIndex();
 
-    bool Load(const std::string& path);
+    bool Open(const std::string& path);
+    void Close();
 
-    bool GetRegions(double minlon,
-                    double minlat,
-                    double maxlon,
-                    double maxlat,
+    bool GetRegions(const GeoBox& boundingBox,
                     const Magnification& magnification,
                     std::list<GroundTile>& tiles) const;
 
     void DumpStatistics();
   };
+
+  typedef std::shared_ptr<WaterIndex> WaterIndexRef;
 }
 
 #endif

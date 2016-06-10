@@ -24,9 +24,13 @@
 #include <QThread>
 #include <QMetaType>
 #include <QMutex>
+#include <QTime>
+#include <QTimer>
 
 #include <osmscout/Database.h>
-#include <osmscout/Router.h>
+#include <osmscout/LocationService.h>
+#include <osmscout/MapService.h>
+#include <osmscout/RoutingService.h>
 #include <osmscout/RoutePostprocessor.h>
 
 #include <osmscout/MapPainterQt.h>
@@ -39,6 +43,7 @@ struct RenderMapRequest
 {
   double                  lon;
   double                  lat;
+  double                  angle;
   osmscout::Magnification magnification;
   size_t                  width;
   size_t                  height;
@@ -48,10 +53,7 @@ Q_DECLARE_METATYPE(RenderMapRequest)
 
 struct DatabaseLoadedResponse
 {
-  double minLat;
-  double minLon;
-  double maxLat;
-  double maxLon;
+    osmscout::GeoBox boundingBox;
 };
 
 Q_DECLARE_METATYPE(DatabaseLoadedResponse)
@@ -77,53 +79,81 @@ class DBThread : public QObject
 signals:
   void InitialisationFinished(const DatabaseLoadedResponse& response);
   void HandleMapRenderingResult();
+  void TriggerInitialRendering();
+  void TriggerDrawMap();
   void Redraw();
+  void TileStatusChanged(const osmscout::TileRef& tile);
 
 public slots:
-  void TriggerMapRendering();
+  void ToggleDaylight();
+  void ReloadStyle();
+  void HandleInitialRenderingRequest();
+  void HandleTileStatusChanged(const osmscout::TileRef& changedTile);
+  void DrawMap();
+  void TriggerMapRendering(const RenderMapRequest& request);
   void Initialize();
   void Finalize();
 
 private:
-  SettingsRef                  settings;
-  mutable QMutex               mutex;
-  osmscout::DatabaseParameter  databaseParameter;
-  osmscout::Database           database;
-  osmscout::StyleConfig        *styleConfig;
-  osmscout::MapData            data;
-  osmscout::MapPainterQt       painter;
-  osmscout::RouterParameter    routerParameter;
-  osmscout::RouterRef          router;
-  osmscout::RoutePostprocessor routePostprocessor;
-  QString                      iconDirectory;
+  double                        dpi;
 
-  QImage                       *currentImage;
-  double                       currentLat;
-  double                       currentLon;
-  osmscout::Magnification      currentMagnification;
+  mutable QMutex                mutex;
 
-  QImage                       *finishedImage;
-  double                       finishedLat;
-  double                       finishedLon;
-  osmscout::Magnification      finishedMagnification;
+  osmscout::DatabaseParameter   databaseParameter;
+  osmscout::DatabaseRef         database;
+  osmscout::LocationServiceRef  locationService;
+  osmscout::MapServiceRef       mapService;
+  osmscout::MapService::CallbackId callbackId;
+  osmscout::MercatorProjection  projection;
+  osmscout::RouterParameter     routerParameter;
+  osmscout::RoutingServiceRef   router;
+  osmscout::RoutePostprocessor  routePostprocessor;
 
-  RenderMapRequest             currentRenderRequest;
-  bool                         doRender;
-  QBreaker*                    renderBreaker;
-  osmscout::BreakerRef         renderBreakerRef;
+  QString                       stylesheetFilename;
+  bool                          daylight;
+  osmscout::StyleConfigRef      styleConfig;
+  osmscout::MapData             data;
+  osmscout::MapPainterQt        *painter;
+  QString                       iconDirectory;
+
+  QTime                         lastRendering;
+  QTimer                        pendingRenderingTimer;
+
+  QImage                        *currentImage;
+  size_t                        currentWidth;
+  size_t                        currentHeight;
+  double                        currentLat;
+  double                        currentLon;
+  double                        currentAngle;
+  osmscout::Magnification       currentMagnification;
+
+  QImage                        *finishedImage;
+  double                        finishedLat;
+  double                        finishedLon;
+  double                        finishedAngle;
+  osmscout::Magnification       finishedMagnification;
+
+  osmscout::BreakerRef          dataLoadingBreaker;
 
 private:
-  DBThread(const SettingsRef& settings);
+  DBThread();
+  virtual ~DBThread();
 
   void FreeMaps();
   bool AssureRouter(osmscout::Vehicle vehicle);
+
+  void TileStateCallback(const osmscout::TileRef& changedTile);
+
 public:
-  void UpdateRenderRequest(const RenderMapRequest& request);
+  void GetProjection(osmscout::MercatorProjection& projection);
+
+  void CancelCurrentDataLoading();
 
   bool RenderMap(QPainter& painter,
                  const RenderMapRequest& request);
+  void RenderMessage(QPainter& painter, qreal width, qreal height, const char* message);
 
-  osmscout::TypeConfig* GetTypeConfig() const;
+  osmscout::TypeConfigRef GetTypeConfig() const;
 
   bool GetNodeByOffset(osmscout::FileOffset offset,
                        osmscout::NodeRef& node) const;
@@ -135,7 +165,8 @@ public:
   bool ResolveAdminRegionHierachie(const osmscout::AdminRegionRef& adminRegion,
                                    std::map<osmscout::FileOffset,osmscout::AdminRegionRef >& refs) const;
 
-  bool SearchForLocations(const osmscout::LocationSearch& search,
+  bool SearchForLocations(const std::string& searchPattern,
+                          size_t limit,
                           osmscout::LocationSearchResult& result) const;
 
   bool CalculateRoute(osmscout::Vehicle vehicle,
@@ -165,7 +196,7 @@ public:
   void ClearRoute();
   void AddRoute(const osmscout::Way& way);
 
-  static bool InitializeInstance(const SettingsRef& settings);
+  static bool InitializeInstance();
   static DBThread* GetInstance();
   static void FreeInstance();
 };

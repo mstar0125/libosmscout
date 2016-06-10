@@ -1,17 +1,21 @@
 import QtQuick 2.2
 import QtGraphicalEffects 1.0
 
+import net.sf.libosmscout.map 1.0
+
 Rectangle {
   id: mapButton
   
   property color defaultColor: "white"
   property color hoverColor: Qt.darker(defaultColor, 1.1)
   property string label
-  
+
+  property alias font: mapButtonLabel.font
+
   signal clicked
   
-  width: 25
-  height: 25
+  width: Theme.mapButtonWidth
+  height: Theme.mapButtonHeight
   color: defaultColor
   border.color: "grey"
   border.width: 1
@@ -40,6 +44,7 @@ Rectangle {
     id: mapButtonLabel
     anchors.centerIn: parent
     color: "black"
+    font.pixelSize: Theme.mapButtonFontSize
     text: label
   }
   

@@ -2,11 +2,11 @@
 prefix="/usr/local"
 exec_prefix="${prefix}"
 bindir="${exec_prefix}/bin"
-libdir="/Users/nk/Development/scratch/libosmscout-code/libosmscout/src/.libs"
+libdir="/Users/mac/Desktop/libosmscout/libosmscout/src/.libs"
 datarootdir="${prefix}/share"
 datadir="${datarootdir}"
 sysconfdir="${prefix}/etc"
-includedir="/Users/nk/Development/scratch/libosmscout-code/libosmscout/./include"
+includedir="/Users/mac/Desktop/libosmscout/libosmscout/./include"
 package="libosmscout"
 suffix=""
 
@@ -14,9 +14,9 @@ for option; do case "$option" in --list-all|--name) echo  "libosmscout"
 ;; --help) pkg-config --help ; echo Buildscript Of "libosmscout base library"
 ;; --modversion|--version) echo "0.1"
 ;; --requires) echo : ""
-;; --libs) echo -L${libdir} "-std=c++0x -I/usr/local/Cellar/marisa/0.2.4/include" "-losmscout -L/usr/local/Cellar/marisa/0.2.4/lib -lmarisa"
+;; --libs) echo -L${libdir} "" "-losmscout -D_THREAD_SAFE -pthread -L/usr/local/Cellar/libmarisa/0.2.4_1/lib -lmarisa"
 :
-;; --cflags) echo -I${includedir} "-std=c++0x -I/usr/local/Cellar/marisa/0.2.4/include"
+;; --cflags) echo -I${includedir} "-D_THREAD_SAFE -pthread -mmmx -msse -msse2 -msse3 -mssse3 -msse4.1 -msse4.2 -mavx -I/usr/local/Cellar/libmarisa/0.2.4_1/include"
 :
 ;; --variable=*) eval echo '$'`echo $option | sed -e 's/.*=//'`
 ;; --uninstalled) exit 0 

@@ -1,13 +1,30 @@
-#include <iostream>
-#include <osmscout/util/String.h>
 #include <osmscout/TextSearchIndex.h>
+
+#include <osmscout/util/File.h>
+#include <osmscout/util/String.h>
+#include <osmscout/util/Logger.h>
 
 namespace osmscout
 {
+  const char* TextSearchIndex::TEXT_POI_DAT="textpoi.dat";
+  const char* TextSearchIndex::TEXT_LOC_DAT="textloc.dat";
+  const char* TextSearchIndex::TEXT_REGION_DAT="textregion.dat";
+  const char* TextSearchIndex::TEXT_OTHER_DAT="textother.dat";
 
   TextSearchIndex::TextSearchIndex()
   {
     // no code
+  }
+
+  TextSearchIndex::~TextSearchIndex()
+  {
+    for(size_t i=0; i < tries.size(); i++) {
+      tries[i].isAvail=false;
+      if(tries[i].trie){
+        delete tries[i].trie;
+        tries[i].trie = 0;
+      }
+    }
   }
 
   bool TextSearchIndex::Load(const std::string& path)
@@ -18,16 +35,16 @@ namespace osmscout
     }
 
     TrieInfo trie;
-    trie.file=fixedPath+"textpoi.dat";
+    trie.file=AppendFileToDir(fixedPath,TEXT_POI_DAT);
     tries.push_back(trie);
 
-    trie.file=fixedPath+"textloc.dat";
+    trie.file=AppendFileToDir(fixedPath,TEXT_LOC_DAT);
     tries.push_back(trie);
 
-    trie.file=fixedPath+"textregion.dat";
+    trie.file=AppendFileToDir(fixedPath,TEXT_REGION_DAT);
     tries.push_back(trie);
 
-    trie.file=fixedPath+"textother.dat";
+    trie.file=AppendFileToDir(fixedPath,TEXT_OTHER_DAT);
     tries.push_back(trie);
 
     uint8_t triesAvail=0;
@@ -43,8 +60,7 @@ namespace osmscout
         // We don't return false on a failed load attempt
         // since its possible that the user does not want
         // to include a specific trie (ie. textother)
-        std::cerr << "Warn, could not open " << tries[i].file << ":";
-        std::cerr << ex.what() << std::endl;
+        log.Error() << "Warn, could not open " << tries[i].file << ":"  << ex.what();
         delete tries[i].trie;
         tries[i].isAvail=false;
         triesAvail--;
@@ -52,7 +68,7 @@ namespace osmscout
     }
 
     if(triesAvail==0) {
-      std::cerr << "TextSearchIndex: No valid text data files is available" << std::endl;
+      log.Error() << "TextSearchIndex: No valid text data files is available";
       return false;
     }
 
@@ -74,13 +90,13 @@ namespace osmscout
           std::string result(agent.key().ptr(),agent.key().length());
           result.erase(0,1);  // get rid of the ASCII control char
           if(!StringToNumberUnsigned(result,offsetSizeBytes)) {
-            std::cerr << "Could not parse file offset size in text data" << std::endl;
+            log.Error() << "Could not parse file offset size in text data";
             return false;
           }
           break;
         }
         else {
-          std::cerr << "Could not find file offset size in text data" << std::endl;
+          log.Error() << "Could not find file offset size in text data";
           return false;
         }
       }
@@ -141,8 +157,7 @@ namespace osmscout
           }
         }
         catch(const marisa::Exception &ex) {
-          std::cerr << "Error searching for text: ";
-          std::cerr << ex.what() << std::endl;
+          log.Error() << "Error searching for text: " << ex.what();
           return false;
         }
       }

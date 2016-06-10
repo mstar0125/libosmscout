@@ -3,7 +3,7 @@
 #include <list>
 #include <sstream>
 
-#include <osmscout/Coord.h>
+#include <osmscout/Pixel.h>
 
 #include <osmscout/TypeConfig.h>
 
@@ -21,6 +21,7 @@ typedef std::list<PathShieldStyleRef> PathShieldStyleList;
 
 StyleConfig&                          config;
 MagnificationConverter                magnificationConverter;
+bool                                  state;
 
 inline std::string Destring(const char* str)
 {
@@ -56,6 +57,7 @@ inline size_t GetHexDigitValue(char c)
   }
 
   assert(false);
+  return 0;
 }
 
 inline void ToRGBA(const std::string& str, Color& color)
@@ -98,40 +100,99 @@ IGNORE ' ' + '\t' + '\r' + '\n'
 
 PRODUCTIONS
   OSS         = SYNC "OSS"
+                (. state=true; .)
+                {
+                  FLAGSECTION
+                }
                 [
                   WAYORDER
                 ]
                 {
-                  CONST
+                  CONSTSECTION
                 }
                 {
-                  SYMBOL
+                  SYMBOLSECTION
                 }
                 {
-                  (. StyleFilter filter; .)
-                  STYLE<filter>
+                  STYLESECTION
                 }
                 "END"
-                (.
-                /*
-              	  for (TypeId type=0; type<=config.GetTypeConfig()->GetMaxTypeId(); type++) {
-              	    if (config.GetTypeConfig()->GetTypeInfo(type).CanBeWay()) {
-	              	  if (config.GetWayPrio(type)==std::numeric_limits<size_t>::max() &&
-	              	      config.GetWayLineStyle(type)!=NULL) {
-	                    std::string e="Way type '"+config.GetTypeConfig()->GetTypeInfo(type).GetName()+"' has style but is not in a group";
-	                    SemWarning(e.c_str());
-	              	  }
-		              else if (config.GetWayPrio(type)!=std::numeric_limits<size_t>::max() &&
-		                       config.GetWayLineStyle(type)==NULL) {
-	                    std::string e="Way type '"+config.GetTypeConfig()->GetTypeInfo(type).GetName()+"' is in group but has no style";
-	                    SemWarning(e.c_str());
-	              	  }
-              	    }
-              	  }*/
-                .)
                 .
 
-  WAYORDER    = "ORDER" "WAYS"
+  FLAGSECTION = SYNC "FLAG"
+                FLAGBLOCK<true>
+                .
+
+  FLAGBLOCK<bool state>
+              = {
+                    FLAGDEF
+                  | FLAGCONDBLOCK<state>
+                }
+                .
+
+  FLAGCONDBLOCK<bool state>
+              =  (.
+                   bool newState=state;
+                   bool executed=false;
+                 .)
+                 "IF"
+                 IFCOND<newState>
+                 "{"
+                 (.
+                   this->state=state && newState;
+                 .)
+                 FLAGBLOCK<state && newState>
+                 (.
+                   this->state=state; 
+                   executed=newState;
+                 .)
+                 "}"
+                 {
+                   "ELIF"
+                   IFCOND<newState>
+                   "{"
+                   (.
+                     this->state=!executed && state && newState;
+                   .)
+                   FLAGBLOCK<!executed && state && newState>
+                   (.
+                     this->state=state; 
+                     executed=newState;
+                   .)
+                   "}"
+                 }
+                 [
+                   "ELSE"
+                   "{"
+                   (.
+                     this->state=!executed && state;
+                   .)
+                   FLAGBLOCK<!executed && state>
+                   (.
+                     this->state=state; 
+                   .)
+                   "}"
+                 ]
+                 .
+
+  FLAGDEF     = (.
+                  std::string name;
+                  bool        value;
+                .)
+                IDENT<name>
+                "="
+                BOOL<value>
+                (.
+                  if (state) {
+                    if (!config.HasFlag(name)) {
+                      config.AddFlag(name,value);
+                    }
+                  }
+                .)
+                ";"
+                .
+
+  WAYORDER    = SYNC "ORDER" "WAYS"
                 (. size_t priority=1;.)
                 {
                   WAYGROUP<priority>
@@ -140,53 +201,64 @@ PRODUCTIONS
                 .
 
   WAYGROUP<size_t priority>
-              = "GROUP"
+              = SYNC "GROUP"
                 [
                   (.
                      std::string wayTypeName;
-                     TypeId      wayType;
+                     TypeInfoRef wayType;
                   .)
                   IDENT<wayTypeName>
                   (.
-      	              wayType=config.GetTypeConfig()->GetWayTypeId(wayTypeName);
+                      wayType=config.GetTypeConfig()->GetTypeInfo(wayTypeName);
 
-                      if (wayType==typeIgnore) {
+                      if (!wayType) {
                         std::string e="Unknown way type '"+wayTypeName+"'";
                         SemErr(e.c_str());
                       }
+                      else if (!wayType->CanBeWay()) {
+                        std::string e="Tyype '"+wayTypeName+"' is not a way type";
+                        SemErr(e.c_str());
+                      }
                       else {
-                        config.SetWayPrio(wayType,priority);
+                        config.SetWayPrio(wayType,
+                                          priority);
                       }
                   .)
                 ]
                 {
                   (.
                      std::string wayTypeName;
-                     TypeId      wayType;
+                     TypeInfoRef wayType;
                   .)
                   ","
                   IDENT<wayTypeName>
                   (.
-      	              wayType=config.GetTypeConfig()->GetWayTypeId(wayTypeName);
+                      wayType=config.GetTypeConfig()->GetTypeInfo(wayTypeName);
 
-                      if (wayType==typeIgnore) {
+                      if (!wayType) {
                         std::string e="Unknown way type '"+wayTypeName+"'";
-  	                    SemErr(e.c_str());
+                        SemErr(e.c_str());
+                      }
+                      else if (!wayType->CanBeWay()) {
+                        std::string e="Tyype '"+wayTypeName+"' is not a way type";
+                        SemErr(e.c_str());
                       }
                       else {
-                        config.SetWayPrio(wayType,priority);
+                        config.SetWayPrio(wayType,
+                                          priority);
                       }
                   .)
                 }
                 .
 
-  SYMBOL      = "SYMBOL"
+  SYMBOLSECTION
+              = SYNC "SYMBOL"
                 (.
                   std::string name;
                 .)
                 IDENT<name>
                 (.
-                  SymbolRef symbol=new Symbol(name);
+                  SymbolRef symbol=std::make_shared<Symbol>(name);
                 .)
                 {
                   POLYGON<*symbol>
@@ -202,12 +274,12 @@ PRODUCTIONS
                 .
 
   POLYGON<Symbol& symbol>
-              = "POLYGON"
+              = SYNC "POLYGON"
                 (.
                   StyleFilter         filter;
                   FillPartialStyle    style;
-                  PolygonPrimitiveRef polygon(new PolygonPrimitive(style.style));
-                  Coord               coord;
+                  PolygonPrimitiveRef polygon=std::make_shared<PolygonPrimitive>(style.style);
+                  Vertex2D            coord;
                 .)
                 COORD<coord>   (. polygon->AddCoord(coord); .)
                 COORD<coord>   (. polygon->AddCoord(coord); .)
@@ -223,11 +295,11 @@ PRODUCTIONS
                 .
 
   RECTANGLE<Symbol& symbol>
-              = "RECTANGLE"
+              = SYNC "RECTANGLE"
                 (.
                   StyleFilter       filter;
                   FillPartialStyle  style;
-                  Coord             topLeft;
+                  Vertex2D          topLeft;
                   double            width;
                   double            height;
                 .)
@@ -242,16 +314,16 @@ PRODUCTIONS
                 }
                 SYNC "}"
                 (.
-                  symbol.AddPrimitive(new RectanglePrimitive(topLeft,
-                                                             width,height,
-                                                             style.style));
+                  symbol.AddPrimitive(std::make_shared<RectanglePrimitive>(topLeft,
+                                                                           width,height,
+                                                                           style.style));
                 .)
                 .
 
   CIRCLE<Symbol& symbol>
-              = "CIRCLE"
+              = SYNC "CIRCLE"
                 (.
-                  Coord             center;
+                  Vertex2D          center;
                   double            radius;
                   StyleFilter       filter;
                   FillPartialStyle  style;
@@ -264,13 +336,13 @@ PRODUCTIONS
                 }
                 SYNC "}"
                 (.
-                  symbol.AddPrimitive(new CirclePrimitive(center,
-                                                          radius,
-                                                          style.style));
+                  symbol.AddPrimitive(std::make_shared<CirclePrimitive>(center,
+                                                                        radius,
+                                                                        style.style));
                 .)
                 .
 
-  COORD<Coord& coord>
+  COORD<Vertex2D& coord>
               = (.
                   double x;
                   double y;
@@ -278,180 +350,492 @@ PRODUCTIONS
                 DOUBLE<x>
                  ","
                 DOUBLE<y>
-                (. coord=Coord(x,y); .)
+                (. coord=Vertex2D(x,y); .)
                 .
 
-  CONST       = "CONST"
-                {
-                  CONSTDEF ";"
+  CONSTSECTION
+              = SYNC "CONST"
+                CONSTBLOCK<true>
+                .
+
+  CONSTBLOCK<bool state>
+              = {
+                    CONSTCONDBLOCK<state>
+                  | CONSTDEF ";"
                 }
                 .
 
-  CONSTDEF    = COLORCONSTDEF
+  CONSTCONDBLOCK<bool state>
+              =  (.
+                   bool newState=state;
+                   bool executed=false;
+                 .)
+                 "IF"
+                 IFCOND<newState>
+                 "{"
+                 (.
+                   this->state=state && newState;
+                 .)
+                 CONSTBLOCK<state && newState>
+                 (.
+                   this->state=state; 
+                   executed=newState;
+                 .)
+                 "}"
+                 {
+                   "ELIF"
+                   IFCOND<newState>
+                   "{"
+                   (.
+                     this->state=!executed && state && newState;
+                   .)
+                   CONSTBLOCK<!executed && state && newState>
+                   (.
+                     this->state=state; 
+                     executed=newState;
+                   .)
+                   "}"
+                 }
+                 [
+                   "ELSE"
+                   "{"
+                   (.
+                     this->state=!executed && state;
+                   .)
+                   CONSTBLOCK<!executed && state>
+                   (.
+                     this->state=state; 
+                   .)
+                   "}"
+                 ]
+                 .
+
+  CONSTDEF
+              =   COLORCONSTDEF
+                | MAGCONSTDEF
+                | UINTCONSTDEF
                 .
 
   COLORCONSTDEF
               = (.
                   std::string      name;
-                  StyleVariableRef variable;
+                  StyleConstantRef constant;
                   Color            color;
                 .)
                 "COLOR"
                 IDENT<name>
-                (.
-                  variable=config.GetVariableByName(name);
-
-                  if (variable.Valid()) {
-                    std::string e="Constant already defined";
-
-                    SemErr(e.c_str());
-                  }
-                .)
                 "="
                 COLOR<color>
                 (.
-                  if (!errors->hasErrors) {
-                    config.AddVariable(name,new StyleVariableColor(color));
+                  if (state) {
+                    constant=config.GetConstantByName(name);
+
+                    if (constant) {
+                      std::string e="Constant already defined";
+
+                      SemErr(e.c_str());
+                    }
+
+                    if (!errors->hasErrors) {
+                      config.AddConstant(name,std::make_shared<StyleConstantColor>(color));
+                    }
                   }
                 .)
                 .
 
-  STYLE<StyleFilter filter>
+  MAGCONSTDEF
+              = (.
+                  std::string      name;
+                  StyleConstantRef constant;
+                  Magnification    magnification;
+                .)
+                "MAG"
+                IDENT<name>
+                "="
+                MAG<magnification>
+                (.
+                  if (state) {
+                    constant=config.GetConstantByName(name);
+
+                    if (constant) {
+                      std::string e="Constant already defined";
+
+                      SemErr(e.c_str());
+                    }
+
+                    if (!errors->hasErrors) {
+                      config.AddConstant(name,std::make_shared<StyleConstantMag>(magnification));
+                    }
+                  }
+                .)
+                .
+
+  UINTCONSTDEF
+              = (.
+                  std::string      name;
+                  StyleConstantRef constant;
+                  size_t           value;
+                .)
+                "UINT"
+                IDENT<name>
+                "="
+                UINT<value>
+                (.
+                  if (state) {
+                    constant=config.GetConstantByName(name);
+
+                    if (constant) {
+                      std::string e="Constant already defined";
+
+                      SemErr(e.c_str());
+                    }
+
+                    if (!errors->hasErrors) {
+                      config.AddConstant(name,std::make_shared<StyleConstantUInt>(value));
+                    }
+                  }
+                .)
+                .
+
+  STYLESECTION
+              = "STYLE"
+                (. StyleFilter filter; .)
+                STYLEBLOCK<filter,true>
+                .
+
+  STYLEBLOCK<StyleFilter filter, bool state>
+              =
+                {
+                  (
+                      STYLE<filter,state>
+                    | STYLECONDBLOCK<filter,state>
+                  )
+                }
+                .
+
+  STYLE<StyleFilter filter, bool state>
               = [
                   STYLEFILTER<filter>
                 ]
                 (
                   (
                     "{"
-                    {
-                      STYLE<filter>
-                    }
+                    STYLEBLOCK<filter,state>
                     "}"
                   )
-                  | STYLEDEF<filter>
+                  | STYLEDEF<filter,state>
                 )
                 .
+
+  STYLECONDBLOCK<StyleFilter filter, bool state>
+              =  (.
+                    bool newState=state;
+                    bool executed=false;
+                 .)
+                 "IF"
+                 IFCOND<newState>
+                 "{"
+                 (.
+                   this->state=state && newState;
+                 .)
+                 STYLEBLOCK<filter,state && newState>
+                 (.
+                   this->state=state;
+                   executed=newState;
+                 .)
+                 "}"
+                 {
+                   "ELIF"
+                   IFCOND<newState>
+                   "{"
+                   (.
+                     this->state=!executed && state && newState;
+                   .)
+                   STYLEBLOCK<filter,!executed && state && newState>
+                   (.
+                     this->state=state;
+                     executed=newState;
+                   .)
+                   "}"
+                 }
+                 [
+                   "ELSE"
+                   "{"
+                   (.
+                     this->state=!executed && state;
+                   .)
+                   STYLEBLOCK<filter,!executed && state>
+                   (.
+                     this->state=state;
+                   .)
+                   "}"
+                 ]
+                 .
 
   STYLEFILTER<StyleFilter& filter>
               = "["
                    [
-                     (.
-                       TypeSet     types;
-                       std::string name;
-                     .)
-
-                     "TYPE"
-                     IDENT<name>
-                     (.
-                       TypeId type=config.GetTypeConfig()->GetTypeId(name);
-
-                       if (type==typeIgnore) {
-                         std::string e="Unknown type '"+name+"'";
-
-                         SemErr(e.c_str());
-                       }
-                       else if (filter.HasTypes() &&
-                                !filter.HasType(type)) {
-                         std::string e="Type '"+name+"' is not included by parent filter";
-
-                         SemErr(e.c_str());
-                       }
-                       else {
-                         types.SetType(type);
-                       }
-                     .)
-                     {
-                       (. std::string name; .)
-                       ","
-                       IDENT<name>
-                       (.
-                         TypeId      type=config.GetTypeConfig()->GetTypeId(name);
-
-                         if (type==typeIgnore) {
-                           std::string e="Unknown type '"+name+"'";
-
-                           SemErr(e.c_str());
-                         }
-                         else if (filter.HasTypes() &&
-                                  !filter.HasType(type)) {
-                           std::string e="Type '"+name+"' is not included by parent filter";
-
-                           SemErr(e.c_str());
-                         }
-                         else {
-                           types.SetType(type);
-                         }
-                       .)
-                     }
-
-                     (. filter.SetTypes(types); .)
+                     STYLEFILTER_GROUP<filter>
                    ]
                    [
-                     "MAG"
-                     [
-                       (. Magnification magnification; .)
-                       MAG<magnification>
-                       (.
-                          size_t level=magnification.GetLevel();
-
-                          if (level<filter.GetMinLevel()) {
-                           std::string e="The magnification interval start is not within the parent magnification range";
-
-                           SemErr(e.c_str());
-                          }
-                          else {
-                            filter.SetMinLevel(level);
-                          }
-                       .)
-                     ]
-                     "-"
-                     [
-                       (. Magnification magnification; .)
-                       MAG<magnification>
-                       (.
-                          size_t level=magnification.GetLevel();
-
-                          if (level>filter.GetMaxLevel()) {
-                           std::string e="The magnification interval end is not within the parent magnification range";
-
-                           SemErr(e.c_str());
-                          }
-                          else {
-                            filter.SetMaxLevel(level);
-                          }
-                       .)
-                     ]
+                     STYLEFILTER_FEATURE<filter>
                    ]
                    [
-                     "ONEWAY"
-                     (.
-                       filter.SetOneway(true);
-                     .)
+                     STYLEFILTER_PATH<filter>
                    ]
                    [
-                     "BRIDGE"
-                     (.
-                       filter.SetBridge(true);
-                     .)
+                     STYLEFILTER_TYPE<filter>
                    ]
                    [
-                     "TUNNEL"
-                     (.
-                       filter.SetTunnel(true);
-                     .)
+                     STYLEFILTER_MAG<filter>
                    ]
-
                    [
-                     (. SizeCondition* sizeCondition; .)
-                     "SIZE"
-                     SIZECONDITION<sizeCondition>   (. filter.SetSizeCondition(sizeCondition); .)
+                     STYLEFILTER_ONEWAY<filter>
+                   ]
+                   [
+                     STYLEFILTER_BRIDGE<filter>
+                   ]
+                   [
+                     STYLEFILTER_TUNNEL<filter>
+                   ]
+                   [
+                     STYLEFILTER_SIZE<filter>
                    ]
                 "]"
                 .
 
-  SIZECONDITION<SizeCondition*& condition>
+  STYLEFILTER_GROUP<StyleFilter& filter>
+              = (. 
+                   TypeInfoSet types;
+                   std::string groupName;
+                .)
+                "GROUP"
+                IDENT<groupName>
+                (.
+                  for (const auto& type : config.GetTypeConfig()->GetTypes()) {
+                    if (type->IsInGroup(groupName)) {
+                      if (filter.HasTypes() &&
+                          !filter.HasType(type)) {
+                        continue;
+                      }
+                      
+                      types.Set(type);
+                    }
+                  }
+                .)
+                {
+                  (. std::string groupName; .)
+                  ","
+                  IDENT<groupName>
+                  (.
+                    for (const auto& type : config.GetTypeConfig()->GetTypes()) {
+                      if (types.IsSet(type) &&
+                          !type->IsInGroup(groupName)) {
+                        types.Remove(type);
+                      }
+                    }
+                  .)
+                }
+                 
+                (. filter.SetTypes(types); .)
+                .
+
+  STYLEFILTER_FEATURE<StyleFilter& filter>
+              = (. 
+                  TypeInfoSet types;
+                  std::string featureName;
+                .)
+                "FEATURE"
+                IDENT<featureName>
+                (.
+                  FeatureRef feature=config.GetTypeConfig()->GetFeature(featureName);
+
+                  if (!feature) {
+                    std::string e="Unknown feature '"+featureName+"'";
+
+                    SemErr(e.c_str());
+                  }
+                  else {
+                    for (const auto& type : config.GetTypeConfig()->GetTypes()) {
+                       if (type->HasFeature(featureName)) {
+                         if (filter.HasTypes() &&
+                             !filter.HasType(type)) {
+                           continue;
+                         }
+                          
+                         types.Set(type);
+                       }
+                    }
+                  }
+                .)
+                {
+                  (. std::string featureName; .)
+                  ","
+                  IDENT<featureName>
+                  (.
+                    FeatureRef feature=config.GetTypeConfig()->GetFeature(featureName);
+
+                    if (!feature) {
+                      std::string e="Unknown feature '"+featureName+"'";
+
+                      SemErr(e.c_str());
+                    }
+                    else {
+                      for (const auto& type : config.GetTypeConfig()->GetTypes()) {
+                         if (types.IsSet(type) &&
+                             !type->HasFeature(featureName)) {
+                           types.Remove(type);
+                         }
+                      }
+                    }
+                  .)
+                }
+                 
+                (. filter.SetTypes(types); .)
+                .
+
+  STYLEFILTER_PATH<StyleFilter& filter>
+              = (. 
+                  TypeInfoSet types;
+                 .)
+                "PATH"
+                (.
+                  for (const auto& type : config.GetTypeConfig()->GetTypes()) {
+                    if (type->IsPath()) {
+                      if (filter.HasTypes() &&
+                          !filter.HasType(type)) {
+                        continue;
+                      }
+                       
+                      types.Set(type);
+                    }
+                  }
+                   
+                  filter.SetTypes(types);
+                .)
+                . 
+
+  STYLEFILTER_TYPE<StyleFilter& filter>
               = (.
-                  condition=new SizeCondition();
+                  TypeInfoSet types;
+                  std::string name;
+                .)
+
+                "TYPE"
+                IDENT<name>
+                (.
+                  TypeInfoRef type=config.GetTypeConfig()->GetTypeInfo(name);
+
+                  if (!type) {
+                    std::string e="Unknown type '"+name+"'";
+
+                    SemErr(e.c_str());
+                  }
+                  else if (filter.HasTypes() &&
+                           !filter.HasType(type)) {
+                    std::string e="Type '"+name+"' is not included by parent filter";
+
+                    SemErr(e.c_str());
+                  }
+                  else {
+                    types.Set(type);
+                  }
+                .)
+                {
+                  (. std::string name; .)
+                  ","
+                  IDENT<name>
+                  (.
+                    TypeInfoRef type=config.GetTypeConfig()->GetTypeInfo(name);
+
+                    if (!type) {
+                      std::string e="Unknown type '"+name+"'";
+
+                      SemErr(e.c_str());
+                    }
+                    else if (filter.HasTypes() &&
+                             !filter.HasType(type)) {
+                      std::string e="Type '"+name+"' is not included by parent filter";
+
+                      SemErr(e.c_str());
+                    }
+                    else {
+                      types.Set(type);
+                    }
+                  .)
+                }
+
+                (. filter.SetTypes(types); .)
+                . 
+
+  STYLEFILTER_MAG<StyleFilter& filter>
+              = "MAG"
+                [
+                  (. Magnification magnification; .)
+                  MAG<magnification>
+                  (.
+                     size_t level=magnification.GetLevel();
+
+                     if (level<filter.GetMinLevel()) {
+                      std::string e="The magnification interval start is not within the parent magnification range";
+
+                      SemErr(e.c_str());
+                     }
+                     else {
+                       filter.SetMinLevel(level);
+                     }
+                  .)
+                ]
+                "-"
+                [
+                  (. Magnification magnification; .)
+                  MAG<magnification>
+                  (.
+                     size_t level=magnification.GetLevel();
+
+                     if (level>filter.GetMaxLevel()) {
+                      std::string e="The magnification interval end is not within the parent magnification range";
+
+                      SemErr(e.c_str());
+                     }
+                     else {
+                       filter.SetMaxLevel(level);
+                     }
+                  .)
+                ]
+                .     
+
+  STYLEFILTER_ONEWAY<StyleFilter& filter>
+              = "ONEWAY"
+                (.
+                  filter.SetOneway(true);
+                .)
+                .
+
+  STYLEFILTER_BRIDGE<StyleFilter& filter>
+              = "BRIDGE"
+                (.
+                  filter.SetBridge(true);
+                .)
+                .
+
+  STYLEFILTER_TUNNEL<StyleFilter& filter>
+              = "TUNNEL"
+                (.
+                  filter.SetTunnel(true);
+                .)
+                .
+               
+  STYLEFILTER_SIZE<StyleFilter& filter>
+              = (. SizeConditionRef sizeCondition; .)
+                "SIZE"
+                SIZECONDITION<sizeCondition>
+                (. filter.SetSizeCondition(sizeCondition); .)
+                .
+                
+  SIZECONDITION<SizeConditionRef& condition>
+              = (.
+                  condition=std::make_shared<SizeCondition>();
                   double widthInMeter;
                 .)
 
@@ -505,36 +889,43 @@ PRODUCTIONS
                 ]
                 .
 
-  STYLEDEF<StyleFilter filter>
-              =   NODESTYLEDEF<filter>
-                | WAYSTYLEDEF<filter>
-                | AREASTYLEDEF<filter>
+  STYLEDEF<StyleFilter filter, bool state>
+              =   NODESTYLEDEF<filter,state>
+                | WAYSTYLEDEF<filter,state>
+                | AREASTYLEDEF<filter,state>
                 .
 
-  NODESTYLEDEF<StyleFilter filter>
+  NODESTYLEDEF<StyleFilter filter, bool state>
               = SYNC "NODE" "."
                 (
-                  NODETEXTSTYLE<filter>
-                | NODEICONSTYLE<filter>
+                  NODETEXTSTYLE<filter,state>
+                | NODEICONSTYLE<filter,state>
                 )
                 .
 
-  NODETEXTSTYLE<StyleFilter filter>
+  NODETEXTSTYLE<StyleFilter filter, bool state>
               = SYNC "TEXT"
                 (.
                   TextPartialStyle style;
+                  std::string      slot;
                 .)
+                [
+                  "#"
+                  IDENT<slot> (. style.style->SetSlot(slot); .)
+                ]
                 SYNC "{"
                 {
                   TEXTSTYLEATTR<style> WEAK ";"
                 }
                 SYNC "}"
                 (.
-                  config.AddNodeTextStyle(filter,style);
+                  if (state) {
+                    config.AddNodeTextStyle(filter,style);
+                  }
                 .)
                 .
 
-  NODEICONSTYLE<StyleFilter filter>
+  NODEICONSTYLE<StyleFilter filter, bool state>
               = SYNC "ICON"
                 (.
                   IconPartialStyle style;
@@ -545,24 +936,26 @@ PRODUCTIONS
                 }
                 SYNC "}"
                 (.
-                  config.AddNodeIconStyle(filter,style);
+                  if (state) {
+                    config.AddNodeIconStyle(filter,style);
+                  }
                 .)
                 .
 
-  WAYSTYLEDEF<StyleFilter filter>
+  WAYSTYLEDEF<StyleFilter filter, bool state>
               = SYNC "WAY"
                 (
-                  WAYSTYLE<filter>
+                  WAYSTYLE<filter,state>
                 | "."
                   (
-                     WAYPATHTEXTSTYLE<filter>
-                  |  WAYPATHSYMBOLSTYLE<filter>
-                  |  WAYSHIELDSTYLE<filter>
+                     WAYPATHTEXTSTYLE<filter,state>
+                  |  WAYPATHSYMBOLSTYLE<filter,state>
+                  |  WAYSHIELDSTYLE<filter,state>
                   )
                 )
                 .
 
-  WAYSTYLE<StyleFilter filter>
+  WAYSTYLE<StyleFilter filter, bool state>
               = (.
                   LinePartialStyle style;
                   std::string      slot;
@@ -577,11 +970,13 @@ PRODUCTIONS
                 }
                 SYNC "}"
                 (.
-                  config.AddWayLineStyle(filter,style);
+                  if (state) {
+                    config.AddWayLineStyle(filter,style);
+                  }
                 .)
                 .
 
-  WAYPATHTEXTSTYLE<StyleFilter filter>
+  WAYPATHTEXTSTYLE<StyleFilter filter, bool state>
               = SYNC "TEXT"
                 (.
                   PathTextPartialStyle style;
@@ -592,11 +987,13 @@ PRODUCTIONS
                 }
                 SYNC "}"
                 (.
-                  config.AddWayPathTextStyle(filter,style);
+                  if (state) {
+                    config.AddWayPathTextStyle(filter,style);
+                  }
                 .)
                 .
 
-  WAYPATHSYMBOLSTYLE<StyleFilter filter>
+  WAYPATHSYMBOLSTYLE<StyleFilter filter, bool state>
               = SYNC "SYMBOL"
                 (.
                   PathSymbolPartialStyle style;
@@ -607,11 +1004,13 @@ PRODUCTIONS
                 }
                 SYNC "}"
                 (.
-                  config.AddWayPathSymbolStyle(filter,style);
+                  if (state) {
+                    config.AddWayPathSymbolStyle(filter,style);
+                  }
                 .)
                 .
 
-  WAYSHIELDSTYLE<StyleFilter filter>
+  WAYSHIELDSTYLE<StyleFilter filter, bool state>
               = SYNC "SHIELD"
                 (.
                   PathShieldPartialStyle style;
@@ -622,23 +1021,25 @@ PRODUCTIONS
                 }
                 SYNC "}"
                 (.
-                  config.AddWayPathShieldStyle(filter,style);
+                  if (state) {
+                    config.AddWayPathShieldStyle(filter,style);
+                  }
                 .)
                 .
 
-  AREASTYLEDEF<StyleFilter filter>
+  AREASTYLEDEF<StyleFilter filter, bool state>
               = SYNC "AREA"
                 (
-                  AREASTYLE<filter>
+                  AREASTYLE<filter,state>
                 | "."
                   (
-                    AREATEXTSTYLE<filter>
-                  | AREAICONSTYLE<filter>
+                    AREATEXTSTYLE<filter,state>
+                  | AREAICONSTYLE<filter,state>
                   )
                 )
                 .
 
-  AREASTYLE<StyleFilter filter>
+  AREASTYLE<StyleFilter filter, bool state>
               = (.
                   FillPartialStyle style;
                 .)
@@ -648,26 +1049,36 @@ PRODUCTIONS
                 }
                 SYNC "}"
                 (.
-                  config.AddAreaFillStyle(filter,style);
+                  if (state) {
+                    config.AddAreaFillStyle(filter,style);
+                  }
                 .)
                 .
 
-  AREATEXTSTYLE<StyleFilter filter>
+
+  AREATEXTSTYLE<StyleFilter filter, bool state>
               = SYNC "TEXT"
                 (.
                   TextPartialStyle style;
+                  std::string      slot;
                 .)
+                [
+                  "#"
+                  IDENT<slot> (. style.style->SetSlot(slot); .)
+                ]
                 SYNC "{"
                 {
                   TEXTSTYLEATTR<style> WEAK ";"
                 }
                 SYNC "}"
                 (.
-                  config.AddAreaTextStyle(filter,style);
+                  if (state) {
+                    config.AddAreaTextStyle(filter,style);
+                  }
                 .)
                 .
 
-  AREAICONSTYLE<StyleFilter filter>
+  AREAICONSTYLE<StyleFilter filter, bool state>
               = SYNC "ICON"
                 (.
                   IconPartialStyle style;
@@ -678,7 +1089,9 @@ PRODUCTIONS
                 }
                 SYNC "}"
                 (.
-                  config.AddAreaIconStyle(filter,style);
+                  if (state) {
+                    config.AddAreaIconStyle(filter,style);
+                  }
                 .)
                 .
 
@@ -688,7 +1101,7 @@ PRODUCTIONS
                   (. Color lineColor; .)
                   "color" ":" COLOR<lineColor>
                   (.
-                  	 style.style->SetLineColor(lineColor);
+                     style.style->SetLineColor(lineColor);
                      style.attributes.insert(LineStyle::attrLineColor);
                   .)
                 | (.
@@ -702,65 +1115,71 @@ PRODUCTIONS
                     UDOUBLE<dash>  (. dashes.push_back(dash); .)
                   }
                   (.
-                  	 style.style->SetDashes(dashes);
+                     style.style->SetDashes(dashes);
                      style.attributes.insert(LineStyle::attrDashes);
                   .)
                 | (. Color gapColor; .)
                   "gapColor" ":" COLOR<gapColor>
                   (.
-                  	 style.style->SetGapColor(gapColor);
+                     style.style->SetGapColor(gapColor);
                      style.attributes.insert(LineStyle::attrGapColor);
                   .)
                 | (. double displayWidth; .)
                   "displayWidth" ":"  UDISPLAYSIZE<displayWidth>
                   (.
-                  	 style.style->SetDisplayWidth(displayWidth);
+                     style.style->SetDisplayWidth(displayWidth);
                      style.attributes.insert(LineStyle::attrDisplayWidth);
                   .)
                 | (. double width; .)
                   "width" ":" UMAPSIZE<width>
                   (.
-                  	 style.style->SetWidth(width);
+                     style.style->SetWidth(width);
                      style.attributes.insert(LineStyle::attrWidth);
                   .)
                 | (. double displayOffset; .)
                   "displayOffset" ":"  DISPLAYSIZE<displayOffset>
                   (.
-                  	 style.style->SetDisplayOffset(displayOffset);
+                     style.style->SetDisplayOffset(displayOffset);
                      style.attributes.insert(LineStyle::attrDisplayOffset);
                   .)
                 | (. double offset; .)
                   "offset" ":" MAPSIZE<offset>
                   (.
-                  	 style.style->SetOffset(offset);
+                     style.style->SetOffset(offset);
                      style.attributes.insert(LineStyle::attrOffset);
                   .)
                 | (. LineStyle::CapStyle capStyle; .)
                   "cap" ":" CAPSTYLE<capStyle>
                   (.
-                  	 style.style->SetJoinCap(capStyle);
+                     style.style->SetJoinCap(capStyle);
                      style.attributes.insert(LineStyle::attrJoinCap);
 
-                  	 style.style->SetEndCap(capStyle);
+                     style.style->SetEndCap(capStyle);
                      style.attributes.insert(LineStyle::attrEndCap);
                   .)
                 | (. LineStyle::CapStyle capStyle; .)
                   "joinCap" ":" CAPSTYLE<capStyle>
                   (.
-                  	 style.style->SetJoinCap(capStyle);
+                     style.style->SetJoinCap(capStyle);
                      style.attributes.insert(LineStyle::attrJoinCap);
                   .)
                 | (. LineStyle::CapStyle capStyle; .)
                   "endCap" ":" CAPSTYLE<capStyle>
                   (.
-                  	 style.style->SetEndCap(capStyle);
+                     style.style->SetEndCap(capStyle);
                      style.attributes.insert(LineStyle::attrEndCap);
                   .)
                 | (. int priority; .)
                   "priority" ":" INT<priority>
                   (.
-                  	 style.style->SetPriority(priority);
+                     style.style->SetPriority(priority);
                      style.attributes.insert(LineStyle::attrPriority);
+                  .)
+                | (. int zIndex; .)
+                  "zIndex" ":" INT<zIndex>
+                  (.
+                     style.style->SetZIndex(zIndex);
+                     style.attributes.insert(LineStyle::attrZIndex);
                   .)
                 )
                 .
@@ -770,31 +1189,31 @@ PRODUCTIONS
                   (. Color fillColor; .)
                   "color" ":" COLOR<fillColor>
                   (.
-                  	 style.style->SetFillColor(fillColor);
+                     style.style->SetFillColor(fillColor);
                      style.attributes.insert(FillStyle::attrFillColor);
                   .)
                 | (. std::string patternName; .)
                   "pattern" ":" STRING<patternName>
                   (.
-                  	 style.style->SetPattern(patternName);
+                     style.style->SetPattern(patternName);
                      style.attributes.insert(FillStyle::attrPattern);
                   .)
                 | (. Magnification minMag; .)
                   "patternMinMag" ":" MAG<minMag>
                   (.
-                  	 style.style->SetPatternMinMag(minMag);
+                     style.style->SetPatternMinMag(minMag);
                      style.attributes.insert(FillStyle::attrPatternMinMag);
                   .)
                 | (. Color borderColor; .)
                   "borderColor" ":" COLOR<borderColor>
                   (.
-                  	 style.style->SetBorderColor(borderColor);
+                     style.style->SetBorderColor(borderColor);
                      style.attributes.insert(FillStyle::attrBorderColor);
                   .)
                 | (. double width; .)
-	              "borderWidth" ":" UDISPLAYSIZE<width>
+                  "borderWidth" ":" UDISPLAYSIZE<width>
                   (.
-                  	 style.style->SetBorderWidth(width);
+                     style.style->SetBorderWidth(width);
                      style.attributes.insert(FillStyle::attrBorderWidth);
                   .)
                 | (.
@@ -808,7 +1227,7 @@ PRODUCTIONS
                     UDOUBLE<dash>  (. dashes.push_back(dash); .)
                   }
                   (.
-                  	 style.style->SetBorderDashes(dashes);
+                     style.style->SetBorderDashes(dashes);
                      style.attributes.insert(FillStyle::attrBorderDashes);
                   .)
                 )
@@ -816,11 +1235,13 @@ PRODUCTIONS
 
   TEXTSTYLEATTR<TextPartialStyle& style>
               = (
-                  (. TextStyle::Label label; .)
+                  (. LabelProviderRef label; .)
                   "label" ":" TEXTLABEL<label>
                   (.
-                     style.style->SetLabel(label);
-                     style.attributes.insert(TextStyle::attrLabel);
+                     if (label) {
+                       style.style->SetLabel(label);
+                       style.attributes.insert(TextStyle::attrLabel);
+                     }
                   .)
                 | (. TextStyle::Style labelStyle; .)
                   "style" ":" LABELSTYLE<labelStyle>
@@ -846,30 +1267,36 @@ PRODUCTIONS
                      style.style->SetScaleAndFadeMag(scaleMag);
                      style.attributes.insert(TextStyle::attrScaleAndFadeMag);
                   .)
+                | (. bool autoSize; .)
+                  "autoSize" ":" BOOL<autoSize>
+                  (.
+                     style.style->SetAutoSize(autoSize);
+                     style.attributes.insert(TextStyle::attrAutoSize);
+                  .)
                 | (. size_t priority; .)
                   "priority" ":" UINT<priority>
-	              (.
-	                if (priority<std::numeric_limits<uint8_t>::max()) {
-                     style.style->SetPriority((uint8_t)priority);
-                     style.attributes.insert(TextStyle::attrPriority);
-	                }
-	                else {
-	                  std::string e="Priority must be in the interval [0,"+
-	                                NumberToString(std::numeric_limits<uint8_t>::max())+"[";
-
-	                  SemErr(e.c_str());
-	                }
-	               .)
+                  (.
+                    style.style->SetPriority((uint8_t)priority);
+                    style.attributes.insert(TextStyle::attrPriority);
+                  .)
+                | (. size_t position; .)
+                  "position" ":" UINT<position>
+                  (.
+                    style.style->SetPosition(position);
+                    style.attributes.insert(TextStyle::attrPosition);
+                  .)
                 )
                 .
 
   PATHSHIELDSTYLEATTR<PathShieldPartialStyle& style>
               = (
-                  (. ShieldStyle::Label label; .)
-                  "label" ":" SHIELDLABEL<label>
+                  (. LabelProviderRef label; .)
+                  "label" ":" TEXTLABEL<label>
                   (.
-                     style.style->SetLabel(label);
-                     style.attributes.insert(PathShieldStyle::attrLabel);
+                     if (label) {
+                       style.style->SetLabel(label);
+                       style.attributes.insert(PathShieldStyle::attrLabel);
+                     }
                   .)
                 | (. Color textColor; .)
                   "color" ":" COLOR<textColor>
@@ -884,7 +1311,7 @@ PRODUCTIONS
                      style.attributes.insert(PathShieldStyle::attrBgColor);
                   .)
                 | (. Color borderColor; .)
-   	              "borderColor" ":" COLOR<borderColor>
+                  "borderColor" ":" COLOR<borderColor>
                   (.
                      style.style->SetBorderColor(borderColor);
                      style.attributes.insert(PathShieldStyle::attrBorderColor);
@@ -897,18 +1324,18 @@ PRODUCTIONS
                   .)
                 | (. size_t priority; .)
                   "priority" ":" UINT<priority>
-	              (.
-	                if (priority<std::numeric_limits<uint8_t>::max()) {
-                     style.style->SetPriority((uint8_t)priority);
-                     style.attributes.insert(PathShieldStyle::attrPriority);
-	                }
-	                else {
-	                  std::string e="Priority must be in the interval [0,"+
-	                                NumberToString(std::numeric_limits<uint8_t>::max())+"[";
+                  (.
+                    if (priority<std::numeric_limits<uint8_t>::max()) {
+                      style.style->SetPriority((uint8_t)priority);
+                      style.attributes.insert(PathShieldStyle::attrPriority);
+                    }
+                    else {
+                      std::string e="Priority must be in the interval [0,"+
+                                    NumberToString(std::numeric_limits<uint8_t>::max())+"[";
 
-	                  SemErr(e.c_str());
-	                }
-	               .)
+                      SemErr(e.c_str());
+                    }
+                  .)
                 | (. double shieldSpace; .)
                   "shieldSpace" ":" UDISPLAYSIZE<shieldSpace>
                   (.
@@ -920,11 +1347,13 @@ PRODUCTIONS
 
   PATHTEXTSTYLEATTR<PathTextPartialStyle& style>
               = (
-                  (. PathTextStyle::Label label; .)
-                  "label" ":" PATHTEXTLABEL<label>
+                  (. LabelProviderRef label; .)
+                  "label" ":" TEXTLABEL<label>
                   (.
-                     style.style->SetLabel(label);
-                     style.attributes.insert(PathTextStyle::attrLabel);
+                     if (label) {
+                       style.style->SetLabel(label);
+                       style.attributes.insert(PathTextStyle::attrLabel);
+                     }
                   .)
                 | (. Color textColor; .)
                   "color" ":" COLOR<textColor>
@@ -951,7 +1380,7 @@ PRODUCTIONS
                   (.
                      symbol=config.GetSymbol(name);
 
-                     if (symbol.Invalid()) {
+                     if (!symbol) {
                        std::string e="Map symbol '"+name+"' is not defined";
 
                        SemErr(e.c_str());
@@ -980,7 +1409,7 @@ PRODUCTIONS
                   (.
                      symbol=config.GetSymbol(name);
 
-                     if (symbol.Invalid()) {
+                     if (!symbol) {
                        std::string e="Map symbol '"+name+"' is not defined";
 
                        SemErr(e.c_str());
@@ -995,6 +1424,12 @@ PRODUCTIONS
                   (.
                       style.style->SetIconName(name);
                       style.attributes.insert(IconStyle::attrIconName);
+                  .)
+                | (. size_t position; .)
+                  "position" ":" UINT<position>
+                  (.
+                    style.style->SetPosition(position);
+                    style.attributes.insert(IconStyle::attrPosition);
                   .)
                 )
                 .
@@ -1012,23 +1447,63 @@ PRODUCTIONS
                 | "emphasize" (. style=TextStyle::emphasize; .)
                 ).
 
-  TEXTLABEL<TextStyle::Label& label>
-              = (
-                  "name" (. label=TextStyle::name; .)
-                | "ref"  (. label=TextStyle::ref; .)
-                ).
+  TEXTLABEL<LabelProviderRef& label>
+              = (.
+                  std::string featureName;
+                  std::string labelName;
+                 .)
+                IDENT<featureName>
+                [
+                  "."
+                  // This is a hack, since "name" is a reserved token, we could not have a IDENT name... 
+                  ( IDENT<labelName> | "name" (. labelName="name"; .) )
+                ]
+                (.
+                  if (!labelName.empty()) {
+                    FeatureRef feature;
+                  
+                    feature=config.GetTypeConfig()->GetFeature(featureName);
+                  
+                    if (!feature) {
+                      std::string e="'"+featureName+"' is not a registered feature";
 
-  SHIELDLABEL<ShieldStyle::Label& label>
-              = (
-                  "name" (. label=ShieldStyle::name; .)
-                | "ref"  (. label=ShieldStyle::ref; .)
-                ).
+                      SemErr(e.c_str());
+                      return;
+                    }
+                  
+                    if (!feature->HasLabel()) {
+                      std::string e="'"+featureName+"' does not support labels";
 
-  PATHTEXTLABEL<PathTextStyle::Label& label>
-              = (
-                  "name" (. label=PathTextStyle::name; .)
-                | "ref"  (. label=PathTextStyle::ref; .)
-                ).
+                      SemErr(e.c_str());
+                      return;
+                    }
+
+                    size_t labelIndex;
+                  
+                    if (!feature->GetLabelIndex(labelName,
+                                                labelIndex)) {
+                      std::string e="'"+featureName+"' does not have a label named '"+labelName+"'";
+
+                      SemErr(e.c_str());
+                      return;
+                    }
+                  
+                    label=std::make_shared<DynamicFeatureLabelReader>(*config.GetTypeConfig(),
+                                                                      featureName,
+                                                                      labelName);
+                  }
+                  else {
+                    label=config.GetLabelProvider(featureName);
+                    
+                    if (!label) {
+                      std::string e="There is no label provider with name '"+featureName+"' registered";
+
+                      SemErr(e.c_str());
+                      return;
+                    }
+                  }
+                .)
+                .
 
   COLOR<Color& color>
               =   (. double factor; .)
@@ -1061,8 +1536,7 @@ PRODUCTIONS
 
                     if (c.length()!=7 &&
                         c.length()!=9) {
-                     std::string e="Illegal color value";
-
+                      std::string e="Illegal color value";
                       SemErr(e.c_str());
                     }
 
@@ -1072,23 +1546,26 @@ PRODUCTIONS
                   .)
                 | variable
                   (.
-                    StyleVariableRef variable=config.GetVariableByName(t->val+1);
+                    StyleConstantRef constant=config.GetConstantByName(t->val+1);
 
-                    if (!variable.Valid()) {
-                      std::string e="Variable not defined";
-
-                      SemErr(e.c_str());
-                    }
-                    else if (dynamic_cast<StyleVariableColor*>(variable.Get())==NULL) {
-                      std::string e="Variable is not of type 'COLOR'";
+                    if (!constant) {
+                      std::string e="Constant not defined";
 
                       SemErr(e.c_str());
+                      
+                      color=Color::BLACK;
                     }
+                    else if (dynamic_cast<StyleConstantColor*>(constant.get())==NULL) {
+                      std::string e="Constant is not of type 'COLOR'";
 
-                    if (!errors->hasErrors) {
-                      StyleVariableColor* colorVariable=dynamic_cast<StyleVariableColor*>(variable.Get());
+                      SemErr(e.c_str());
+                      
+                      color=Color::BLACK;
+                    }
+                    else {
+                      StyleConstantColor* colorConstant=dynamic_cast<StyleConstantColor*>(constant.get());
 
-                      color=colorVariable->GetColor();
+                      color=colorConstant->GetColor();
                     }
                   .)
                 .
@@ -1108,9 +1585,39 @@ PRODUCTIONS
                 |
                 (
                   (. size_t level; .)
-                   UINT<level>
-                   (. magnification.SetLevel((uint32_t)level); .)
+                  number
+                  (.
+                    if (!StringToNumber(t->val,level)) {
+                      std::string e="Cannot parse number '"+std::string(t->val)+"'";
+
+                      SemErr(e.c_str());
+                    }
+                    else {
+                      magnification.SetLevel((uint32_t)level);
+                    }
+                  .)
                 )
+                | variable
+                  (.
+                    StyleConstantRef constant=config.GetConstantByName(t->val+1);
+
+                    if (!constant) {
+                      std::string e="Constant not defined";
+
+                      SemErr(e.c_str());
+                    }
+                    else if (dynamic_cast<StyleConstantMag*>(constant.get())==NULL) {
+                      std::string e="Variable is not of type 'MAG'";
+
+                      SemErr(e.c_str());
+                    }
+
+                    if (!errors->hasErrors) {
+                      StyleConstantMag* magConstant=dynamic_cast<StyleConstantMag*>(constant.get());
+
+                      magnification=magConstant->GetMag();
+                    }
+                  .)
                .
 
   /* Size in units of screen (currently millimeter) */
@@ -1133,6 +1640,28 @@ PRODUCTIONS
               = ident
                 (.
                   value=t->val;
+                .)
+                .
+
+  BOOL<bool& value>
+              = (. std::string ident; .)
+                ident
+                (.
+                  ident=t->val;
+
+                  if (ident=="true") {
+                    value=true;
+                  }
+                  else if (ident=="false") {
+                    value=false;
+                  }
+                  else {
+                    std::string e="'"+std::string(t->val)+"' is not a valid boolean value, only 'true' and 'false' are allowed";
+
+                    SemErr(e.c_str());
+
+                    value=false;
+                  }
                 .)
                 .
 
@@ -1222,6 +1751,50 @@ PRODUCTIONS
                     SemErr(e.c_str());
                   }
                 .)
+                | variable
+                  (.
+                    StyleConstantRef constant=config.GetConstantByName(t->val+1);
+
+                    if (!constant) {
+                      std::string e="Constant not defined";
+
+                      SemErr(e.c_str());
+                    }
+                    else if (dynamic_cast<StyleConstantUInt*>(constant.get())==NULL) {
+                      std::string e="Constant is not of type 'UINT'";
+
+                      SemErr(e.c_str());
+                    }
+
+                    if (!errors->hasErrors) {
+                      StyleConstantUInt* uintConstant=dynamic_cast<StyleConstantUInt*>(constant.get());
+
+                      value=uintConstant->GetUInt();
+                    }
+                  .)
                 .
+  IFCOND<bool& state>
+              =  (.
+                   std::string flag;
+                   bool        negate=false;
+                 .)
+                 ["!" (. negate=true; .)]
+                 IDENT<flag>
+                 (.
+                   if (!config.HasFlag(flag)) {
+                     std::string e="Flag '" + flag +"' is unknown, ignoring";
+
+                     SemErr(e.c_str());
+                     state=false;
+                   }
+                   else {
+                     state=config.GetFlagByName(flag);
+                   }
+
+                   if (negate) {
+                     state=!state;
+                   }
+                 .)
+                 .
 END OSS.
 

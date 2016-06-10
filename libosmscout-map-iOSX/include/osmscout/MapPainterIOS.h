@@ -23,6 +23,9 @@
 #include "TargetConditionals.h"
 #endif
 
+#include <string>
+#include <unordered_map>
+
 #if TARGET_OS_IPHONE
 #import <UIKit/UIKit.h>
 #define Font UIFont
@@ -36,26 +39,35 @@
 
 #include <osmscout/MapPainter.h>
 
-#define MAP_PAINTER_PLATE_LABEL_MARGIN 10
-#define MAP_PAINTER_Y_LABEL_MARGIN 10
-#define MAP_PAINTER_DRAW_CONTOUR_LABEL_MARGIN 10
-
 namespace osmscout {
-    typedef struct { double x; double y; } Pt;
-    typedef struct { double x; double y; double slope ;} XYSlope;
+    typedef struct {
+        bool closeWay;
+        size_t transStart;
+        size_t transEnd;
+        size_t i;
+        size_t nVertex;
+        ssize_t direction;
+    } FollowPathHandle;
     
     class MapPainterIOS : public MapPainter {
     private:
-        CoordBufferImpl<Vertex2D>   *coordBuffer;
-
         CGContextRef                cg;
+        CoordBufferImpl<Vertex2D>   *coordBuffer;
+        CGFloat                     contentScale;
+
         std::vector<Image>          images;         // Cached CGImage for icons
         std::vector<Image>          patternImages;  // Cached CGImage for patterns
-        std::vector<CGPatternRef>   patterns;       // vector of Brush for fill patterns
         std::map<size_t,Font *>     fonts;          // Cached fonts
         
+        static constexpr double plateLabelMargin = 10.0;
+        static constexpr double yLabelMargin = 10.0;
+        static constexpr double contourLabelMargin = 50.0;
+        static constexpr double sameLabelMinDistanceSq = 1600.0;
+        typedef std::unordered_multimap<std::string,Vertex2D *> WayLabelsMap;
+        WayLabelsMap wayLabels;
+
     public:
-        MapPainterIOS();
+        MapPainterIOS(const StyleConfigRef& styleConfig);
         virtual ~MapPainterIOS();
         
         bool DrawMap(const StyleConfig& styleConfig,
@@ -71,7 +83,13 @@ namespace osmscout {
         bool HasPattern(const MapParameter& parameter,
                         const FillStyle& style);
         
-        void GetTextDimension(const MapParameter& parameter,
+        void GetFontHeight(const Projection& projection,
+                           const MapParameter& parameter,
+                           double fontSize,
+                           double& height);
+        
+        void GetTextDimension(const Projection& projection,
+                              const MapParameter& parameter,
                               double fontSize,
                               const std::string& text,
                               double& xOff,
@@ -97,16 +115,7 @@ namespace osmscout {
         
         void DrawIcon(const IconStyle* style,
                       double x, double y);
-        
-        void DrawPrimitivePath(const Projection& projection,
-                               const MapParameter& parameter,
-                               const DrawPrimitiveRef& primitive,
-                               double x, double y,
-                               double minX,
-                               double minY,
-                               double maxX,
-                               double maxY);
-        
+                
         void DrawSymbol(const Projection& projection,
                         const MapParameter& parameter,
                         const Symbol& symbol,
@@ -131,19 +140,22 @@ namespace osmscout {
         
         void SetFill(const Projection& projection,
                      const MapParameter& parameter,
-                     const FillStyle& fillStyle);
+                     const FillStyle& fillStyle,
+                     CGFloat xOffset=0.0,
+                     CGFloat yOffset=0.0);
         
         void SetPen(const LineStyle& style,
                     double lineWidth);
 
-        double textLength(const MapParameter& parameter, double fontSize, std::string text);
-        double textHeight(const MapParameter& parameter, double fontSize, std::string text);
+        double textLength(const Projection& projection, const MapParameter& parameter, double fontSize, std::string text);
+        double textHeight(const Projection& projection, const MapParameter& parameter, double fontSize, std::string text);
         
     private:
-        Font *GetFont(const MapParameter& parameter, double fontSize);
+        Font *GetFont(const Projection& projection, const MapParameter& parameter, double fontSize);
         double pathLength(size_t transStart, size_t transEnd);
-        XYSlope originAndSlopeAlongPath(CGFloat l, CGFloat nextW, size_t transStart, size_t transEnd,
-                                        CGFloat &posX, CGFloat &posY, size_t &i, CGFloat &currentL);
+        bool followPath(FollowPathHandle &hnd, double l, Vertex2D &origin);
+        void followPathInit(FollowPathHandle &hnd, Vertex2D &origin, size_t transStart, size_t transEnd,
+                            bool isClosed, bool keepOrientation);
     };
 }
 

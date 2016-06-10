@@ -20,22 +20,29 @@
  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307  USA
  */
 
-#include <osmscout/TypeSet.h>
+#include <unordered_map>
+
 #include <osmscout/ObjectRef.h>
 
 #include <osmscout/util/FileScanner.h>
-#include <osmscout/util/HashMap.h>
 
 #include <marisa.h>
 
 namespace osmscout
 {
   /**
+   \ingroup Database
    A class that allows prefix-based searching
    of text data indexed during import
    */
   class OSMSCOUT_API TextSearchIndex
   {
+  public:
+    static const char* TEXT_POI_DAT;
+    static const char* TEXT_LOC_DAT;
+    static const char* TEXT_REGION_DAT;
+    static const char* TEXT_OTHER_DAT;
+
   private:
     struct TrieInfo
     {
@@ -52,9 +59,11 @@ namespace osmscout
     };
 
   public:
-    typedef OSMSCOUT_HASHMAP<std::string,std::vector<ObjectFileRef> > ResultsMap;
+    typedef std::unordered_map<std::string,std::vector<ObjectFileRef> > ResultsMap;
 
     TextSearchIndex();
+
+    ~TextSearchIndex();
 
     bool Load(const std::string &path);
 

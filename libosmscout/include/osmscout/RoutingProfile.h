@@ -20,9 +20,12 @@
   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307  USA
 */
 
+#include <memory>
 #include <vector>
 
 #include <osmscout/Types.h>
+#include <osmscout/TypeConfig.h>
+#include <osmscout/TypeFeatures.h>
 
 #include <osmscout/Way.h>
 
@@ -33,6 +36,7 @@
 namespace osmscout {
 
   /**
+   * \ingroup Routing
    * Abstract interface for a routing profile. A routing profile decides about the costs
    * of taking a certain way. It thus may hold information about how fast ways can be used,
    * maximum speed of the traveling device etc...
@@ -42,7 +46,10 @@ namespace osmscout {
   public:
     virtual ~RoutingProfile();
 
+    virtual Vehicle GetVehicle() const = 0;
+
     virtual bool CanUse(const RouteNode& currentNode,
+                        const std::vector<ObjectVariantData>& objectVariantData,
                         size_t pathIndex) const = 0;
     virtual bool CanUse(const Area& area) const = 0;
     virtual bool CanUse(const Way& way) const = 0;
@@ -50,6 +57,7 @@ namespace osmscout {
     virtual bool CanUseBackward(const Way& way) const = 0;
 
     virtual double GetCosts(const RouteNode& currentNode,
+                            const std::vector<ObjectVariantData>& objectVariantData,
                             size_t pathIndex) const = 0;
     virtual double GetCosts(const Area& area,
                             double distance) const = 0;
@@ -63,21 +71,28 @@ namespace osmscout {
                            double distance) const = 0;
   };
 
+  typedef std::shared_ptr<RoutingProfile> RoutingProfileRef;
+
   /**
-   * Common base class for our concrete profile instantiations.
+   * \ingroup Routing
+   * Common base class for our concrete profile instantiations. Offers a number of profile
+   * type independent interface implementations and helper methods.
    */
   class OSMSCOUT_API AbstractRoutingProfile : public RoutingProfile
   {
   protected:
-    Vehicle             vehicle;
-    uint8_t             vehicleRouteNodeBit;
-    std::vector<double> speeds;
-    double              minSpeed;
-    double              maxSpeed;
-    double              vehicleMaxSpeed;
+    TypeConfigRef              typeConfig;
+    AccessFeatureValueReader   accessReader;
+    MaxSpeedFeatureValueReader maxSpeedReader;
+    Vehicle                    vehicle;
+    uint8_t                    vehicleRouteNodeBit;
+    std::vector<double>        speeds;
+    double                     minSpeed;
+    double                     maxSpeed;
+    double                     vehicleMaxSpeed;
 
   public:
-    AbstractRoutingProfile();
+    AbstractRoutingProfile(const TypeConfigRef& typeConfig);
 
     void SetVehicle(Vehicle vehicle);
     void SetVehicleMaxSpeed(double maxSpeed);
@@ -95,104 +110,20 @@ namespace osmscout {
       return vehicle;
     }
 
-    void AddType(TypeId type, double speed);
+    void AddType(const TypeInfoRef& type, double speed);
 
-    inline bool CanUse(const RouteNode& currentNode,
-                       size_t pathIndex) const
-    {
-      if (!(currentNode.paths[pathIndex].flags & vehicleRouteNodeBit)) {
-        return false;
-      }
-
-      TypeId type=currentNode.paths[pathIndex].type;
-
-      return type<speeds.size() && speeds[type]>0.0;
-    }
-
-    inline bool CanUse(const Area& area) const
-    {
-      if (area.rings.size()!=1) {
-        return false;
-      }
-
-      TypeId type=area.rings[0].GetType();
-
-      return type<speeds.size() && speeds[type]>0.0;
-    }
-
-    inline bool CanUse(const Way& way) const
-    {
-      TypeId type=way.GetType();
-
-      if (type>=speeds.size() || speeds[type]<=0.0) {
-        return false;
-      }
-
-      switch (vehicle) {
-      case vehicleFoot:
-        return way.GetAttributes().GetAccess().CanRouteFoot();
-        break;
-      case vehicleBicycle:
-        return way.GetAttributes().GetAccess().CanRouteBicycle();
-        break;
-      case vehicleCar:
-        return way.GetAttributes().GetAccess().CanRouteCar();
-        break;
-      }
-
-      return false;
-    }
-
-    inline bool CanUseForward(const Way& way) const
-    {
-      TypeId type=way.GetType();
-
-      if (type>=speeds.size() || speeds[type]<=0.0) {
-        return false;
-      }
-
-      switch (vehicle) {
-      case vehicleFoot:
-        return way.GetAttributes().GetAccess().CanRouteFootForward();
-        break;
-      case vehicleBicycle:
-        return way.GetAttributes().GetAccess().CanRouteBicycleForward();
-        break;
-      case vehicleCar:
-        return way.GetAttributes().GetAccess().CanRouteCarForward();
-        break;
-      }
-
-      return false;
-    }
-
-    inline bool CanUseBackward(const Way& way) const
-    {
-      TypeId type=way.GetType();
-
-      if (type>=speeds.size() || speeds[type]<=0.0) {
-        return false;
-      }
-
-      switch (vehicle) {
-      case vehicleFoot:
-        return way.GetAttributes().GetAccess().CanRouteFootBackward();
-        break;
-      case vehicleBicycle:
-        return way.GetAttributes().GetAccess().CanRouteBicycleBackward();
-        break;
-      case vehicleCar:
-        return way.GetAttributes().GetAccess().CanRouteCarBackward();
-        break;
-      }
-
-      return false;
-    }
+    bool CanUse(const RouteNode& currentNode,
+                const std::vector<ObjectVariantData>& objectVariantData,
+                size_t pathIndex) const;
+    bool CanUse(const Area& area) const;
+    bool CanUse(const Way& way) const;
+    bool CanUseForward(const Way& way) const;
+    bool CanUseBackward(const Way& way) const;
 
     inline double GetTime(const Area& area,
                           double distance) const
     {
-      double speed=speeds[area.GetType()];
+      double speed=speeds[area.GetType()->GetIndex()];
 
       speed=std::min(vehicleMaxSpeed,speed);
 
@@ -204,11 +135,14 @@ namespace osmscout {
     {
       double speed;
 
-      if (way.GetMaxSpeed()>0) {
-        speed=way.GetMaxSpeed();
+      MaxSpeedFeatureValue *maxSpeedValue=maxSpeedReader.GetValue(way.GetFeatureValueBuffer());
+
+      if (maxSpeedValue!=NULL &&
+          maxSpeedValue->GetMaxSpeed()>0) {
+        speed=maxSpeedValue->GetMaxSpeed();
       }
       else {
-        speed=speeds[way.GetType()];
+        speed=speeds[way.GetType()->GetIndex()];
       }
 
       speed=std::min(vehicleMaxSpeed,speed);
@@ -218,12 +152,16 @@ namespace osmscout {
   };
 
   /**
+   * \ingroup Routing
    * Profile that defines costs in a way that the shortest way is chosen (cost==distance).
    */
   class OSMSCOUT_API ShortestPathRoutingProfile : public AbstractRoutingProfile
   {
   public:
+    ShortestPathRoutingProfile(const TypeConfigRef& typeConfig);
+
     inline double GetCosts(const RouteNode& currentNode,
+                           const std::vector<ObjectVariantData>& /*objectVariantData*/,
                            size_t pathIndex) const
     {
       return currentNode.paths[pathIndex].distance;
@@ -247,23 +185,32 @@ namespace osmscout {
     }
   };
 
+  typedef std::shared_ptr<ShortestPathRoutingProfile> ShortestPathRoutingProfileRef;
+
   /**
+   * \ingroup Routing
    * Profile that defines costs base of the time the traveling device needs
    * for a certain way resulting in the fastest path chosen (cost=distance/speedForWayType).
    */
   class OSMSCOUT_API FastestPathRoutingProfile : public AbstractRoutingProfile
   {
   public:
+    FastestPathRoutingProfile(const TypeConfigRef& typeConfig);
+
     inline double GetCosts(const RouteNode& currentNode,
+                           const std::vector<ObjectVariantData>& objectVariantData,
                            size_t pathIndex) const
     {
       double speed;
+      size_t index=currentNode.paths[pathIndex].objectIndex;
 
-      if (currentNode.paths[pathIndex].maxSpeed>0) {
-        speed=currentNode.paths[pathIndex].maxSpeed;
+      if (objectVariantData[currentNode.objects[index].objectVariantIndex].maxSpeed>0) {
+        speed=objectVariantData[currentNode.objects[index].objectVariantIndex].maxSpeed;
       }
       else {
-        speed=speeds[currentNode.paths[pathIndex].type];
+        TypeInfoRef type=objectVariantData[currentNode.objects[index].objectVariantIndex].type;
+
+        speed=speeds[type->GetIndex()];
       }
 
       speed=std::min(vehicleMaxSpeed,speed);
@@ -274,7 +221,7 @@ namespace osmscout {
     inline double GetCosts(const Area& area,
                            double distance) const
     {
-      double speed=speeds[area.GetType()];
+      double speed=speeds[area.GetType()->GetIndex()];
 
       speed=std::min(vehicleMaxSpeed,speed);
 
@@ -286,11 +233,14 @@ namespace osmscout {
     {
       double speed;
 
-      if (way.GetMaxSpeed()>0) {
-        speed=way.GetMaxSpeed();
+      MaxSpeedFeatureValue *maxSpeedValue=maxSpeedReader.GetValue(way.GetFeatureValueBuffer());
+
+      if (maxSpeedValue!=NULL &&
+          maxSpeedValue->GetMaxSpeed()>0) {
+        speed=maxSpeedValue->GetMaxSpeed();
       }
       else {
-        speed=speeds[way.GetType()];
+        speed=speeds[way.GetType()->GetIndex()];
       }
 
       speed=std::min(vehicleMaxSpeed,speed);
@@ -307,6 +257,8 @@ namespace osmscout {
       return distance/speed;
     }
   };
+
+  typedef std::shared_ptr<FastestPathRoutingProfile> FastestPathRoutingProfileRef;
 }
 
 #endif

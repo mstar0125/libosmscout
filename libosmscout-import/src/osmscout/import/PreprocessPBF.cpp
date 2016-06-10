@@ -23,6 +23,10 @@
 
 #include <cstdio>
 
+#if defined(HAVE_FCNTL_H)
+  #include <fcntl.h>
+#endif
+
 // We should try to get rid of this!
 #if defined(__WIN32__) || defined(WIN32)
   #include <winsock.h>
@@ -37,37 +41,73 @@
 #include <osmscout/util/File.h>
 #include <osmscout/util/String.h>
 
-#include "osmscout/import/Preprocess.h"
-
 #define MAX_BLOCK_HEADER_SIZE (64*1024)
 #define MAX_BLOB_SIZE         (32*1024*1024)
 #define NANO                  (1000.0*1000.0*1000.0)
 
 namespace osmscout {
 
-  bool ReadBlockHeader(Progress& progress,
-                       FILE* file,
-                       PBF::BlockHeader& blockHeader,
-                       bool silent)
+  bool PreprocessPBF::GetPos(FILE* file,
+                             FileOffset& pos) const
   {
-    char blockHeaderLength[4];
+#if defined(HAVE_FSEEKO)
+    off_t filepos=ftello(file);
 
-    if (fread(blockHeaderLength,sizeof(char),4,file)!=4) {
+    if (filepos==-1) {
+      return false;
+    }
+    else {
+      pos=(FileOffset)filepos;
+    }
+#else
+    long filepos=ftell(file);
+
+    if (filepos==-1) {
+      return false;
+    }
+    else {
+      pos=(FileOffset)filepos;
+    }
+#endif
+
+    return true;
+  }
+
+  void PreprocessPBF::AssureBlockSize(google::protobuf::int32 length)
+  {
+    if (buffer==NULL) {
+      buffer=new char[length];
+      bufferSize=length;
+    }
+    else if (bufferSize<length) {
+      delete buffer;
+      buffer=new char[length];
+      bufferSize=length;
+    }
+  }
+
+  bool PreprocessPBF::ReadBlockHeader(Progress& progress,
+                                      FILE* file,
+                                      PBF::BlockHeader& blockHeader,
+                                      bool silent)
+  {
+    uint32_t blockHeaderLength;
+
+    if (fread(&blockHeaderLength,4,1,file)!=1) {
       if (!silent) {
         progress.Error("Cannot read block header length!");
       }
       return false;
     }
 
-    // ugly!
-    uint32_t length=ntohl(*((uint32_t*)&blockHeaderLength));
+    uint32_t length=ntohl(blockHeaderLength);
 
     if (length==0 || length>MAX_BLOCK_HEADER_SIZE) {
       progress.Error("Block header size invalid!");
       return false;
     }
 
-    char *buffer=new char[length];
+    AssureBlockSize(length);
 
     if (fread(buffer,sizeof(char),length,file)!=length) {
       progress.Error("Cannot read block header!");
@@ -77,80 +117,69 @@ namespace osmscout {
 
     if (!blockHeader.ParseFromArray(buffer,length)) {
       progress.Error("Cannot parse block header!");
-      delete[] buffer;
       return false;
     }
-
-    delete[] buffer;
 
     return true;
   }
 
-  bool ReadHeaderBlock(Progress& progress,
-                       FILE* file,
-                       const PBF::BlockHeader& blockHeader,
-                       PBF::HeaderBlock& headerBlock)
+  bool PreprocessPBF::ReadHeaderBlock(Progress& progress,
+                                      FILE* file,
+                                      const PBF::BlockHeader& blockHeader,
+                                      PBF::HeaderBlock& headerBlock)
   {
-    PBF::Blob blob;
-
-    uint32_t length = blockHeader.datasize();
+    PBF::Blob               blob;
+    google::protobuf::int32 length=blockHeader.datasize();
 
     if (length==0 || length>MAX_BLOB_SIZE) {
       progress.Error("Blob size invalid!");
       return false;
     }
 
-    char *buffer=new char[length];
+    AssureBlockSize(length);
 
-    if (fread(buffer,sizeof(char),length,file)!=length) {
+    if (fread(buffer,sizeof(char),length,file)!=(size_t)length) {
       progress.Error("Cannot read blob!");
-      delete[] buffer;
       return false;
     }
 
     if (!blob.ParseFromArray(buffer,length)) {
       progress.Error("Cannot parse blob!");
-      delete[] buffer;
       return false;
     }
 
-    delete [] buffer;
-
     if (blob.has_raw()) {
       length=(uint32_t)blob.raw().length();
-      buffer = new char[length];
-      memcpy(buffer,blob.raw().data(),length);
+      AssureBlockSize(length);
+      memcpy(buffer,blob.raw().data(),(size_t)length);
     }
-    else if (blob.has_zlib_data()){
+    else if (blob.has_zlib_data()) {
 #if defined(HAVE_LIB_ZLIB)
       length=blob.raw_size();
-      buffer=new char[length];
+      AssureBlockSize(length);
 
       z_stream compressedStream;
 
       compressedStream.next_in=(Bytef*)const_cast<char*>(blob.zlib_data().data());
       compressedStream.avail_in=(uint32_t)blob.zlib_data().size();
       compressedStream.next_out=(Bytef*)buffer;
-      compressedStream.avail_out=length;
+      compressedStream.avail_out=(uInt)length;
       compressedStream.zalloc=Z_NULL;
       compressedStream.zfree=Z_NULL;
       compressedStream.opaque=Z_NULL;
 
       if (inflateInit( &compressedStream)!=Z_OK) {
         progress.Error("Cannot decode zlib compressed blob data!");
-        delete[] buffer;
         return false;
       }
 
       if (inflate(&compressedStream,Z_FINISH)!=Z_STREAM_END) {
         progress.Error("Cannot decode zlib compressed blob data!");
-        delete[] buffer;
         return false;
       }
 
       if (inflateEnd(&compressedStream)!=Z_OK) {
         progress.Error("Cannot decode zlib compressed blob data!");
-        delete[] buffer;
         return false;
       }
 #else
@@ -158,91 +187,80 @@ namespace osmscout {
       return false;
 #endif
     }
-    else if (blob.has_bzip2_data()){
+    else if (blob.has_bzip2_data()) {
       progress.Error("Data is bzip2 encoded but bzip2 support is not enabled!");
       return false;
     }
-    else if (blob.has_lzma_data()){
+    else if (blob.has_lzma_data()) {
       progress.Error("Data is lzma encoded but lzma support is not enabled!");
       return false;
     }
 
     if (!headerBlock.ParseFromArray(buffer,length)) {
       progress.Error("Cannot parse header block!");
-      delete[] buffer;
       return false;
     }
-
-    delete[] buffer;
 
     return true;
   }
 
-  bool ReadPrimitiveBlock(Progress& progress,
-                          FILE* file,
-                          const PBF::BlockHeader& blockHeader,
-                          PBF::PrimitiveBlock& primitiveBlock)
+  bool PreprocessPBF::ReadPrimitiveBlock(Progress& progress,
+                                         FILE* file,
+                                         const PBF::BlockHeader& blockHeader,
+                                         PBF::PrimitiveBlock& primitiveBlock)
   {
-    PBF::Blob blob;
-
-    uint32_t length = blockHeader.datasize();
+    PBF::Blob               blob;
+    google::protobuf::int32 length=blockHeader.datasize();
 
     if (length==0 || length>MAX_BLOB_SIZE) {
       progress.Error("Blob size invalid!");
       return false;
     }
 
-    char *buffer=new char[length];
+    AssureBlockSize(length);
 
-    if (fread(buffer,sizeof(char),length,file)!=length) {
+    if (fread(buffer,sizeof(char),length,file)!=(size_t)length) {
       progress.Error("Cannot read blob!");
-      delete[] buffer;
       return false;
     }
 
     if (!blob.ParseFromArray(buffer,length)) {
       progress.Error("Cannot parse blob!");
-      delete[] buffer;
       return false;
     }
 
-    delete [] buffer;
-
     if (blob.has_raw()) {
       length=(uint32_t)blob.raw().length();
-      buffer = new char[length];
-      memcpy(buffer,blob.raw().data(),length);
+      AssureBlockSize(length);
+      memcpy(buffer,blob.raw().data(),(size_t)length);
     }
-    else if (blob.has_zlib_data()){
+    else if (blob.has_zlib_data()) {
 #if defined(HAVE_LIB_ZLIB)
       length=blob.raw_size();
-      buffer=new char[length];
+      AssureBlockSize(length);
 
       z_stream compressedStream;
 
       compressedStream.next_in=(Bytef*)const_cast<char*>(blob.zlib_data().data());
       compressedStream.avail_in=(uint32_t)blob.zlib_data().size();
       compressedStream.next_out=(Bytef*)buffer;
-      compressedStream.avail_out=length;
+      compressedStream.avail_out=(uInt)length;
       compressedStream.zalloc=Z_NULL;
       compressedStream.zfree=Z_NULL;
       compressedStream.opaque=Z_NULL;
 
       if (inflateInit( &compressedStream)!=Z_OK) {
         progress.Error("Cannot decode zlib compressed blob data!");
-        delete[] buffer;
         return false;
       }
 
       if (inflate(&compressedStream,Z_FINISH)!=Z_STREAM_END) {
         progress.Error("Cannot decode zlib compressed blob data!");
-        delete[] buffer;
         return false;
       }
 
       if (inflateEnd(&compressedStream)!=Z_OK) {
         progress.Error("Cannot decode zlib compressed blob data!");
-        delete[] buffer;
         return false;
       }
 #else
@@ -250,72 +268,76 @@ namespace osmscout {
       return false;
 #endif
     }
-    else if (blob.has_bzip2_data()){
+    else if (blob.has_bzip2_data()) {
       progress.Error("Data is bzip2 encoded but bzip2 support is not enabled!");
       return false;
     }
-    else if (blob.has_lzma_data()){
+    else if (blob.has_lzma_data()) {
       progress.Error("Data is lzma encoded but lzma support is not enabled!");
       return false;
     }
 
     if (!primitiveBlock.ParseFromArray(buffer,length)) {
       progress.Error("Cannot parse primitive block!");
-      delete[] buffer;
       return false;
     }
-
-    delete[] buffer;
 
     return true;
   }
 
-  std::string PreprocessPBF::GetDescription() const
-  {
-    return "PreprocessPBF";
-  }
-
   void PreprocessPBF::ReadNodes(const TypeConfig& typeConfig,
                                 const PBF::PrimitiveBlock& block,
-                                const PBF::PrimitiveGroup& group)
+                                const PBF::PrimitiveGroup& group,
+                                PreprocessorCallback::RawBlockData& data)
   {
+    data.nodeData.reserve(data.nodeData.size()+group.nodes_size());
+
     for (int n=0; n<group.nodes_size(); n++) {
+      PreprocessorCallback::RawNodeData nodeData;
+
       const PBF::Node &inputNode=group.nodes(n);
+
+      nodeData.id=inputNode.id();
+      nodeData.coord.Set((inputNode.lat()*block.granularity()+block.lat_offset())/NANO,
+                         (inputNode.lon()*block.granularity()+block.lon_offset())/NANO);
 
       tagMap.clear();
 
       for (int t=0; t<inputNode.keys_size(); t++) {
-        TagId id=typeConfig.GetTagId(block.stringtable().s(inputNode.keys(t)).c_str());
+        TagId id=typeConfig.GetTagId(block.stringtable().s(inputNode.keys(t)));
 
         if (id!=tagIgnore) {
-          tagMap[id]=block.stringtable().s(inputNode.vals(t));
+          nodeData.tags[id]=block.stringtable().s(inputNode.vals(t));
         }
       }
 
-      ProcessNode(typeConfig,
-                  inputNode.id(),
-                  (inputNode.lon()*block.granularity()+block.lon_offset())/NANO,
-                  (inputNode.lat()*block.granularity()+block.lat_offset())/NANO,
-                  tagMap);
+      data.nodeData.push_back(std::move(nodeData));
     }
   }
 
   void PreprocessPBF::ReadDenseNodes(const TypeConfig& typeConfig,
                                      const PBF::PrimitiveBlock& block,
-                                     const PBF::PrimitiveGroup& group)
+                                     const PBF::PrimitiveGroup& group,
+                                     PreprocessorCallback::RawBlockData& data)
   {
-    const PBF::DenseNodes &dense=group.dense();
-    Id     dId=0;
-    double dLat=0;
-    double dLon=0;
-    int    t=0;
+    const PBF::DenseNodes& dense=group.dense();
+    Id                     dId=0;
+    double                 dLat=0;
+    double                 dLon=0;
+    int                    t=0;
+
+    data.nodeData.reserve(data.nodeData.size()+dense.id_size());
 
     for (int d=0; d<dense.id_size();d++) {
+      PreprocessorCallback::RawNodeData nodeData;
+
       dId+=dense.id(d);
       dLat+=dense.lat(d);
       dLon+=dense.lon(d);
 
-      tagMap.clear();
+      nodeData.id=dId;
+      nodeData.coord.Set((dLat*block.granularity()+block.lat_offset())/NANO,
+                     (dLon*block.granularity()+block.lon_offset())/NANO);
 
       while (true) {
         if (t>=dense.keys_vals_size()) {
@@ -327,78 +349,85 @@ namespace osmscout {
           break;
         }
 
-        TagId id=typeConfig.GetTagId(block.stringtable().s(dense.keys_vals(t)).c_str());
+        TagId id=typeConfig.GetTagId(block.stringtable().s(dense.keys_vals(t)));
 
         if (id!=tagIgnore) {
-          tagMap[id]=block.stringtable().s(dense.keys_vals(t+1));
+          nodeData.tags[id]=block.stringtable().s(dense.keys_vals(t+1));
         }
 
         t+=2;
       }
 
-      ProcessNode(typeConfig,
-                  dId,
-                  (dLon*block.granularity()+block.lon_offset())/NANO,
-                  (dLat*block.granularity()+block.lat_offset())/NANO,
-                  tagMap);
+      data.nodeData.push_back(std::move(nodeData));
     }
   }
 
   void PreprocessPBF::ReadWays(const TypeConfig& typeConfig,
                                const PBF::PrimitiveBlock& block,
-                               const PBF::PrimitiveGroup& group)
+                               const PBF::PrimitiveGroup& group,
+                               PreprocessorCallback::RawBlockData& data)
   {
+    data.wayData.reserve(data.wayData.size()+group.ways_size());
+
     for (int w=0; w<group.ways_size(); w++) {
+      PreprocessorCallback::RawWayData wayData;
+
       const PBF::Way &inputWay=group.ways(w);
 
-      nodes.clear();
-      tagMap.clear();
+      wayData.id=inputWay.id();
 
       for (int t=0; t<inputWay.keys_size(); t++) {
-        TagId id=typeConfig.GetTagId(block.stringtable().s(inputWay.keys(t)).c_str());
+        TagId id=typeConfig.GetTagId(block.stringtable().s(inputWay.keys(t)));
 
         if (id!=tagIgnore) {
-          tagMap[id]=block.stringtable().s(inputWay.vals(t));
+          wayData.tags[id]=block.stringtable().s(inputWay.vals(t));
         }
       }
+
+      wayData.nodes.reserve(inputWay.refs_size());
 
       unsigned long ref=0;
       for (int r=0; r<inputWay.refs_size(); r++) {
         ref+=inputWay.refs(r);
 
-        nodes.push_back(ref);
+        wayData.nodes.push_back(ref);
       }
 
-      ProcessWay(typeConfig,
-                 inputWay.id(),
-                 nodes,
-                 tagMap);
+      data.wayData.push_back(std::move(wayData));
     }
   }
 
   void PreprocessPBF::ReadRelations(const TypeConfig& typeConfig,
                                     const PBF::PrimitiveBlock& block,
-                                    const PBF::PrimitiveGroup& group)
+                                    const PBF::PrimitiveGroup& group,
+                                    PreprocessorCallback::RawBlockData& data)
   {
+    data.relationData.reserve(data.relationData.size()+group.relations_size());
+
     for (int r=0; r<group.relations_size(); r++) {
+      PreprocessorCallback::RawRelationData relationData;
+
       const PBF::Relation &inputRelation=group.relations(r);
 
+      relationData.id=inputRelation.id();
+
       members.clear();
-      tagMap.clear();
 
       for (int t=0; t<inputRelation.keys_size(); t++) {
-        TagId id=typeConfig.GetTagId(block.stringtable().s(inputRelation.keys(t)).c_str());
+        TagId id=typeConfig.GetTagId(block.stringtable().s(inputRelation.keys(t)));
 
         if (id!=tagIgnore) {
-          tagMap[id]=block.stringtable().s(inputRelation.vals(t));
+          relationData.tags[id]=block.stringtable().s(inputRelation.vals(t));
         }
       }
 
+      relationData.members.reserve(inputRelation.types_size());
+
       Id ref=0;
-      for (int r=0; r<inputRelation.types_size();r++) {
+      for (int m=0; m<inputRelation.types_size(); m++) {
         RawRelation::Member member;
 
-        switch (inputRelation.types(r)) {
+        switch (inputRelation.types(m)) {
         case PBF::Relation::NODE:
           member.type=RawRelation::memberNode;
           break;
@@ -410,134 +439,189 @@ namespace osmscout {
           break;
         }
 
-        ref+=inputRelation.memids(r);
+        ref+=inputRelation.memids(m);
 
         member.id=ref;
-        member.role=block.stringtable().s(inputRelation.roles_sid(r));
+        member.role=block.stringtable().s(inputRelation.roles_sid(m));
 
-        members.push_back(member);
+        relationData.members.push_back(member);
       }
 
-      ProcessRelation(typeConfig,
-                      inputRelation.id(),
-                      members,
-                      tagMap);
+      data.relationData.push_back(std::move(relationData));
     }
   }
 
-  bool PreprocessPBF::Import(const ImportParameter& parameter,
-                             Progress& progress,
-                             const TypeConfig& typeConfig)
+  PreprocessPBF::PreprocessPBF(PreprocessorCallback& callback)
+  : buffer(NULL),
+    bufferSize(0),
+    callback(callback)
   {
-    progress.SetAction(std::string("Parsing PBF file '")+parameter.GetMapfile()+"'");
+    // no code
+  }
 
-    FILE* file;
+  PreprocessPBF::~PreprocessPBF()
+  {
+    delete buffer;
+  }
 
-    file=fopen(parameter.GetMapfile().c_str(),"rb");
+  void PreprocessPBF::ProcessBlock(const TypeConfigRef& typeConfig,
+                                   std::unique_ptr<PBF::PrimitiveBlock>&& block)
+  {
+    PreprocessorCallback::RawBlockDataRef blockData(new PreprocessorCallback::RawBlockData());
 
-    if (file==NULL) {
-      progress.Error("Cannot open file!");
-      return false;
-    }
+    for (int currentGroup=0;
+         currentGroup<block->primitivegroup_size();
+         currentGroup++) {
+      const PBF::PrimitiveGroup &group=block->primitivegroup(currentGroup);
 
-    if (!Initialize(parameter)) {
-      return false;
-    }
-
-    // BlockHeader
-
-    PBF::BlockHeader blockHeader;
-
-    if (!ReadBlockHeader(progress,file,blockHeader,false)) {
-      fclose(file);
-      return false;
-    }
-
-    if (blockHeader.type()!="OSMHeader") {
-      progress.Error("File is not an OSM PBF file!");
-      fclose(file);
-      return false;
-    }
-
-    PBF::HeaderBlock headerBlock;
-
-    if (!ReadHeaderBlock(progress,
-                         file,
-                         blockHeader,
-                         headerBlock)) {
-      fclose(file);
-      return false;
-    }
-
-    for (int i=0; i<headerBlock.required_features_size(); i++) {
-      std::string feature=headerBlock.required_features(i);
-      if (feature!="OsmSchema-V0.6" &&
-          feature!="DenseNodes") {
-        progress.Error(std::string("Unsupported feature '")+feature+"'");
-        fclose(file);
-        return false;
+      if (group.nodes_size()>0) {
+        ReadNodes(*typeConfig,
+                  *block,
+                  group,
+                  *blockData);
+      }
+      else if (group.has_dense()) {
+        ReadDenseNodes(*typeConfig,
+                       *block,
+                       group,
+                       *blockData);
+      }
+      else if (group.ways_size()>0) {
+        ReadWays(*typeConfig,
+                 *block,
+                 group,
+                 *blockData);
+      }
+      else if (group.relations_size()>0) {
+        ReadRelations(*typeConfig,
+                      *block,
+                      group,
+                      *blockData);
       }
     }
 
-    nodes.reserve(20000);
-    members.reserve(2000);
+    callback.ProcessBlock(std::move(blockData));
+  }
 
-    while (true) {
+  bool PreprocessPBF::Import(const TypeConfigRef& typeConfig,
+                             const ImportParameter& /*parameter*/,
+                             Progress& progress,
+                             const std::string& filename)
+  {
+    FileOffset fileSize;
+    FileOffset currentPosition;
+
+    progress.SetAction(std::string("Parsing *.osm.pbf file '")+filename+"'");
+
+    try {
+      fileSize=GetFileSize(filename);
+
+      FILE* file;
+
+      file=fopen(filename.c_str(),"rb");
+
+      if (file==NULL) {
+        progress.Error("Cannot open file!");
+        return false;
+      }
+
+      // BlockHeader
+
       PBF::BlockHeader blockHeader;
 
-      if (!ReadBlockHeader(progress,
+      if (!ReadBlockHeader(progress,file,blockHeader,false)) {
+        fclose(file);
+        return false;
+      }
+
+      if (blockHeader.type()!="OSMHeader") {
+        progress.Error("File '"+filename+"' is not an OSM PBF file!");
+        fclose(file);
+        return false;
+      }
+
+      PBF::HeaderBlock headerBlock;
+
+      if (!ReadHeaderBlock(progress,
                            file,
                            blockHeader,
-                           true)) {
-        fclose(file);
-        break;
-      }
-
-      if (blockHeader.type()!="OSMData") {
-        progress.Error("File is not an OSM PBF file!");
+                           headerBlock)) {
         fclose(file);
         return false;
       }
 
-      PBF::PrimitiveBlock block;
-
-      if (!ReadPrimitiveBlock(progress,
-                              file,
-                              blockHeader,
-                              block)) {
-        fclose(file);
-        return false;
+      for (int i=0; i<headerBlock.required_features_size(); i++) {
+        std::string feature=headerBlock.required_features(i);
+        if (feature!="OsmSchema-V0.6" &&
+            feature!="DenseNodes") {
+          progress.Error(std::string("Unsupported feature '")+feature+"'");
+          fclose(file);
+          return false;
+        }
       }
 
-      for (int currentGroup=0;
-           currentGroup<block.primitivegroup_size();
-           currentGroup++) {
-        const PBF::PrimitiveGroup &group=block.primitivegroup(currentGroup);
+      nodes.reserve(20000);
+      members.reserve(2000);
 
-        if (group.nodes_size()>0) {
-          ReadNodes(typeConfig,
-                    block,
-                    group);
+      std::future<void> currentBlockTask;
+
+      while (true) {
+        PBF::BlockHeader blockHeader;
+
+        if (!GetPos(file,
+                    currentPosition)) {
+          progress.Error("Cannot read current position in '"+filename+"'!");
+          fclose(file);
+          return false;
         }
-        else if (group.ways_size()>0) {
-          ReadWays(typeConfig,
-                   block,
-                   group);
+
+        progress.SetProgress(currentPosition,
+                             fileSize);
+
+        if (!ReadBlockHeader(progress,
+                             file,
+                             blockHeader,
+                             true)) {
+          fclose(file);
+          break;
         }
-        else if (group.relations_size()>0) {
-          ReadRelations(typeConfig,
-                        block,
-                        group);
+
+        if (blockHeader.type()!="OSMData") {
+          progress.Error("File '"+filename+"' is not an OSM PBF file!");
+          fclose(file);
+          return false;
         }
-        else if (group.has_dense()) {
-          ReadDenseNodes(typeConfig,
-                         block,
-                         group);
+
+        std::unique_ptr<PBF::PrimitiveBlock> block(new PBF::PrimitiveBlock());
+
+        if (!ReadPrimitiveBlock(progress,
+                                file,
+                                blockHeader,
+                                *block)) {
+          fclose(file);
+          return false;
         }
+
+        if (currentBlockTask.valid()) {
+          currentBlockTask.get();
+        }
+
+        currentBlockTask=std::async(std::launch::async,
+                                    &PreprocessPBF::ProcessBlock,this,
+                                    typeConfig,
+                                    std::move(block));
+      }
+
+      if (currentBlockTask.valid()) {
+        currentBlockTask.get();
       }
     }
+    catch (IOException& e) {
+      progress.Error(e.GetDescription());
+      return false;
+    }
 
-    return Cleanup(progress);
+    return true;
   }
 }
 

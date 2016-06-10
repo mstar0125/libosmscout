@@ -22,6 +22,7 @@
 #include <iostream>
 #include <map>
 
+#include <osmscout/GeoCoord.h>
 #include <osmscout/Node.h>
 
 #include <osmscout/system/Math.h>
@@ -32,22 +33,27 @@
 #include <osmscout/util/String.h>
 
 #include <osmscout/import/RawNode.h>
+#include <osmscout/import/Preprocess.h>
 
 namespace osmscout {
 
-  std::string NodeDataGenerator::GetDescription() const
+  const char* NodeDataGenerator::NODES_TMP="nodes.tmp";
+
+  void NodeDataGenerator::GetDescription(const ImportParameter& /*parameter*/,
+                                                   ImportModuleDescription& description) const
   {
-    return "Generate 'nodes.tmp'";
+    description.SetName("NodeDataGenerator");
+    description.SetDescription("Convert raw nodes to nodes");
+
+    description.AddRequiredFile(Preprocess::RAWNODES_DAT);
+
+    description.AddProvidedTemporaryFile(NODES_TMP);
   }
 
-  bool NodeDataGenerator::Import(const ImportParameter& parameter,
-                                 Progress& progress,
-                                 const TypeConfig& typeConfig)
+  bool NodeDataGenerator::Import(const TypeConfigRef& typeConfig,
+                                 const ImportParameter& parameter,
+                                 Progress& progress)
   {
-    double   minLon=-10.0;
-    double   minLat=-10.0;
-    double   maxLon=10.0;
-    double   maxLat=10.0;
     uint32_t rawNodeCount=0;
     uint32_t nodesReadCount=0;
     uint32_t nodesWrittenCount=0;
@@ -64,117 +70,61 @@ namespace osmscout {
     FileScanner scanner;
     FileWriter  writer;
 
-    if (!scanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
-                                      "rawnodes.dat"),
-                      FileScanner::Sequential,
-                      parameter.GetRawNodeDataMemoryMaped())) {
-      progress.Error("Cannot open 'rawnodes.dat'");
-      return false;
-    }
+    try {
+      scanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
+                                   Preprocess::RAWNODES_DAT),
+                   FileScanner::Sequential,
+                   parameter.GetRawNodeDataMemoryMaped());
 
-    if (!scanner.Read(rawNodeCount)) {
-      progress.Error("Error while reading number of data entries in file");
-      return false;
-    }
+      scanner.Read(rawNodeCount);
 
-    if (!writer.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
-                                     "nodes.tmp"))) {
-      progress.Error("Cannot create 'nodes.tmp'");
-      return false;
-    }
+      writer.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
+                                  NODES_TMP));
 
-    writer.Write(nodesWrittenCount);
+      writer.Write(nodesWrittenCount);
 
-    for (uint32_t n=1; n<=rawNodeCount; n++) {
-      progress.SetProgress(n,rawNodeCount);
+      for (uint32_t n=1; n<=rawNodeCount; n++) {
+        progress.SetProgress(n,rawNodeCount);
 
-      RawNode rawNode;
-      Node    node;
+        RawNode rawNode;
+        Node    node;
 
-      if (!rawNode.Read(scanner)) {
-        progress.Error(std::string("Error while reading data entry ")+
-                       NumberToString(n)+" of "+
-                       NumberToString(rawNodeCount)+
-                       " in file '"+
-                       scanner.GetFilename()+"'");
-        return false;
-      }
+        rawNode.Read(*typeConfig,
+                     scanner);
 
-      if (nodesReadCount==0) {
-        minLat=rawNode.GetLat();
-        minLon=rawNode.GetLon();
-        maxLat=rawNode.GetLat();
-        maxLon=rawNode.GetLon();
-      }
-      else {
-        minLat=std::min(minLat,rawNode.GetLat());
-        minLon=std::min(minLon,rawNode.GetLon());
-        maxLat=std::max(maxLat,rawNode.GetLat());
-        maxLon=std::max(maxLon,rawNode.GetLon());
-      }
+        nodesReadCount++;
 
-      nodesReadCount++;
-
-      if (rawNode.GetType()!=typeIgnore &&
-          !typeConfig.GetTypeInfo(rawNode.GetType()).GetIgnore()) {
-        std::vector<Tag> tags(rawNode.GetTags());
-
-        node.SetType(rawNode.GetType());
-        node.SetCoords(rawNode.GetCoords());
-        node.SetTags(progress,
-                     typeConfig,
-                     tags);
-
-        FileOffset fileOffset;
-
-        if (!writer.GetPos(fileOffset)) {
-          progress.Error(std::string("Error while reading current fileOffset in file '")+
-                         writer.GetFilename()+"'");
-          return false;
+        if (rawNode.GetType()->GetIgnore()) {
+          continue;
         }
 
+        node.SetFeatures(rawNode.GetFeatureValueBuffer());
+        node.SetCoords(rawNode.GetCoords());
+
+        writer.Write((uint8_t)osmRefNode);
         writer.Write(rawNode.GetId());
-        node.Write(writer);
+        node.Write(*typeConfig,
+                   writer);
 
         nodesWrittenCount++;
       }
 
+      scanner.Close();
+
+      writer.SetPos(0);
+      writer.Write(nodesWrittenCount);
+      writer.Close();
     }
+    catch (IOException& e) {
+      progress.Error(e.GetDescription());
 
-    if (!scanner.Close()) {
-      return false;
-    }
+      scanner.CloseFailsafe();
+      writer.CloseFailsafe();
 
-    writer.SetPos(0);
-    writer.Write(nodesWrittenCount);
-
-    if (!writer.Close()) {
       return false;
     }
 
     progress.Info(std::string("Read "+NumberToString(nodesReadCount)+" nodes, wrote "+NumberToString(nodesWrittenCount)+" nodes"));
-
-    progress.SetAction("Generating bounding.dat");
-
-    if (!writer.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
-                                     "bounding.dat"))) {
-      progress.Error("Cannot create 'bounding.dat'");
-      return false;
-    }
-
-    // TODO: Dump bounding box to debug
-
-    uint32_t minLatDat=(uint32_t)floor((minLat+90.0)*conversionFactor+0.5);
-    uint32_t minLonDat=(uint32_t)floor((minLon+180.0)*conversionFactor+0.5);
-    uint32_t maxLatDat=(uint32_t)floor((maxLat+90.0)*conversionFactor+0.5);
-    uint32_t maxLonDat=(uint32_t)floor((maxLon+180.0)*conversionFactor+0.5);
-
-    writer.WriteNumber(minLatDat);
-    writer.WriteNumber(minLonDat);
-    writer.WriteNumber(maxLatDat);
-    writer.WriteNumber(maxLonDat);
-
-    writer.Close();
 
     return true;
   }

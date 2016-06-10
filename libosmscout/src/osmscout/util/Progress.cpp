@@ -61,6 +61,24 @@ namespace osmscout {
     // no code
   }
 
+  void Progress::SetProgress(unsigned int /*current*/,
+                             unsigned int /*total*/)
+  {
+    // no code
+  }
+
+  void Progress::SetProgress(unsigned long /*current*/,
+                             unsigned long /*total*/)
+  {
+    // no code
+  }
+
+  void Progress::SetProgress(unsigned long long /*current*/,
+                             unsigned long long /*total*/)
+  {
+    // no code
+  }
+
   void Progress::Debug(const std::string& /*text*/)
   {
     // no code
@@ -81,6 +99,10 @@ namespace osmscout {
     // no code
   }
 
+  SilentProgress::~SilentProgress()
+  {
+    // no code
+  }
 
   void ConsoleProgress::SetStep(const std::string& step)
   {
@@ -109,7 +131,22 @@ namespace osmscout {
       lastProgressDump=now;
       std::cout << "   % " << std::setiosflags(std::ios::fixed) << std::setprecision(2) << current/total*100 << " (" << std::setprecision(0) << current << "/" << std::setprecision(0) << total << ")" << std::endl;
     }
+  }
 
+  void ConsoleProgress::SetProgress(unsigned int current, unsigned int total)
+  {
+    SetProgress((double)current, (double)total);
+  }
+  
+  void ConsoleProgress::SetProgress(unsigned long current, unsigned long total)
+  {
+    SetProgress((double)current,(double)total);
+  }
+
+  void ConsoleProgress::SetProgress(unsigned long long current,
+                                    unsigned long long total)
+  {
+    SetProgress((double)current,(double)total);
   }
 
   void ConsoleProgress::Debug(const std::string& text)

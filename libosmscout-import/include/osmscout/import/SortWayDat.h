@@ -28,33 +28,19 @@ namespace osmscout {
 
   class SortWayDataGenerator : public SortDataGenerator<Way>
   {
+  public:
+    static const char* WAYADDRESS_DAT;
+
   private:
     void GetTopLeftCoordinate(const Way& data,
-                              double& maxLat,
-                              double& minLon)
-    {
-      maxLat=data.nodes[0].GetLat();
-      minLon=data.nodes[0].GetLon();
-
-      for (size_t n=1; n<data.nodes.size(); n++) {
-        maxLat=std::max(maxLat,data.nodes[n].GetLat());
-        minLon=std::min(minLon,data.nodes[n].GetLon());
-      }
-    }
+                              GeoCoord& coord);
 
   public:
-    SortWayDataGenerator()
-    : SortDataGenerator<Way>("ways.dat","ways.idmap")
-    {
-      AddSource(osmRefWay,"wayway.dat");
-    }
+    SortWayDataGenerator();
 
-    std::string GetDescription() const
-    {
-      return "Sort/copy ways";
-    }
+    void GetDescription(const ImportParameter& parameter,
+                        ImportModuleDescription& description) const;
   };
-
 }
 
 #endif

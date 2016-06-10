@@ -22,27 +22,44 @@
 
 #include <cstdio>
 #include <string>
+#include <vector>
+
+#include <osmscout/private/CoreImportExport.h>
 
 #include <osmscout/CoreFeatures.h>
 
 #include <osmscout/GeoCoord.h>
+#include <osmscout/ObjectRef.h>
+#include <osmscout/Point.h>
 #include <osmscout/Types.h>
+
+#include <osmscout/util/Exception.h>
 
 namespace osmscout {
 
+  /**
+    \ingroup File
+
+    FileScanner implements platform independent writing to data in files.
+    It uses C standard library FILE internally and wraps it to offer
+    a number of convenience methods.
+    */
   class OSMSCOUT_API FileWriter
   {
   private:
-    std::string filename;
-    std::FILE   *file;
-    bool        hasError;
+    std::string          filename;    //!< The filename
+    std::FILE            *file;       //!< The low level FILE object
+    bool                 hasError;    //!< Flag for signaling that the stream has errors
+    std::vector<int32_t> deltaBuffer; //!< Temporary storage for deltas for storing of std::vector<GeoCoord>
+    std::vector<uint8_t> byteBuffer;  //!< Temporary data buffer for storing of std::vector<GeoCoord>
 
   public:
     FileWriter();
     virtual ~FileWriter();
 
-    bool Open(const std::string& filename);
-    bool Close();
+    void Open(const std::string& filename);
+    void Close();
+    void CloseFailsafe();
     inline bool IsOpen() const
     {
       return file!=NULL;
@@ -55,50 +72,74 @@ namespace osmscout {
 
     std::string GetFilename() const;
 
-    bool GetPos(FileOffset &pos);
-    bool SetPos(FileOffset pos);
+    FileOffset GetPos();
+    void SetPos(FileOffset pos);
+    void GotoBegin();
 
-    bool Write(const char* buffer, size_t bytes);
+    void Write(const char* buffer, size_t bytes);
 
-    bool Write(const std::string& value);
+    void Write(const std::string& value);
 
-    bool Write(bool boolean);
+    void Write(bool boolean);
 
-    bool Write(int8_t number);
-    bool Write(int16_t number);
-    bool Write(int32_t number);
-#if defined(OSMSCOUT_HAVE_INT64_T)
-    bool Write(int64_t number);
-#endif
+    void Write(int8_t number);
+    void Write(int16_t number);
+    void Write(int32_t number);
+    void Write(int64_t number);
 
-    bool Write(uint8_t number);
-    bool Write(uint16_t number);
-    bool Write(uint32_t number);
-#if defined(OSMSCOUT_HAVE_UINT64_T)
-    bool Write(uint64_t number);
-#endif
+    void Write(uint8_t number);
+    void Write(uint16_t number);
+    void Write(uint32_t number);
+    void Write(uint64_t number);
 
-    bool WriteFileOffset(FileOffset offset);
-    bool WriteFileOffset(FileOffset offset,
+    void Write(uint16_t number, size_t bytes);
+    void Write(uint32_t number, size_t bytes);
+    void Write(uint64_t number, size_t bytes);
+
+    void Write(const ObjectFileRef& ref);
+
+    void WriteFileOffset(FileOffset offset);
+    void WriteFileOffset(FileOffset offset,
                          size_t bytes);
 
-    bool WriteNumber(int16_t number);
-    bool WriteNumber(int32_t number);
-#if defined(OSMSCOUT_HAVE_INT64_T)
-    bool WriteNumber(int64_t number);
-#endif
+    void WriteNumber(int16_t number);
+    void WriteNumber(int32_t number);
+    void WriteNumber(int64_t number);
 
-    bool WriteNumber(uint16_t number);
-    bool WriteNumber(uint32_t number);
-#if defined(OSMSCOUT_HAVE_UINT64_T)
-    bool WriteNumber(uint64_t number);
-#endif
+    void WriteNumber(uint16_t number);
+    void WriteNumber(uint32_t number);
+    void WriteNumber(uint64_t number);
 
-    bool WriteCoord(const GeoCoord& coord);
-    bool WriteCoord(double lat, double lon);
+    void WriteCoord(const GeoCoord& coord);
+    void WriteInvalidCoord();
 
-    bool Flush();
-    bool FlushCurrentBlockWithZeros(size_t blockSize);
+    void Write(const std::vector<Point>& nodes, bool writeIds);
+
+    void WriteTypeId(TypeId id, uint8_t maxBytes);
+
+    void Flush();
+    void FlushCurrentBlockWithZeros(size_t blockSize);
+  };
+
+  extern OSMSCOUT_API bool IsValidToWrite(const std::vector<Point>& nodes);
+
+  /**
+   * Efficiently (in disk space handling) write a number of (sorted by file offset) ObjectFileRefs.
+   *
+   * Note that the delta between two offsets is limited by sizeof(FileOffset)-2 bits.
+   */
+  class OSMSCOUT_API ObjectFileRefStreamWriter
+  {
+  private:
+    FileWriter& writer;
+    FileOffset  lastFileOffset;
+
+  public:
+    ObjectFileRefStreamWriter(FileWriter& writer);
+
+    void Reset();
+
+    void Write(const ObjectFileRef& ref);
   };
 }
 

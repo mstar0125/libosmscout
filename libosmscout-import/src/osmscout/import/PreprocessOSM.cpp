@@ -48,26 +48,40 @@ namespace osmscout {
     };
 
   private:
-    Context                          context;
-    PreprocessOSM&                   pp;
-    const TypeConfig&                typeConfig;
-    OSMId                            id;
-    double                           lon,lat;
-    std::map<TagId,std::string>      tags;
-    std::vector<OSMId>               nodes;
-    std::vector<RawRelation::Member> members;
+    const TypeConfig&                     typeConfig;
+    Progress&                             progress;
+    PreprocessorCallback&                 callback;
+    Context                               context;
+    OSMId                                 id;
+    double                                lon,lat;
+    TagMap                                tags;
+    std::vector<OSMId>                    nodes;
+    std::vector<RawRelation::Member>      members;
+    size_t                                blockDataSize;
+    PreprocessorCallback::RawBlockDataRef blockData;
 
   public:
-    Parser(PreprocessOSM& pp,
-           const TypeConfig& typeConfig)
-    : pp(pp),
-      typeConfig(typeConfig)
+    Parser(const TypeConfig& typeConfig,
+           Progress& progress,
+           PreprocessorCallback& callback)
+    : typeConfig(typeConfig),
+      progress(progress),
+      callback(callback),
+      context(contextUnknown)
     {
-      context=contextUnknown;
+      // no code
     }
 
     void StartElement(const xmlChar *name, const xmlChar **atts)
     {
+      if (!blockData) {
+        blockData=std::unique_ptr<PreprocessorCallback::RawBlockData>(new PreprocessorCallback::RawBlockData());
+        blockDataSize=0;
+        blockData->nodeData.reserve(10000);
+        blockData->wayData.reserve(10000);
+        blockData->relationData.reserve(10000);
+      }
+
       if (strcmp((const char*)name,"node")==0) {
         const xmlChar *idValue=NULL;
         const xmlChar *latValue=NULL;
@@ -89,7 +103,7 @@ namespace osmscout {
         }
 
         if (idValue==NULL || lonValue==NULL || latValue==NULL) {
-          std::cerr << "Not all required attributes found" << std::endl;
+          progress.Error("Not all required attributes found");
         }
 
         if (!StringToNumber((const char*)idValue,id)) {
@@ -257,40 +271,61 @@ namespace osmscout {
 
     void EndElement(const xmlChar *name)
     {
-      if (strcmp((const char*)name,"node")==0) {
-        pp.ProcessNode(typeConfig,
-                       id,
-                       lon,
-                       lat,
-                       tags);
-        tags.clear();
-        context=contextUnknown;
+      try {
+        if (strcmp((const char*)name,"node")==0) {
+          PreprocessorCallback::RawNodeData data;
+
+          data.id=id;
+          data.coord.Set(lat,lon);
+          data.tags=std::move(tags);
+
+          blockData->nodeData.push_back(std::move(data));
+          blockDataSize++;
+
+          context=contextUnknown;
+        }
+        else if (strcmp((const char*)name,"way")==0) {
+          PreprocessorCallback::RawWayData data;
+
+          data.id=id;
+          data.nodes=std::move(nodes);
+          data.tags=std::move(tags);
+
+          blockData->wayData.push_back(std::move(data));
+          blockDataSize++;
+
+          context=contextUnknown;
+        }
+        else if (strcmp((const char*)name,"relation")==0) {
+          PreprocessorCallback::RawRelationData data;
+
+          data.id=id;
+          data.members=std::move(members);
+          data.tags=std::move(tags);
+
+          blockData->relationData.push_back(std::move(data));
+          blockDataSize++;
+
+          context=contextUnknown;
+        }
+
+        if (blockDataSize>10000) {
+          callback.ProcessBlock(std::move(blockData));
+          blockData=NULL;
+        }
       }
-      else if (strcmp((const char*)name,"way")==0) {
-        pp.ProcessWay(typeConfig,
-                      id,
-                      nodes,
-                      tags);
-        nodes.clear();
-        tags.clear();
-        context=contextUnknown;
+      catch (IOException& e) {
+        progress.Error(e.GetDescription());
       }
-      else if (strcmp((const char*)name,"relation")==0) {
-        pp.ProcessRelation(typeConfig,
-                           id,
-                           members,
-                           tags);
-        members.clear();
-        tags.clear();
-        context=contextUnknown;
+    }
+
+    void EndDocument()
+    {
+      if (blockData) {
+        callback.ProcessBlock(std::move(blockData));
       }
     }
   };
-
-  static xmlEntityPtr GetEntity(void* /*data*/, const xmlChar *name)
-  {
-    return xmlGetPredefinedEntity(name);
-  }
 
   static void StartElement(void *data, const xmlChar *name, const xmlChar **atts)
   {
@@ -306,37 +341,111 @@ namespace osmscout {
     parser->EndElement(name);
   }
 
-  static void StructuredErrorHandler(void */*data*/, xmlErrorPtr error)
+  static xmlEntityPtr GetEntity(void* /*data*/, const xmlChar *name)
+  {
+    return xmlGetPredefinedEntity(name);
+  }
+
+  static void StructuredErrorHandler(void* /*data*/, xmlErrorPtr error)
   {
     std::cerr << "XML error, line " << error->line << ": " << error->message << std::endl;
   }
 
-  std::string PreprocessOSM::GetDescription() const
+  static void WarningHandler(void* /*data*/, const char* msg,...)
   {
-    return "Preprocess";
+    std::cerr << "XML warning:" << msg << std::endl;
   }
 
-  bool PreprocessOSM::Import(const ImportParameter& parameter,
-                             Progress& progress,
-                             const TypeConfig& typeConfig)
+  static void ErrorHandler(void* /*data*/, const char* msg,...)
   {
-    Parser        parser(*this,typeConfig);
-    xmlSAXHandler saxParser;
+    std::cerr << "XML error:" << msg << std::endl;
+  }
 
-    if (!Initialize(parameter)) {
-      return false;
-    }
+  static void StartDocumentHandler(void* /*data*/)
+  {
+    // no code, only for temporary debugging purposes
+  }
+
+  static void EndDocumentHandler(void* data)
+  {
+    Parser* parser=static_cast<Parser*>(data);
+
+    parser->EndDocument();
+  }
+
+  PreprocessOSM::PreprocessOSM(PreprocessorCallback& callback)
+  : callback(callback)
+  {
+    // no code
+  }
+
+  bool PreprocessOSM::Import(const TypeConfigRef& typeConfig,
+                             const ImportParameter& /*parameter*/,
+                             Progress& progress,
+                             const std::string& filename)
+  {
+    progress.SetAction(std::string("Parsing *.osm file '")+filename+"'");
+
+    Parser        parser(*typeConfig,
+                         progress,
+                         callback);
+    FILE             *file;
+    xmlSAXHandler    saxParser;
+    xmlParserCtxtPtr ctxt;
 
     memset(&saxParser,0,sizeof(xmlSAXHandler));
     saxParser.initialized=XML_SAX2_MAGIC;
+
+    saxParser.startDocument=StartDocumentHandler;
+    saxParser.endDocument=EndDocumentHandler;
     saxParser.getEntity=GetEntity;
     saxParser.startElement=StartElement;
     saxParser.endElement=EndElement;
+    saxParser.warning=WarningHandler;
+    saxParser.error=ErrorHandler;
+    saxParser.fatalError=ErrorHandler;
     saxParser.serror=StructuredErrorHandler;
 
-    xmlSAXUserParseFile(&saxParser,&parser,parameter.GetMapfile().c_str());
+    file=fopen(filename.c_str(),"rb");
 
-    return Cleanup(progress);
+    if (file==NULL) {
+      return false;
+    }
+
+    char chars[1024];
+
+    int res=fread(chars,1,4,file);
+    if (res!=4) {
+      fclose(file);
+      return false;
+    }
+
+    ctxt=xmlCreatePushParserCtxt(&saxParser,&parser,chars,res,NULL);
+
+    // Resolve entities, do not do any network communication
+    xmlCtxtUseOptions(ctxt,XML_PARSE_NOENT|XML_PARSE_NONET);
+
+    while ((res=fread(chars,1,sizeof(chars),file))>0) {
+      if (xmlParseChunk(ctxt,chars,res,0)!=0) {
+        xmlParserError(ctxt,"xmlParseChunk");
+        xmlFreeParserCtxt(ctxt);
+        fclose(file);
+
+        return false;
+      }
+    }
+
+    if (xmlParseChunk(ctxt,chars,0,1)!=0) {
+      xmlParserError(ctxt,"xmlParseChunk");
+      xmlFreeParserCtxt(ctxt);
+      fclose(file);
+
+      return false;
+    }
+
+    xmlFreeParserCtxt(ctxt);
+    fclose(file);
+
+    return true;
   }
 }
-

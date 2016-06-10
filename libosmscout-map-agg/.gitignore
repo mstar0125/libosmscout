@@ -1,0 +1,5 @@
+Makefile
+include/makefile
+src/Makefile
+
+include/osmscout/MapAggFeatures.h

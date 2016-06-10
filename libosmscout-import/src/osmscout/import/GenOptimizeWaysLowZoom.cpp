@@ -20,13 +20,20 @@
 #include <osmscout/import/GenOptimizeWaysLowZoom.h>
 
 #include <osmscout/Pixel.h>
+
+#include <osmscout/TypeFeatures.h>
+
 #include <osmscout/Way.h>
+
+#include <osmscout/WayDataFile.h>
+#include <osmscout/OptimizeWaysLowZoom.h>
 
 #include <osmscout/system/Assert.h>
 #include <osmscout/system/Math.h>
 
 #include <osmscout/util/File.h>
 #include <osmscout/util/Geometry.h>
+#include <osmscout/util/GeoBox.h>
 #include <osmscout/util/Number.h>
 #include <osmscout/util/Projection.h>
 #include <osmscout/util/String.h>
@@ -34,8 +41,6 @@
 
 namespace osmscout
 {
-  const char* OptimizeWaysLowZoomGenerator::FILE_WAYSOPT_DAT = "waysopt.dat";
-
   OptimizeWaysLowZoomGenerator::TypeData::TypeData()
   : type(0),
     optLevel(0),
@@ -54,20 +59,24 @@ namespace osmscout
     // no code
   }
 
-  std::string OptimizeWaysLowZoomGenerator::GetDescription() const
+  void OptimizeWaysLowZoomGenerator::GetDescription(const ImportParameter& /*parameter*/,
+                                                    ImportModuleDescription& description) const
   {
-    return "Generate '"+std::string(FILE_WAYSOPT_DAT)+"'";
+    description.SetName("OptimizeWaysLowZoomGenerator");
+    description.SetDescription("Create index for area lookup of reduced resolution ways");
+
+    description.AddRequiredFile(WayDataFile::WAYS_DAT);
+
+    description.AddProvidedOptionalFile(OptimizeWaysLowZoom::FILE_WAYSOPT_DAT);
   }
 
   void OptimizeWaysLowZoomGenerator::GetWayTypesToOptimize(const TypeConfig& typeConfig,
-                                                           std::set<TypeId>& types)
+                                                           std::set<TypeInfoRef>& types)
   {
-    for (std::vector<TypeInfo>::const_iterator type=typeConfig.GetTypes().begin();
-        type!=typeConfig.GetTypes().end();
-        type++) {
-      if (type->GetOptimizeLowZoom() &&
-          type->CanBeWay()) {
-        types.insert(type->GetId());
+    for (auto &type : typeConfig.GetWayTypes()) {
+      if (!type->GetIgnore() &&
+          type->GetOptimizeLowZoom()) {
+        types.insert(type);
       }
     }
   }
@@ -75,9 +84,9 @@ namespace osmscout
   bool OptimizeWaysLowZoomGenerator::WriteTypeData(FileWriter& writer,
                                                    const TypeData& data)
   {
-    assert(data.type!=0);
+    assert(data.type);
 
-    writer.Write(data.type);
+    writer.Write(data.type->GetWayId());
     writer.Write(data.optLevel);
     writer.Write(data.indexLevel);
     writer.Write(data.cellXStart);
@@ -98,11 +107,9 @@ namespace osmscout
     writer.Write(optimizeMaxMap);
     writer.Write((uint32_t)wayTypesData.size());
 
-    for (std::list<TypeData>::const_iterator typeData=wayTypesData.begin();
-        typeData!=wayTypesData.end();
-        typeData++) {
+    for (const auto &typeData : wayTypesData) {
       if (!WriteTypeData(writer,
-                         *typeData)) {
+                         typeData)) {
         return false;
       }
     }
@@ -110,78 +117,75 @@ namespace osmscout
     return true;
   }
 
-  bool OptimizeWaysLowZoomGenerator::GetWays(const ImportParameter& parameter,
+  bool OptimizeWaysLowZoomGenerator::GetWays(const TypeConfig& typeConfig,
+                                             const ImportParameter& parameter,
                                              Progress& progress,
                                              FileScanner& scanner,
-                                             std::set<TypeId>& types,
+                                             std::set<TypeInfoRef>& types,
                                              std::vector<std::list<WayRef> >& ways)
   {
-    uint32_t         wayCount=0;
-    size_t           collectedWaysCount=0;
-    std::set<TypeId> currentTypes(types);
+    uint32_t              wayCount=0;
+    size_t                collectedWaysCount=0;
+    std::set<TypeInfoRef> currentTypes(types);
+    FeatureRef            featureRef(typeConfig.GetFeature(RefFeature::NAME));
 
     progress.SetAction("Collecting way data to optimize");
 
-    if (!scanner.GotoBegin()) {
-      progress.Error("Error while positioning at start of file");
-      return false;
-    }
+    scanner.GotoBegin();
 
-    if (!scanner.Read(wayCount)) {
-      progress.Error("Error while reading number of data entries in file");
-      return false;
-    }
+    scanner.Read(wayCount);
 
     for (uint32_t w=1; w<=wayCount; w++) {
-      WayRef way=new Way();
+      WayRef way=std::make_shared<Way>();
 
-      progress.SetProgress(w,wayCount);
+      progress.SetProgress(w,
+                           wayCount);
 
-      if (!way->Read(scanner)) {
-        progress.Error(std::string("Error while reading data entry ")+
-            NumberToString(w)+" of "+
-            NumberToString(wayCount)+
-            " in file '"+
-            scanner.GetFilename()+"'");
-        return false;
+      way->Read(typeConfig,
+                scanner);
+
+      if (currentTypes.find(way->GetType())==currentTypes.end()) {
+        continue;
       }
 
-      if (currentTypes.find(way->GetType())!=currentTypes.end() &&
-          way->nodes.size()>=2) {
-        ways[way->GetType()].push_back(way);
+      for (size_t f=0; f<way->GetFeatureCount(); f++) {
+        if (way->GetFeature(f).GetFeature()!=featureRef &&
+            way->HasFeature(f)) {
+          way->UnsetFeature(f);
+        }
+      }
 
-        collectedWaysCount++;
+      ways[way->GetType()->GetIndex()].push_back(way);
 
-        while (collectedWaysCount>parameter.GetOptimizationMaxWayCount() &&
-               currentTypes.size()>1) {
-          size_t victimType=ways.size();
+      collectedWaysCount++;
 
-          for (size_t i=0; i<ways.size(); i++) {
-            if (ways[i].size()>0 &&
-                (victimType>=ways.size() ||
-                 ways[i].size()<ways[victimType].size())) {
-              victimType=i;
-            }
-          }
+      while (collectedWaysCount>parameter.GetOptimizationMaxWayCount() &&
+             currentTypes.size()>1) {
+        TypeInfoRef victimType;
 
-          if (victimType<ways.size()) {
-            collectedWaysCount-=ways[victimType].size();
-            ways[victimType].clear();
-            currentTypes.erase(victimType);
+        for (auto &type : currentTypes) {
+          if (ways[type->GetIndex()].size()>0 &&
+              (!victimType ||
+               ways[type->GetIndex()].size()<ways[victimType->GetIndex()].size())) {
+            victimType=type;
           }
         }
+
+        assert(victimType);
+
+        collectedWaysCount-=ways[victimType->GetIndex()].size();
+        ways[victimType->GetIndex()].clear();
+        currentTypes.erase(victimType);
       }
     }
 
-    for (std::set<TypeId>::const_iterator type=currentTypes.begin();
-         type!=currentTypes.end();
-         ++type) {
-      types.erase(*type);
+    for (auto &type : currentTypes) {
+      types.erase(type);
     }
 
     progress.Info("Collected "+NumberToString(collectedWaysCount)+" ways for "+NumberToString(currentTypes.size())+" types");
 
-    return true;
+    return !scanner.HasError();
   }
 
   void OptimizeWaysLowZoomGenerator::MergeWays(Progress& progress,
@@ -193,15 +197,13 @@ namespace osmscout
 
     progress.Info("Merging "+NumberToString(ways.size())+" ways");
 
-    for (std::list<WayRef>::const_iterator way=ways.begin();
-        way!=ways.end();
-        way++) {
-      if ((*way)->ids.front()!=0) {
-        waysByJoin[(*way)->ids.front()].push_back(*way);
+    for (const auto &way : ways) {
+      if (way->GetFrontId()!=0) {
+        waysByJoin[way->GetFrontId()].push_back(way);
       }
 
-      if ((*way)->ids.back()!=0) {
-        waysByJoin[(*way)->ids.back()].push_back(*way);
+      if (way->GetBackId()!=0) {
+        waysByJoin[way->GetBackId()].push_back(way);
       }
     }
 
@@ -223,7 +225,7 @@ namespace osmscout
         while (true) {
           std::map<Id, std::list<WayRef> >::iterator match;
 
-          match=waysByJoin.find(way->ids.front());
+          match=waysByJoin.find(way->GetFrontId());
           if (match!=waysByJoin.end()) {
             std::list<WayRef>::iterator otherWay;
 
@@ -231,7 +233,7 @@ namespace osmscout
             otherWay=match->second.begin();
             while (otherWay!=match->second.end() &&
                    (usedWays.find((*otherWay)->GetFileOffset())!=usedWays.end() ||
-                    way->GetRefName()!=(*otherWay)->GetRefName())) {
+                    way->GetFeatureValueBuffer()!=(*otherWay)->GetFeatureValueBuffer())) {
               otherWay++;
             }
 
@@ -242,7 +244,7 @@ namespace osmscout
               stillOtherWay++;
               while (stillOtherWay!=match->second.end() &&
                      (usedWays.find((*stillOtherWay)->GetFileOffset())!=usedWays.end() ||
-                      way->GetRefName()!=(*stillOtherWay)->GetRefName())) {
+                      way->GetFeatureValueBuffer()!=(*stillOtherWay)->GetFeatureValueBuffer())) {
                 stillOtherWay++;
               }
 
@@ -254,38 +256,30 @@ namespace osmscout
             }
 
             if (otherWay!=match->second.end()) {
-              std::vector<Id>       newIds;
-              std::vector<GeoCoord> newNodes;
+              std::vector<Point> newNodes;
 
-              newIds.reserve(way->ids.size()+(*otherWay)->ids.size()-1);
               newNodes.reserve(way->nodes.size()+(*otherWay)->nodes.size()-1);
 
-              if (way->ids.front()==(*otherWay)->ids.front()) {
+              if (way->GetFrontId()==(*otherWay)->GetFrontId()) {
                 for (size_t i=(*otherWay)->nodes.size()-1; i>0; i--) {
-                  newIds.push_back((*otherWay)->ids[i]);
                   newNodes.push_back((*otherWay)->nodes[i]);
                 }
 
                 for (size_t i=0; i<way->nodes.size(); i++) {
-                  newIds.push_back(way->ids[i]);
                   newNodes.push_back(way->nodes[i]);
                 }
 
-                way->ids=newIds;
                 way->nodes=newNodes;
               }
               else {
                 for (size_t i=0; i<(*otherWay)->nodes.size(); i++) {
-                  newIds.push_back((*otherWay)->ids[i]);
                   newNodes.push_back((*otherWay)->nodes[i]);
                 }
 
                 for (size_t i=1; i<way->nodes.size(); i++) {
-                  newIds.push_back(way->ids[i]);
                   newNodes.push_back(way->nodes[i]);
                 }
 
-                way->ids=newIds;
                 way->nodes=newNodes;
               }
 
@@ -296,7 +290,7 @@ namespace osmscout
             }
           }
 
-          match=waysByJoin.find(way->ids.back());
+          match=waysByJoin.find(way->GetBackId());
           if (match!=waysByJoin.end()) {
             std::list<WayRef>::iterator otherWay;
 
@@ -304,7 +298,7 @@ namespace osmscout
             otherWay=match->second.begin();
             while (otherWay!=match->second.end() &&
                    (usedWays.find((*otherWay)->GetFileOffset())!=usedWays.end() ||
-                     way->GetRefName()!=(*otherWay)->GetRefName())) {
+                     way->GetFeatureValueBuffer()!=(*otherWay)->GetFeatureValueBuffer())) {
               otherWay++;
             }
 
@@ -315,7 +309,7 @@ namespace osmscout
               stillOtherWay++;
               while (stillOtherWay!=match->second.end() &&
                      (usedWays.find((*stillOtherWay)->GetFileOffset())!=usedWays.end() ||
-                      way->GetRefName()!=(*stillOtherWay)->GetRefName())) {
+                      way->GetFeatureValueBuffer()!=(*stillOtherWay)->GetFeatureValueBuffer())) {
                 stillOtherWay++;
               }
 
@@ -327,12 +321,10 @@ namespace osmscout
             }
 
             if (otherWay!=match->second.end()) {
-              way->ids.reserve(way->ids.size()+(*otherWay)->ids.size()-1);
               way->nodes.reserve(way->nodes.size()+(*otherWay)->nodes.size()-1);
 
-              if (way->ids.back()==(*otherWay)->ids.front()) {
+              if (way->GetBackId()==(*otherWay)->GetFrontId()) {
                 for (size_t i=1; i<(*otherWay)->nodes.size(); i++) {
-                  way->ids.push_back((*otherWay)->ids[i]);
                   way->nodes.push_back((*otherWay)->nodes[i]);
                 }
               }
@@ -340,7 +332,6 @@ namespace osmscout
                 for (size_t i=1; i<(*otherWay)->nodes.size(); i++) {
                   size_t idx=(*otherWay)->nodes.size()-1-i;
 
-                  way->ids.push_back((*otherWay)->ids[idx]);
                   way->nodes.push_back((*otherWay)->nodes[idx]);
                 }
               }
@@ -355,7 +346,7 @@ namespace osmscout
           break;
         }
 
-        newWays.push_back(new Way(*way));
+        newWays.push_back(std::make_shared<Way>(*way));
       }
     }
 
@@ -369,31 +360,24 @@ namespace osmscout
     size_t level=1;//parameter.GetOptimizationMinMag();
 
     while (true) {
-      double                 cellWidth=360.0/pow(2.0,(int)level);
-      double                 cellHeight=180.0/pow(2.0,(int)level);
       std::map<Pixel,size_t> cellFillCount;
 
-      for (std::list<WayRef>::const_iterator w=ways.begin();
-          w!=ways.end();
-          ++w) {
-        WayRef way=*w;
-        // Count number of entries per current type and coordinate
-        double minLon;
-        double maxLon;
-        double minLat;
-        double maxLat;
+      for (const auto& way : ways) {
+        GeoBox boundingBox;
 
-        way->GetBoundingBox(minLon,maxLon,minLat,maxLat);
+        // Count number of entries per current type and coordinate
+
+        way->GetBoundingBox(boundingBox);
 
         //
         // Calculate minimum and maximum tile ids that are covered
         // by the way
         // Renormated coordinate space (everything is >=0)
         //
-        uint32_t minxc=(uint32_t)floor((minLon+180.0)/cellWidth);
-        uint32_t maxxc=(uint32_t)floor((maxLon+180.0)/cellWidth);
-        uint32_t minyc=(uint32_t)floor((minLat+90.0)/cellHeight);
-        uint32_t maxyc=(uint32_t)floor((maxLat+90.0)/cellHeight);
+        uint32_t minxc=(uint32_t)floor((boundingBox.GetMinLon()+180.0)/cellDimension[level].width);
+        uint32_t maxxc=(uint32_t)floor((boundingBox.GetMaxLon()+180.0)/cellDimension[level].width);
+        uint32_t minyc=(uint32_t)floor((boundingBox.GetMinLat()+90.0)/cellDimension[level].height);
+        uint32_t maxyc=(uint32_t)floor((boundingBox.GetMaxLat()+90.0)/cellDimension[level].height);
 
         for (uint32_t y=minyc; y<=maxyc; y++) {
           for (uint32_t x=minxc; x<=maxxc; x++) {
@@ -455,33 +439,32 @@ namespace osmscout
                                                   std::list<WayRef>& optimizedWays,
                                                   size_t width,
                                                   size_t height,
+                                                  double dpi,
+                                                  double pixel,
                                                   const Magnification& magnification,
                                                   TransPolygon::OptimizeMethod optimizeWayMethod)
   {
     MercatorProjection projection;
 
-    projection.Set(0,0,magnification,width,height);
+    projection.Set(0,0,magnification,dpi,width,height);
 
-    for (std::list<WayRef>::const_iterator w=ways.begin();
-         w!=ways.end();
-         ++w) {
-      WayRef                way(*w);
-      TransPolygon          polygon;
-      std::vector<GeoCoord> newNodes;
-      double                xmin;
-      double                xmax;
-      double                ymin;
-      double                ymax;
+    for (auto &way :ways) {
+      TransPolygon       polygon;
+      std::vector<Point> newNodes;
+      double             xmin;
+      double             xmax;
+      double             ymin;
+      double             ymax;
 
       polygon.TransformWay(projection,
                            optimizeWayMethod,
                            way->nodes,
-                           1.0);
+                           pixel/8);
 
       polygon.GetBoundingBox(xmin,ymin,xmax,ymax);
 
-      if (xmax-xmin<=1.0 &&
-          ymax-ymin<=1.0) {
+      if (xmax-xmin<=pixel &&
+          ymax-ymin<=pixel) {
         continue;
       }
 
@@ -495,7 +478,7 @@ namespace osmscout
         }
       }
 
-      WayRef copiedWay=new Way(*way);
+      WayRef copiedWay=std::make_shared<Way>(*way);
 
       copiedWay->nodes=newNodes;
 
@@ -503,26 +486,17 @@ namespace osmscout
     }
   }
 
-  bool OptimizeWaysLowZoomGenerator::WriteWays(FileWriter& writer,
+  void OptimizeWaysLowZoomGenerator::WriteWays(const TypeConfig& typeConfig,
+                                               FileWriter& writer,
                                                const std::list<WayRef>& ways,
                                                FileOffsetFileOffsetMap& offsets)
   {
-    for (std::list<WayRef>::const_iterator w=ways.begin();
-        w!=ways.end();
-        w++) {
-      WayRef     way(*w);
-      FileOffset offset;
+    for (const auto &way : ways) {
+      offsets[way->GetFileOffset()]=writer.GetPos();
 
-      writer.GetPos(offset);
-
-      offsets[way->GetFileOffset()]=offset;
-
-      if (!way->WriteOptimized(writer)) {
-        return false;
-      }
+      way->WriteOptimized(typeConfig,
+                          writer);
     }
-
-    return true;
   }
 
   bool OptimizeWaysLowZoomGenerator::WriteWayBitmap(Progress& progress,
@@ -536,35 +510,29 @@ namespace osmscout
       return true;
     }
 
-    double                                 cellWidth=360.0/pow(2.0,(int)data.indexLevel);
-    double                                 cellHeight=180.0/pow(2.0,(int)data.indexLevel);
+    double                                 cellWidth=cellDimension[data.indexLevel].width;
+    double                                 cellHeight=cellDimension[data.indexLevel].height;
     std::map<Pixel,std::list<FileOffset> > cellOffsets;
 
-    for (std::list<WayRef>::const_iterator w=ways.begin();
-        w!=ways.end();
-        w++) {
-      WayRef                          way(*w);
-      double                          minLon;
-      double                          maxLon;
-      double                          minLat;
-      double                          maxLat;
+    for (const auto &way : ways) {
+      GeoBox                                  boundingBox;
       FileOffsetFileOffsetMap::const_iterator offset=offsets.find(way->GetFileOffset());
 
       if (offset==offsets.end()) {
         continue;
       }
 
-      way->GetBoundingBox(minLon,maxLon,minLat,maxLat);
+      way->GetBoundingBox(boundingBox);
 
       //
       // Calculate minimum and maximum tile ids that are covered
       // by the way
       // Renormated coordinate space (everything is >=0)
       //
-      uint32_t minxc=(uint32_t)floor((minLon+180.0)/cellWidth);
-      uint32_t maxxc=(uint32_t)floor((maxLon+180.0)/cellWidth);
-      uint32_t minyc=(uint32_t)floor((minLat+90.0)/cellHeight);
-      uint32_t maxyc=(uint32_t)floor((maxLat+90.0)/cellHeight);
+      uint32_t minxc=(uint32_t)floor((boundingBox.GetMinLon()+180.0)/cellWidth);
+      uint32_t maxxc=(uint32_t)floor((boundingBox.GetMaxLon()+180.0)/cellWidth);
+      uint32_t minyc=(uint32_t)floor((boundingBox.GetMinLat()+90.0)/cellHeight);
+      uint32_t maxyc=(uint32_t)floor((boundingBox.GetMaxLat()+90.0)/cellHeight);
 
       for (uint32_t y=minyc; y<=maxyc; y++) {
         for (uint32_t x=minxc; x<=maxxc; x++) {
@@ -596,7 +564,7 @@ namespace osmscout
       }
     }
 
-    data.dataOffsetBytes=BytesNeeededToAddressFileData(dataSize);
+    data.dataOffsetBytes=BytesNeededToEncodeNumber(dataSize);
 
     progress.Info("Writing map for level "+
                   NumberToString(data.optLevel)+", index level "+
@@ -605,10 +573,7 @@ namespace osmscout
                   NumberToString(indexEntries)+" entries, "+
                   ByteSizeToString(1.0*data.cellXCount*data.cellYCount*data.dataOffsetBytes+dataSize));
 
-    if (!writer.GetPos(data.bitmapOffset)) {
-      progress.Error("Cannot get type index start position in file");
-      return false;
-    }
+    data.bitmapOffset=writer.GetPos();
 
     // Write the bitmap with offsets for each cell
     // We prefill with zero and only overrite cells that have data
@@ -622,10 +587,7 @@ namespace osmscout
 
     FileOffset dataStartOffset;
 
-    if (!writer.GetPos(dataStartOffset)) {
-      progress.Error("Cannot get start of data section after bitmap");
-      return false;
-    }
+    dataStartOffset=writer.GetPos();
 
     // Now write the list of offsets of objects for every cell with content
     for (std::map<Pixel,std::list<FileOffset> >::const_iterator cell=cellOffsets.begin();
@@ -637,250 +599,222 @@ namespace osmscout
       FileOffset previousOffset=0;
       FileOffset cellOffset;
 
-      if (!writer.GetPos(cellOffset)) {
-        progress.Error("Cannot get cell start position in file");
-        return false;
-      }
+      cellOffset=writer.GetPos();
 
-      if (!writer.SetPos(bitmapCellOffset)) {
-        progress.Error("Cannot go to cell start position in file");
-        return false;
-      }
+      writer.SetPos(bitmapCellOffset);
 
       writer.WriteFileOffset(cellOffset-dataStartOffset,
                              data.dataOffsetBytes);
 
-      if (!writer.SetPos(cellOffset)) {
-        progress.Error("Cannot go back to cell start position in file");
-        return false;
-      }
+      writer.SetPos(cellOffset);
 
       writer.WriteNumber((uint32_t)cell->second.size());
 
-      for (std::list<FileOffset>::const_iterator offset=cell->second.begin();
-           offset!=cell->second.end();
-           ++offset) {
-        writer.WriteNumber((FileOffset)(*offset-previousOffset));
+      for (const auto& offset : cell->second) {
+        writer.WriteNumber((FileOffset)(offset-previousOffset));
 
-        previousOffset=*offset;
+        previousOffset=offset;
       }
     }
 
-    return true;
+    return !writer.HasError();
   }
 
   bool OptimizeWaysLowZoomGenerator::HandleWays(const ImportParameter& parameter,
                                                 Progress& progress,
                                                 const TypeConfig& typeConfig,
                                                 FileWriter& writer,
-                                                const std::set<TypeId>& types,
+                                                const std::set<TypeInfoRef>& types,
                                                 std::list<TypeData>& typesData)
   {
     FileScanner   scanner;
     Magnification magnification; // Magnification, we optimize for
+    // Everything smaller than 2mm should get dropped. Width, height and DPI come from the Nexus 4
+    double        dpi=320.0;
+    double        pixel=0.5 /* mm */ * dpi / 25.4 /* inch */;
 
     magnification.SetLevel((uint32_t)parameter.GetOptimizationMaxMag());
 
-    if (!scanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
-                                      "ways.dat"),
-                      FileScanner::Sequential,
-                      parameter.GetWayDataMemoryMaped())) {
-      progress.Error("Cannot open 'ways.dat'");
-      return false;
-    }
+    try {
+      scanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
+                                   WayDataFile::WAYS_DAT),
+                   FileScanner::Sequential,
+                   parameter.GetWayDataMemoryMaped());
 
-    std::set<TypeId>                typesToProcess(types);
-    std::vector<std::list<WayRef> > allWays(typeConfig.GetTypes().size());
+      std::set<TypeInfoRef>           typesToProcess(types);
+      std::vector<std::list<WayRef> > allWays(typeConfig.GetTypeCount());
 
-    while (true) {
-      //
-      // Load type data
-      //
+      while (true) {
+        //
+        // Load type data
+        //
 
-      if (!GetWays(parameter,
-                   progress,
-                   scanner,
-                   typesToProcess,
-                   allWays)) {
-        return false;
-      }
-
-      for (size_t type=0; type<allWays.size(); type++) {
-        if (allWays[type].empty()) {
-          continue;
+        if (!GetWays(typeConfig,
+                     parameter,
+                     progress,
+                     scanner,
+                     typesToProcess,
+                     allWays)) {
+          return false;
         }
 
-        progress.SetAction("Optimizing type "+ typeConfig.GetTypeInfo(type).GetName()+" ("+NumberToString(type)+")");
-
-        //
-        // Join ways
-        //
-
-        std::list<WayRef> newWays;
-
-        MergeWays(progress,
-                  allWays[type],
-                  newWays);
-
-        allWays[type].clear();
-
-        if (newWays.empty()) {
-          continue;
-        }
-
-        /*
-        size_t origWays=newWays.size();
-        size_t origNodes=0;
-
-        for (std::list<WayRef>::const_iterator w=newWays.begin();
-            w!=newWays.end();
-            ++w) {
-          WayRef way(*w);
-
-          origNodes+=way->nodes.size();
-        }*/
-
-        //
-        // Transform/Optimize the way and store it
-        //
-
-        for (uint32_t level=parameter.GetOptimizationMinMag();
-             level<=parameter.GetOptimizationMaxMag();
-             level++) {
-          Magnification     magnification; // Magnification, we optimize for
-          std::list<WayRef> optimizedWays;
-
-          magnification.SetLevel(level);
-
-          // TODO: Wee need to make import parameters for the width and the height
-          OptimizeWays(newWays,
-                       optimizedWays,
-                       800,640,
-                       magnification,
-                       parameter.GetOptimizationWayMethod());
-
-          /*
-          size_t optWays=optimizedWays.size();
-          size_t optNodes=0;
-
-          for (std::list<WayRef>::const_iterator w=optimizedWays.begin();
-              w!=optimizedWays.end();
-              ++w) {
-            WayRef way(*w);
-
-            optNodes+=way->nodes.size();
-          }*/
-
-          /*
-          std::cout << "Ways: " << origWays << " => " << optWays << std::endl;
-          std::cout << "Nodes: " << origNodes << " => " << optNodes << std::endl;*/
-
-          if (optimizedWays.empty()) {
-            progress.Info("Empty optimization result for level "+NumberToString(level)+", no index generated");
-
-            TypeData typeData;
-
-            typeData.type=type;
-            typeData.optLevel=level;
-
-            typesData.push_back(typeData);
+        for (size_t type=0; type<allWays.size(); type++) {
+          if (allWays[type].empty()) {
             continue;
           }
 
-          TypeData typeData;
+          progress.SetAction("Optimizing type "+ typeConfig.GetTypeInfo(type)->GetName());
 
-          typeData.type=type;
-          typeData.optLevel=level;
+          //
+          // Join ways
+          //
 
-          GetWayIndexLevel(parameter,
-                           optimizedWays,
-                           typeData);
+          std::list<WayRef> newWays;
 
+          MergeWays(progress,
+                    allWays[type],
+                    newWays);
 
-          FileOffsetFileOffsetMap offsets;
+          allWays[type].clear();
 
-          if (!WriteWays(writer,
+          if (newWays.empty()) {
+            continue;
+          }
+
+          //
+          // Transform/Optimize the way and store it
+          //
+
+          for (uint32_t level=parameter.GetOptimizationMinMag();
+               level<=parameter.GetOptimizationMaxMag();
+               level++) {
+            Magnification     magnification; // Magnification, we optimize for
+            std::list<WayRef> optimizedWays;
+
+            magnification.SetLevel(level);
+
+            // TODO: Wee need to make import parameters for the width and the height
+            OptimizeWays(newWays,
                          optimizedWays,
-                         offsets)) {
-            return false;
+                         1280,768,
+                         dpi,
+                         pixel,
+                         magnification,
+                         parameter.GetOptimizationWayMethod());
+
+            if (optimizedWays.empty()) {
+              progress.Debug("Empty optimization result for level "+NumberToString(level)+", no index bitmap generated");
+
+              TypeData typeData;
+
+              typeData.type=typeConfig.GetTypeInfo(type);
+              typeData.optLevel=level;
+
+              typesData.push_back(typeData);
+              continue;
+            }
+
+            TypeData typeData;
+
+            typeData.type=typeConfig.GetTypeInfo(type);
+            typeData.optLevel=level;
+
+            GetWayIndexLevel(parameter,
+                             optimizedWays,
+                             typeData);
+
+
+            FileOffsetFileOffsetMap offsets;
+
+            WriteWays(typeConfig,
+                      writer,
+                      optimizedWays,
+                      offsets);
+
+            if (!WriteWayBitmap(progress,
+                                writer,
+                                optimizedWays,
+                                offsets,
+                                typeData)) {
+              return false;
+            }
+
+            typesData.push_back(typeData);
+
+            optimizedWays.clear();
           }
 
-          if (!WriteWayBitmap(progress,
-                              writer,
-                              optimizedWays,
-                              offsets,
-                              typeData)) {
-            return false;
-          }
-
-          typesData.push_back(typeData);
-
-          optimizedWays.clear();
+          newWays.clear();
         }
 
-        newWays.clear();
+        if (typesToProcess.empty()) {
+          break;
+        }
       }
 
-      if (typesToProcess.empty()) {
-        break;
-      }
+      scanner.Close();
+    }
+    catch (IOException& e) {
+      progress.Error(e.GetDescription());
+      return false;
     }
 
-    return !scanner.HasError() && scanner.Close();
+    return true;
   }
 
-  bool OptimizeWaysLowZoomGenerator::Import(const ImportParameter& parameter,
-                                            Progress& progress,
-                                            const TypeConfig& typeConfig)
+  bool OptimizeWaysLowZoomGenerator::Import(const TypeConfigRef& typeConfig,
+                                            const ImportParameter& parameter,
+                                            Progress& progress)
   {
-    FileOffset           indexOffset=0;
-    FileWriter           writer;
-    Magnification        magnification; // Magnification, we optimize for
-    std::set<TypeId>     wayTypes;         // Types we optimize
-    std::list<TypeData>  wayTypesData;
+    FileOffset            indexOffset=0;
+    FileWriter            writer;
+    Magnification         magnification; // Magnification, we optimize for
+    std::set<TypeInfoRef> wayTypes;         // Types we optimize
+    std::list<TypeData>   wayTypesData;
 
-    GetWayTypesToOptimize(typeConfig,wayTypes);
+    GetWayTypesToOptimize(*typeConfig,
+                          wayTypes);
 
-    if (!writer.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
-                                     FILE_WAYSOPT_DAT))) {
-      progress.Error("Cannot create '"+std::string(FILE_WAYSOPT_DAT)+"'");
+    try {
+      writer.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
+                                  OptimizeWaysLowZoom::FILE_WAYSOPT_DAT));
+
+      //
+      // Write header
+      //
+
+      writer.WriteFileOffset(indexOffset);
+
+      if (!HandleWays(parameter,
+                      progress,
+                      *typeConfig,
+                      writer,
+                      wayTypes,
+                      wayTypesData)) {
+        progress.Error("Error while optimizing ways");
+        return false;
+      }
+
+      indexOffset=writer.GetPos();
+
+      if (!WriteHeader(writer,
+                       wayTypesData,
+                       (uint32_t)parameter.GetOptimizationMaxMag())) {
+        progress.Error("Cannot write file header");
+        return false;
+      }
+
+      writer.SetPos(0);
+      writer.WriteFileOffset(indexOffset);
+
+      writer.Close();
+    }
+    catch (IOException& e) {
+      progress.Error(e.GetDescription());
+
+      writer.CloseFailsafe();
+
       return false;
-    }
-
-    //
-    // Write header
-    //
-
-    writer.WriteFileOffset(indexOffset);
-
-    if (!HandleWays(parameter,
-                    progress,
-                    typeConfig,
-                    writer,
-                    wayTypes,
-                    wayTypesData)) {
-      progress.Error("Error while optimizing ways");
-      return false;
-    }
-
-    if (!writer.GetPos(indexOffset)) {
-      progress.Error("Cannot read index start position");
-      return false;
-    }
-
-    if (!WriteHeader(writer,
-                     wayTypesData,
-                    (uint32_t)parameter.GetOptimizationMaxMag())) {
-      progress.Error("Cannot write file header");
-      return false;
-    }
-
-    if (!writer.SetPos(0)) {
-      progress.Error("Cannot read index offset");
-    }
-
-    if (!writer.WriteFileOffset(indexOffset)) {
-      progress.Error("Cannot write index position");
     }
 
     return true;

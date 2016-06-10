@@ -22,23 +22,24 @@
 #include <osmscout/Pixel.h>
 #include <osmscout/Way.h>
 
+#include <osmscout/OptimizeAreasLowZoom.h>
+
 #include <osmscout/system/Assert.h>
 #include <osmscout/system/Math.h>
 
 #include <osmscout/util/File.h>
+#include <osmscout/util/GeoBox.h>
 #include <osmscout/util/Geometry.h>
 #include <osmscout/util/Number.h>
 #include <osmscout/util/Projection.h>
 #include <osmscout/util/String.h>
 #include <osmscout/util/Transformation.h>
+#include <osmscout/AreaDataFile.h>
 
 namespace osmscout
 {
-  const char* OptimizeAreasLowZoomGenerator::FILE_AREASOPT_DAT = "areasopt.dat";
-
   OptimizeAreasLowZoomGenerator::TypeData::TypeData()
-  : type(0),
-    optLevel(0),
+  : optLevel(0),
     indexLevel(0),
     cellXStart(0),
     cellXEnd(0),
@@ -54,30 +55,36 @@ namespace osmscout
     // no code
   }
 
-  std::string OptimizeAreasLowZoomGenerator::GetDescription() const
+  void OptimizeAreasLowZoomGenerator::GetDescription(const ImportParameter& /*parameter*/,
+                                                     ImportModuleDescription& description) const
   {
-    return "Generate '"+std::string(FILE_AREASOPT_DAT)+"'";
+    description.SetName("OptimizeAreasLowZoomGenerator");
+    description.SetDescription("Create index for area lookup of reduced resolution areas");
+
+    description.AddRequiredFile(AreaDataFile::AREAS_DAT);
+
+    description.AddProvidedOptionalFile(OptimizeAreasLowZoom::FILE_AREASOPT_DAT);
   }
 
   void OptimizeAreasLowZoomGenerator::GetAreaTypesToOptimize(const TypeConfig& typeConfig,
-                                                       std::set<TypeId>& types)
+                                                             TypeInfoSet& types)
   {
-    for (std::vector<TypeInfo>::const_iterator type=typeConfig.GetTypes().begin();
-        type!=typeConfig.GetTypes().end();
-        type++) {
-      if (type->GetOptimizeLowZoom() &&
-          type->CanBeArea()) {
-        types.insert(type->GetId());
+    types.Clear();
+
+    for (auto &type : typeConfig.GetAreaTypes()) {
+      if (!type->GetIgnore() &&
+          type->GetOptimizeLowZoom()) {
+        types.Set(type);
       }
     }
   }
 
   bool OptimizeAreasLowZoomGenerator::WriteTypeData(FileWriter& writer,
-                                               const TypeData& data)
+                                                    const TypeData& data)
   {
-    assert(data.type!=0);
+    assert(data.type);
 
-    writer.Write(data.type);
+    writer.Write(data.type->GetAreaId());
     writer.Write(data.optLevel);
     writer.Write(data.indexLevel);
     writer.Write(data.cellXStart);
@@ -92,17 +99,15 @@ namespace osmscout
   }
 
   bool OptimizeAreasLowZoomGenerator::WriteHeader(FileWriter& writer,
-                                             const std::list<TypeData>& areaTypesData,
-                                             uint32_t optimizeMaxMap)
+                                                  const std::list<TypeData>& areaTypesData,
+                                                  uint32_t optimizeMaxMap)
   {
     writer.Write(optimizeMaxMap);
     writer.Write((uint32_t)areaTypesData.size());
 
-    for (std::list<TypeData>::const_iterator typeData=areaTypesData.begin();
-        typeData!=areaTypesData.end();
-        ++typeData) {
+    for (const auto &typeData : areaTypesData) {
       if (!WriteTypeData(writer,
-                         *typeData)) {
+                         typeData)) {
         return false;
       }
     }
@@ -110,94 +115,78 @@ namespace osmscout
     return true;
   }
 
-  bool OptimizeAreasLowZoomGenerator::GetAreas(const ImportParameter& parameter,
+  bool OptimizeAreasLowZoomGenerator::GetAreas(const TypeConfig& typeConfig,
+                                               const ImportParameter& parameter,
                                                Progress& progress,
                                                FileScanner& scanner,
-                                               std::set<TypeId>& types,
-                                               std::vector<std::list<AreaRef> >& areas)
+                                               const TypeInfoSet& types,
+                                               std::vector<std::list<AreaRef> >& areas,
+                                               TypeInfoSet& loadedTypes)
   {
-    uint32_t         areaCount=0;
-    size_t           collectedAreasCount=0;
-    std::set<TypeId> currentTypes(types);
+    uint32_t    areaCount=0;
+    size_t      collectedAreasCount=0;
+
+    loadedTypes=types;
 
     progress.SetAction("Collecting area data to optimize");
 
-    if (!scanner.GotoBegin()) {
-      progress.Error("Error while positioning at start of file");
-      return false;
-    }
+    scanner.GotoBegin();
 
-    if (!scanner.Read(areaCount)) {
-      progress.Error("Error while reading number of data entries in file");
-      return false;
-    }
+    scanner.Read(areaCount);
 
     for (uint32_t a=1; a<=areaCount; a++) {
-      AreaRef area=new Area();
+      AreaRef area=std::make_shared<Area>();
 
       progress.SetProgress(a,areaCount);
 
-      if (!area->Read(scanner)) {
-        progress.Error(std::string("Error while reading data entry ")+
-            NumberToString(a)+" of "+
-            NumberToString(areaCount)+
-            " in file '"+
-            scanner.GetFilename()+"'");
-        return false;
-      }
+      area->Read(typeConfig,
+                 scanner);
 
-      if (currentTypes.find(area->GetType())!=currentTypes.end()) {
-        areas[area->GetType()].push_back(area);
+      if (loadedTypes.IsSet(area->GetType())) {
+        areas[area->GetType()->GetIndex()].push_back(area);
 
         collectedAreasCount++;
 
         while (collectedAreasCount>parameter.GetOptimizationMaxWayCount() &&
-               currentTypes.size()>1) {
-          size_t victimType=areas.size();
+               loadedTypes.Size()>1) {
+          TypeInfoRef victimType;
 
-          for (size_t i=0; i<areas.size(); i++) {
-            if (areas[i].size()>0 &&
-                (victimType>=areas.size() ||
-                 areas[i].size()<areas[victimType].size())) {
-              victimType=i;
+          for (auto &type : loadedTypes) {
+            if (areas[type->GetIndex()].size()>0 &&
+                (!victimType ||
+                 areas[type->GetIndex()].size()<areas[victimType->GetIndex()].size())) {
+              victimType=type;
             }
           }
 
-          if (victimType<areas.size()) {
-            collectedAreasCount-=areas[victimType].size();
-            areas[victimType].clear();
-            currentTypes.erase(victimType);
-          }
+          assert(victimType);
+
+          collectedAreasCount-=areas[victimType->GetIndex()].size();
+          areas[victimType->GetIndex()].clear();
+          loadedTypes.Remove(victimType);
         }
       }
     }
 
-    for (std::set<TypeId>::const_iterator type=currentTypes.begin();
-         type!=currentTypes.end();
-         ++type) {
-      types.erase(*type);
-    }
+    progress.Info("Collected "+NumberToString(collectedAreasCount)+" areas for "+NumberToString(loadedTypes.Size())+" types");
 
-    progress.Info("Collected "+NumberToString(collectedAreasCount)+" areas for "+NumberToString(currentTypes.size())+" types");
-
-    return true;
+    return !scanner.HasError();
   }
 
   void OptimizeAreasLowZoomGenerator::OptimizeAreas(const std::list<AreaRef>& areas,
                                                     std::list<AreaRef>& optimizedAreas,
                                                     size_t width,
                                                     size_t height,
+                                                    double dpi,
+                                                    double pixel,
                                                     const Magnification& magnification,
-                                                    TransPolygon::OptimizeMethod optimizeWayMethod)
+                                                    TransPolygon::OptimizeMethod optimizeAreaMethod)
   {
     MercatorProjection projection;
 
-    projection.Set(0,0,magnification,width,height);
+    projection.Set(0,0,magnification,dpi,width,height);
 
-    for (std::list<AreaRef>::const_iterator a=areas.begin();
-         a!=areas.end();
-         ++a) {
-      AreaRef                 area(*a);
+    for (auto &area :areas) {
       TransPolygon            polygon;
       std::vector<Area::Ring> newRings;
       double                  xmin;
@@ -207,22 +196,22 @@ namespace osmscout
 
       size_t r=0;
       while (r<area->rings.size()) {
-        if (area->rings[r].ring!=Area::masterRingId) {
+        if (!area->rings[r].IsMasterRing()) {
           polygon.TransformArea(projection,
-                                optimizeWayMethod,
+                                optimizeAreaMethod,
                                 area->rings[r].nodes,
-                                1.0);
+                                pixel/8.0);
 
           polygon.GetBoundingBox(xmin,ymin,xmax,ymax);
 
           if (polygon.IsEmpty() ||
-              (xmax-xmin<=6.0 &&
-               ymax-ymin<=6.0)) {
+              (xmax-xmin<=pixel &&
+               ymax-ymin<=pixel)) {
             // We drop all sub roles of the current role, too
             size_t s=r;
 
             while (s+1<area->rings.size() &&
-                   area->rings[s+1].ring>area->rings[r].ring) {
+                   area->rings[s+1].GetRing()>area->rings[r].GetRing()) {
               s++;
             }
 
@@ -235,7 +224,7 @@ namespace osmscout
 
         newRings.back().nodes.clear();
 
-        if (area->rings[r].ring!=Area::masterRingId) {
+        if (!area->rings[r].IsMasterRing()) {
           for (size_t i=polygon.GetStart();
                i<=polygon.GetEnd();
                i++) {
@@ -253,7 +242,7 @@ namespace osmscout
         continue;
       }
 
-      AreaRef copiedArea=new Area(*area);
+      AreaRef copiedArea=std::make_shared<Area>(*area);
 
       copiedArea->rings=newRings;
 
@@ -269,31 +258,22 @@ namespace osmscout
     size_t level=5;//parameter.GetOptimizationMinMag();
 
     while (true) {
-      double                 cellWidth=360.0/pow(2.0,(int)level);
-      double                 cellHeight=180.0/pow(2.0,(int)level);
       std::map<Pixel,size_t> cellFillCount;
 
-      for (std::list<AreaRef>::const_iterator a=areas.begin();
-          a!=areas.end();
-          ++a) {
-        AreaRef area=*a;
-        // Count number of entries per current type and coordinate
-        double minLon;
-        double maxLon;
-        double minLat;
-        double maxLat;
+      for (const auto& area : areas) {
+        GeoBox  boundingBox;
 
-        area->GetBoundingBox(minLon,maxLon,minLat,maxLat);
+        area->GetBoundingBox(boundingBox);
 
         //
         // Calculate minimum and maximum tile ids that are covered
         // by the way
         // Renormated coordinate space (everything is >=0)
         //
-        uint32_t minxc=(uint32_t)floor((minLon+180.0)/cellWidth);
-        uint32_t maxxc=(uint32_t)floor((maxLon+180.0)/cellWidth);
-        uint32_t minyc=(uint32_t)floor((minLat+90.0)/cellHeight);
-        uint32_t maxyc=(uint32_t)floor((maxLat+90.0)/cellHeight);
+        uint32_t minxc=(uint32_t)floor((boundingBox.GetMinLon()+180.0)/cellDimension[level].width);
+        uint32_t maxxc=(uint32_t)floor((boundingBox.GetMaxLon()+180.0)/cellDimension[level].width);
+        uint32_t minyc=(uint32_t)floor((boundingBox.GetMinLat()+90.0)/cellDimension[level].height);
+        uint32_t maxyc=(uint32_t)floor((boundingBox.GetMaxLat()+90.0)/cellDimension[level].height);
 
         for (uint32_t y=minyc; y<=maxyc; y++) {
           for (uint32_t x=minxc; x<=maxxc; x++) {
@@ -312,6 +292,7 @@ namespace osmscout
         entryCount+=cell->second;
         max=std::max(max,cell->second);
       }
+
 
       double average=entryCount*1.0/cellFillCount.size();
 
@@ -351,26 +332,17 @@ namespace osmscout
     }
   }
 
-  bool OptimizeAreasLowZoomGenerator::WriteAreas(FileWriter& writer,
+  void OptimizeAreasLowZoomGenerator::WriteAreas(const TypeConfig& typeConfig,
+                                                 FileWriter& writer,
                                                  const std::list<AreaRef>& areas,
                                                  FileOffsetFileOffsetMap& offsets)
   {
-    for (std::list<AreaRef>::const_iterator a=areas.begin();
-        a!=areas.end();
-        a++) {
-      AreaRef    area(*a);
-      FileOffset offset;
+    for (const auto &area : areas) {
+      offsets[area->GetFileOffset()]=writer.GetPos();
 
-      writer.GetPos(offset);
-
-      offsets[area->GetFileOffset()]=offset;
-
-      if (!area->WriteOptimized(writer)) {
-        return false;
-      }
+      area->WriteOptimized(typeConfig,
+                           writer);
     }
-
-    return true;
   }
 
   bool OptimizeAreasLowZoomGenerator::WriteAreaBitmap(Progress& progress,
@@ -384,35 +356,29 @@ namespace osmscout
       return true;
     }
 
-    double                                 cellWidth=360.0/pow(2.0,(int)data.indexLevel);
-    double                                 cellHeight=180.0/pow(2.0,(int)data.indexLevel);
+    double                                 cellWidth=cellDimension[data.indexLevel].width;
+    double                                 cellHeight=cellDimension[data.indexLevel].height;
     std::map<Pixel,std::list<FileOffset> > cellOffsets;
 
-    for (std::list<AreaRef>::const_iterator a=areas.begin();
-        a!=areas.end();
-        a++) {
-      AreaRef                         area(*a);
-      double                          minLon;
-      double                          maxLon;
-      double                          minLat;
-      double                          maxLat;
+    for (const auto& area : areas) {
+      GeoBox                                  boundingBox;
       FileOffsetFileOffsetMap::const_iterator offset=offsets.find(area->GetFileOffset());
 
       if (offset==offsets.end()) {
         continue;
       }
 
-      area->GetBoundingBox(minLon,maxLon,minLat,maxLat);
+      area->GetBoundingBox(boundingBox);
 
       //
       // Calculate minimum and maximum tile ids that are covered
       // by the way
       // Renormated coordinate space (everything is >=0)
       //
-      uint32_t minxc=(uint32_t)floor((minLon+180.0)/cellWidth);
-      uint32_t maxxc=(uint32_t)floor((maxLon+180.0)/cellWidth);
-      uint32_t minyc=(uint32_t)floor((minLat+90.0)/cellHeight);
-      uint32_t maxyc=(uint32_t)floor((maxLat+90.0)/cellHeight);
+      uint32_t minxc=(uint32_t)floor((boundingBox.GetMinLon()+180.0)/cellWidth);
+      uint32_t maxxc=(uint32_t)floor((boundingBox.GetMaxLon()+180.0)/cellWidth);
+      uint32_t minyc=(uint32_t)floor((boundingBox.GetMinLat()+90.0)/cellHeight);
+      uint32_t maxyc=(uint32_t)floor((boundingBox.GetMaxLat()+90.0)/cellHeight);
 
       for (uint32_t y=minyc; y<=maxyc; y++) {
         for (uint32_t x=minxc; x<=maxxc; x++) {
@@ -444,7 +410,7 @@ namespace osmscout
       }
     }
 
-    data.dataOffsetBytes=BytesNeeededToAddressFileData(dataSize);
+    data.dataOffsetBytes=BytesNeededToEncodeNumber(dataSize);
 
     progress.Info("Writing map for level "+
                   NumberToString(data.optLevel)+", index level "+
@@ -453,10 +419,7 @@ namespace osmscout
                   NumberToString(indexEntries)+" entries, "+
                   ByteSizeToString(1.0*data.cellXCount*data.cellYCount*data.dataOffsetBytes+dataSize));
 
-    if (!writer.GetPos(data.bitmapOffset)) {
-      progress.Error("Cannot get type index start position in file");
-      return false;
-    }
+    data.bitmapOffset=writer.GetPos();
 
     // Write the bitmap with offsets for each cell
     // We prefill with zero and only overrite cells that have data
@@ -470,10 +433,7 @@ namespace osmscout
 
     FileOffset dataStartOffset;
 
-    if (!writer.GetPos(dataStartOffset)) {
-      progress.Error("Cannot get start of data section after bitmap");
-      return false;
-    }
+    dataStartOffset=writer.GetPos();
 
     // Now write the list of offsets of objects for every cell with content
     for (std::map<Pixel,std::list<FileOffset> >::const_iterator cell=cellOffsets.begin();
@@ -485,23 +445,14 @@ namespace osmscout
       FileOffset previousOffset=0;
       FileOffset cellOffset;
 
-      if (!writer.GetPos(cellOffset)) {
-        progress.Error("Cannot get cell start position in file");
-        return false;
-      }
+      cellOffset=writer.GetPos();
 
-      if (!writer.SetPos(bitmapCellOffset)) {
-        progress.Error("Cannot go to cell start position in file");
-        return false;
-      }
+      writer.SetPos(bitmapCellOffset);
 
       writer.WriteFileOffset(cellOffset-dataStartOffset,
                              data.dataOffsetBytes);
 
-      if (!writer.SetPos(cellOffset)) {
-        progress.Error("Cannot go back to cell start position in file");
-        return false;
-      }
+      writer.SetPos(cellOffset);
 
       writer.WriteNumber((uint32_t)cell->second.size());
 
@@ -521,201 +472,201 @@ namespace osmscout
                                                   Progress& progress,
                                                   const TypeConfig& typeConfig,
                                                   FileWriter& writer,
-                                                  const std::set<TypeId>& types,
+                                                  const TypeInfoSet& types,
                                                   std::list<TypeData>& typesData)
   {
     FileScanner scanner;
+    // Everything smaller than 2mm should get dropped. Width, height and DPI come from the Nexus 4
+    double dpi=320.0;
+    double pixel=2.0/* mm */ * dpi / 25.4 /* inch */;
 
-    if (!scanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
-                                      "areas.dat"),
-                         FileScanner::Sequential,
-                         parameter.GetWayDataMemoryMaped())) {
-      progress.Error("Cannot open 'areas.dat'");
-      return false;
-    }
+    progress.Info("Minimum visible size in pixel: "+NumberToString((unsigned long)pixel));
 
-    std::set<TypeId>                 typesToProcess(types);
-    std::vector<std::list<AreaRef> > allAreas(typeConfig.GetTypes().size());
+    try {
+      scanner.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
+                                   AreaDataFile::AREAS_DAT),
+                   FileScanner::Sequential,
+                   parameter.GetWayDataMemoryMaped());
 
-    while (true) {
-      //
-      // Load type data
-      //
+      TypeInfoSet                      typesToProcess(types);
+      std::vector<std::list<AreaRef> > allAreas(typeConfig.GetTypeCount());
 
-      if (!GetAreas(parameter,
-                    progress,
-                    scanner,
-                    typesToProcess,
-                    allAreas)) {
-        return false;
-      }
+      while (true) {
+        //
+        // Load type data
+        //
 
-      for (size_t type=0; type<allAreas.size(); type++) {
-        if (allAreas[type].empty()) {
-          continue;
+        TypeInfoSet loadedTypes;
+
+        if (!GetAreas(typeConfig,
+                      parameter,
+                      progress,
+                      scanner,
+                      typesToProcess,
+                      allAreas,
+                      loadedTypes)) {
+          return false;
         }
 
-        progress.SetAction("Optimizing type "+ typeConfig.GetTypeInfo(type).GetName()+" ("+NumberToString(type)+")");
+        typesToProcess.Remove(loadedTypes);
 
-        /*
-        size_t origAreas=allAreas[type].size();
-        size_t origRoles=0;
-        size_t origNodes=0;
+        for (const auto& type : loadedTypes) {
+          progress.SetAction("Optimizing type "+ type->GetName());
 
-        for (std::list<AreaRef>::const_iterator a=allAreas[type].begin();
-            a!=allAreas[type].end();
-            ++a) {
-          AreaRef area(*a);
+          for (uint32_t level=parameter.GetOptimizationMinMag();
+               level<=parameter.GetOptimizationMaxMag();
+               level++) {
+            Magnification      magnification; // Magnification, we optimize for
+            std::list<AreaRef> optimizedAreas;
 
-          origRoles+=area->rings.size();
+            magnification.SetLevel(level);
 
-          for (size_t r=0; r<area->rings.size(); r++) {
-            origNodes+=area->rings[r].nodes.size();
-          }
-        }*/
+            OptimizeAreas(allAreas[type->GetIndex()],
+                          optimizedAreas,
+                          1280,768,
+                          dpi,
+                          pixel,
+                          magnification,
+                          parameter.GetOptimizationWayMethod());
 
-        for (uint32_t level=parameter.GetOptimizationMinMag();
-             level<=parameter.GetOptimizationMaxMag();
-             level++) {
-          Magnification      magnification; // Magnification, we optimize for
-          std::list<AreaRef> optimizedAreas;
+            if (optimizedAreas.empty()) {
+              progress.Debug("Empty optimization result for level "+NumberToString(level)+", no index generated");
 
-          magnification.SetLevel(level);
+              TypeData typeData;
 
-          OptimizeAreas(allAreas[type],
-                        optimizedAreas,
-                        800,640,
-                        magnification,
-                        parameter.GetOptimizationWayMethod());
+              typeData.type=type;
+              typeData.optLevel=level;
 
-          if (optimizedAreas.empty()) {
-            progress.Info("Empty optimization result for level "+NumberToString(level)+", no index generated");
+              typesData.push_back(typeData);
+
+              continue;
+            }
+
+            progress.Info("Optimized from "+NumberToString(allAreas[type->GetIndex()].size())+" to "+NumberToString(optimizedAreas.size())+" areas");
+
+            /*
+            size_t optAreas=optimizedAreas.size();
+            size_t optRoles=0;
+            size_t optNodes=0;
+
+            for (std::list<AreaRef>::const_iterator a=optimizedAreas.begin();
+                a!=optimizedAreas.end();
+                ++a) {
+              AreaRef area=*a;
+
+              optRoles+=area->rings.size();
+
+              for (size_t r=0; r<area->rings.size(); r++) {
+                optNodes+=area->rings[r].nodes.size();
+              }
+            }*/
+
+            /*
+            std::cout << "Areas: " << origAreas << " => " << optAreas << std::endl;
+            std::cout << "Roles: " << origRoles << " => " << optRoles << std::endl;
+            std::cout << "Nodes: " << origNodes << " => " << optNodes << std::endl;*/
 
             TypeData typeData;
 
             typeData.type=type;
             typeData.optLevel=level;
 
-            typesData.push_back(typeData);
+            GetAreaIndexLevel(parameter,
+                              optimizedAreas,
+                              typeData);
 
-            continue;
-          }
+            //std::cout << "Resulting index level: " << typeData.indexLevel << ", " << typeData.indexCells << ", " << typeData.indexEntries << std::endl;
 
-          /*
-          size_t optAreas=optimizedAreas.size();
-          size_t optRoles=0;
-          size_t optNodes=0;
+            FileOffsetFileOffsetMap offsets;
 
-          for (std::list<AreaRef>::const_iterator a=optimizedAreas.begin();
-              a!=optimizedAreas.end();
-              ++a) {
-            AreaRef area=*a;
+            WriteAreas(typeConfig,
+                       writer,
+                       optimizedAreas,
+                       offsets);
 
-            optRoles+=area->rings.size();
-
-            for (size_t r=0; r<area->rings.size(); r++) {
-              optNodes+=area->rings[r].nodes.size();
+            if (!WriteAreaBitmap(progress,
+                                 writer,
+                                 optimizedAreas,
+                                 offsets,
+                                 typeData)) {
+              return false;
             }
-          }*/
 
-          /*
-          std::cout << "Areas: " << origAreas << " => " << optAreas << std::endl;
-          std::cout << "Roles: " << origRoles << " => " << optRoles << std::endl;
-          std::cout << "Nodes: " << origNodes << " => " << optNodes << std::endl;*/
-
-          TypeData typeData;
-
-          typeData.type=type;
-          typeData.optLevel=level;
-
-          GetAreaIndexLevel(parameter,
-                            optimizedAreas,
-                            typeData);
-
-          //std::cout << "Resulting index level: " << typeData.indexLevel << ", " << typeData.indexCells << ", " << typeData.indexEntries << std::endl;
-
-          FileOffsetFileOffsetMap offsets;
-
-          if (!WriteAreas(writer,
-                          optimizedAreas,
-                          offsets)) {
-            return false;
+            typesData.push_back(typeData);
           }
 
-          if (!WriteAreaBitmap(progress,
-                               writer,
-                               optimizedAreas,
-                               offsets,
-                               typeData)) {
-            return false;
-          }
-
-          typesData.push_back(typeData);
+          allAreas[type->GetIndex()].clear();
         }
 
-        allAreas[type].clear();
+        if (typesToProcess.Empty()) {
+          break;
+        }
       }
 
-      if (typesToProcess.empty()) {
-        break;
-      }
+      scanner.Close();
+    }
+    catch (IOException& e) {
+      progress.Error(e.GetDescription());
+      return false;
     }
 
-    return !scanner.HasError() && scanner.Close();
+    return true;
   }
 
-  bool OptimizeAreasLowZoomGenerator::Import(const ImportParameter& parameter,
-                                             Progress& progress,
-                                             const TypeConfig& typeConfig)
+  bool OptimizeAreasLowZoomGenerator::Import(const TypeConfigRef& typeConfig,
+                                             const ImportParameter& parameter,
+                                             Progress& progress)
   {
-    FileOffset           indexOffset=0;
-    FileWriter           writer;
-    Magnification        magnification; // Magnification, we optimize for
-    std::set<TypeId>     areaTypes;     // Types we optimize
-    std::list<TypeData>  areaTypesData;
+    FileOffset          indexOffset=0;
+    FileWriter          writer;
+    Magnification       magnification; // Magnification, we optimize for
+    TypeInfoSet         areaTypes;     // Types we optimize
+    std::list<TypeData> areaTypesData;
 
-    GetAreaTypesToOptimize(typeConfig,areaTypes);
+    GetAreaTypesToOptimize(*typeConfig,
+                           areaTypes);
 
-    if (!writer.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
-                                     FILE_AREASOPT_DAT))) {
-      progress.Error("Cannot create '"+std::string(FILE_AREASOPT_DAT)+"'");
+    try {
+      writer.Open(AppendFileToDir(parameter.GetDestinationDirectory(),
+                                  OptimizeAreasLowZoom::FILE_AREASOPT_DAT));
+
+      //
+      // Write header
+      //
+
+      writer.WriteFileOffset(indexOffset);
+
+      if (!HandleAreas(parameter,
+                       progress,
+                       *typeConfig,
+                       writer,
+                       areaTypes,
+                       areaTypesData)) {
+        progress.Error("Error while optimizing areas");
+        return false;
+      }
+
+      // Position of the index
+      indexOffset=writer.GetPos();
+
+      if (!WriteHeader(writer,
+                       areaTypesData,
+                       (uint32_t)parameter.GetOptimizationMaxMag())) {
+        progress.Error("Cannot write file header");
+        return false;
+      }
+
+      writer.GotoBegin();
+      writer.WriteFileOffset(indexOffset);
+
+      writer.Close();
+    }
+    catch (IOException& e) {
+      progress.Error(e.GetDescription());
+
+      writer.CloseFailsafe();
+
       return false;
-    }
-
-    //
-    // Write header
-    //
-
-    writer.WriteFileOffset(indexOffset);
-
-    if (!HandleAreas(parameter,
-                     progress,
-                     typeConfig,
-                     writer,
-                     areaTypes,
-                     areaTypesData)) {
-      progress.Error("Error while optimizing areas");
-      return false;
-    }
-
-    if (!writer.GetPos(indexOffset)) {
-      progress.Error("Cannot read index start position");
-      return false;
-    }
-
-    if (!WriteHeader(writer,
-                     areaTypesData,
-                    (uint32_t)parameter.GetOptimizationMaxMag())) {
-      progress.Error("Cannot write file header");
-      return false;
-    }
-
-    if (!writer.SetPos(0)) {
-      progress.Error("Cannot read index offset");
-    }
-
-    if (!writer.WriteFileOffset(indexOffset)) {
-      progress.Error("Cannot write index position");
     }
 
     return true;

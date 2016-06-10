@@ -27,35 +27,39 @@
 #include <osmscout/system/Types.h>
 
 namespace osmscout {
-
-#if defined(OSMSCOUT_HAVE_UINT64_T)
+  /**
+   * \ingroup Util
+   * Type to be used for OSM ids (signed numbers with 64 bit size).
+   */
   typedef int64_t  OSMId;
+
+  /**
+   * \ingroup Util
+   * Type to be used for libosmscout internal ids (unsigned numbers with 64 bit
+   * size).
+   */
   typedef uint64_t Id;
   typedef uint64_t PageId;
+  /**
+   * \ingroup Util
+   * Type for describing the position of data within a file.
+   */
   typedef uint64_t FileOffset;
-#else
-  typedef int32_t  OSMId;
-  typedef uint32_t Id;
-  typedef uint32_t PageId;
-  typedef uint64_t FileOffset;
-#endif
 
+  /**
+   * \ingroup Util
+   * Type for describing a type of an way, area or node.
+   */
   typedef uint16_t TypeId;
 
   enum Vehicle
   {
-    vehicleFoot     = 1,
-    vehicleBicycle  = 2,
-    vehicleCar      = 3
+    vehicleFoot     = 1 << 1,
+    vehicleBicycle  = 1 << 2,
+    vehicleCar      = 1 << 3
   };
 
-  /**
-    Coordinates will be stored as unsigned long values in file.
-    For the conversion the float value is shifted to positive
-    value sand afterwards multiplied by conversion factor
-    to get long values without significant values after colon.
-    */
-  extern OSMSCOUT_API const double conversionFactor;
+  typedef uint8_t VehicleMask;
 }
 
 #endif

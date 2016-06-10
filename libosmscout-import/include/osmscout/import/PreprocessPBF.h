@@ -20,50 +20,83 @@
   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307  USA
 */
 
-#include <map>
+#include <future>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <osmscout/Types.h>
 
 #include <osmscout/import/RawRelation.h>
 
-#include <osmscout/import/Preprocess.h>
+#include <osmscout/import/Preprocessor.h>
 
 #include <osmscout/import/pbf/fileformat.pb.h>
 #include <osmscout/import/pbf/osmformat.pb.h>
 
 namespace osmscout {
 
-  class PreprocessPBF : public Preprocess
+  class PreprocessPBF : public Preprocessor
   {
   private:
-    std::map<TagId,std::string>      tagMap;
+    char                             *buffer;
+    google::protobuf::int32          bufferSize;
+    PreprocessorCallback&            callback;
+    TagMap                           tagMap;
     std::vector<OSMId>               nodes;
     std::vector<RawRelation::Member> members;
 
   private:
+    bool GetPos(FILE* file,
+                FileOffset& pos) const;
+
+    void AssureBlockSize(google::protobuf::int32 length);
+
+    bool ReadBlockHeader(Progress& progress,
+                         FILE* file,
+                         PBF::BlockHeader& blockHeader,
+                         bool silent);
+
+    bool ReadHeaderBlock(Progress& progress,
+                         FILE* file,
+                         const PBF::BlockHeader& blockHeader,
+                         PBF::HeaderBlock& headerBlock);
+
+    bool ReadPrimitiveBlock(Progress& progress,
+                            FILE* file,
+                            const PBF::BlockHeader& blockHeader,
+                            PBF::PrimitiveBlock& primitiveBlock);
+
     void ReadNodes(const TypeConfig& typeConfig,
                    const PBF::PrimitiveBlock& block,
-                   const PBF::PrimitiveGroup &group);
+                   const PBF::PrimitiveGroup &group,
+                   PreprocessorCallback::RawBlockData& data);
 
     void ReadDenseNodes(const TypeConfig& typeConfig,
                         const PBF::PrimitiveBlock& block,
-                        const PBF::PrimitiveGroup &group);
+                        const PBF::PrimitiveGroup &group,
+                        PreprocessorCallback::RawBlockData& data);
 
     void ReadWays(const TypeConfig& typeConfig,
                   const PBF::PrimitiveBlock& block,
-                  const PBF::PrimitiveGroup &group);
+                  const PBF::PrimitiveGroup &group,
+                  PreprocessorCallback::RawBlockData& data);
 
     void ReadRelations(const TypeConfig& typeConfig,
                        const PBF::PrimitiveBlock& block,
-                       const PBF::PrimitiveGroup &group);
+                       const PBF::PrimitiveGroup &group,
+                       PreprocessorCallback::RawBlockData& data);
+
+    void ProcessBlock(const TypeConfigRef& typeConfig,
+                      std::unique_ptr<PBF::PrimitiveBlock>&& block);
 
   public:
-    std::string GetDescription() const;
-    bool Import(const ImportParameter& parameter,
+    PreprocessPBF(PreprocessorCallback& callback);
+    ~PreprocessPBF();
+    bool Import(const TypeConfigRef& typeConfig,
+                const ImportParameter& parameter,
                 Progress& progress,
-                const TypeConfig& typeConfig);
+                const std::string& filename);
   };
 }
 

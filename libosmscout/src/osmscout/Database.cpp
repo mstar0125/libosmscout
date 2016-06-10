@@ -20,28 +20,23 @@
 #include <osmscout/Database.h>
 
 #include <algorithm>
-#include <iostream>
 
 #if _OPENMP
 #include <omp.h>
 #endif
 
-#include <osmscout/TypeConfigLoader.h>
-
 #include <osmscout/system/Assert.h>
 #include <osmscout/system/Math.h>
 
 #include <osmscout/util/Geometry.h>
+#include <osmscout/util/Logger.h>
+#include <osmscout/util/StopClock.h>
 
 namespace osmscout {
 
   DatabaseParameter::DatabaseParameter()
-  : areaAreaIndexCacheSize(1000),
-    areaNodeIndexCacheSize(1000),
-    nodeCacheSize(1000),
-    wayCacheSize(4000),
-    areaCacheSize(4000),
-    debugPerformance(false)
+  : areaAreaIndexCacheSize(5000),
+    areaNodeIndexCacheSize(1000)
   {
     // no code
   }
@@ -56,26 +51,6 @@ namespace osmscout {
     this->areaNodeIndexCacheSize=areaNodeIndexCacheSize;
   }
 
-  void DatabaseParameter::SetNodeCacheSize(unsigned long nodeCacheSize)
-  {
-    this->nodeCacheSize=nodeCacheSize;
-  }
-
-  void DatabaseParameter::SetWayCacheSize(unsigned long wayCacheSize)
-  {
-    this->wayCacheSize=wayCacheSize;
-  }
-
-  void DatabaseParameter::SetAreaCacheSize(unsigned long areaCacheSize)
-  {
-    this->areaCacheSize=areaCacheSize;
-  }
-
-  void DatabaseParameter::SetDebugPerformance(bool debug)
-  {
-    debugPerformance=debug;
-  }
-
   unsigned long DatabaseParameter::GetAreaAreaIndexCacheSize() const
   {
     return areaAreaIndexCacheSize;
@@ -86,136 +61,20 @@ namespace osmscout {
     return areaNodeIndexCacheSize;
   }
 
-  unsigned long DatabaseParameter::GetNodeCacheSize() const
-  {
-    return nodeCacheSize;
-  }
-
-  unsigned long DatabaseParameter::GetWayCacheSize() const
-  {
-    return wayCacheSize;
-  }
-
-  unsigned long DatabaseParameter::GetAreaCacheSize() const
-  {
-    return areaCacheSize;
-  }
-
-  bool DatabaseParameter::IsDebugPerformance() const
-  {
-    return debugPerformance;
-  }
-
-  AreaSearchParameter::AreaSearchParameter()
-  : maxAreaLevel(4),
-    maxNodes(2000),
-    maxWays(10000),
-    maxAreas(std::numeric_limits<unsigned long>::max()),
-    useLowZoomOptimization(true),
-    useMultithreading(false)
-  {
-    // no code
-  }
-
-  void AreaSearchParameter::SetMaximumAreaLevel(unsigned long maxAreaLevel)
-  {
-    this->maxAreaLevel=maxAreaLevel;
-  }
-
-  void AreaSearchParameter::SetMaximumNodes(unsigned long maxNodes)
-  {
-    this->maxNodes=maxNodes;
-  }
-
-  void AreaSearchParameter::SetMaximumWays(unsigned long maxWays)
-  {
-    this->maxWays=maxWays;
-  }
-
-  void AreaSearchParameter::SetMaximumAreas(unsigned long maxAreas)
-  {
-    this->maxAreas=maxAreas;
-  }
-
-  void AreaSearchParameter::SetUseLowZoomOptimization(bool useLowZoomOptimization)
-  {
-    this->useLowZoomOptimization=useLowZoomOptimization;
-  }
-
-  void AreaSearchParameter::SetUseMultithreading(bool useMultithreading)
-  {
-    this->useMultithreading=useMultithreading;
-  }
-
-  void AreaSearchParameter::SetBreaker(const BreakerRef& breaker)
-  {
-    this->breaker=breaker;
-  }
-
-  unsigned long AreaSearchParameter::GetMaximumAreaLevel() const
-  {
-    return maxAreaLevel;
-  }
-
-  unsigned long AreaSearchParameter::GetMaximumNodes() const
-  {
-    return maxNodes;
-  }
-
-  unsigned long AreaSearchParameter::GetMaximumWays() const
-  {
-    return maxWays;
-  }
-
-  unsigned long AreaSearchParameter::GetMaximumAreas() const
-  {
-    return maxAreas;
-  }
-
-  bool AreaSearchParameter::GetUseLowZoomOptimization() const
-  {
-    return useLowZoomOptimization;
-  }
-
-  bool AreaSearchParameter::GetUseMultithreading() const
-  {
-    return useMultithreading;
-  }
-
-  bool AreaSearchParameter::IsAborted() const
-  {
-    if (breaker.Valid()) {
-      return breaker->IsAborted();
-    }
-    else {
-      return false;
-    }
-  }
-
   Database::Database(const DatabaseParameter& parameter)
-   : isOpen(false),
-     debugPerformance(parameter.IsDebugPerformance()),
-     minLon(0.0),
-     minLat(0.0),
-     maxLon(0.0),
-     maxLat(0.0),
-     areaNodeIndex(/*parameter.GetAreaNodeIndexCacheSize()*/),
-     areaWayIndex(),
-     areaAreaIndex(parameter.GetAreaAreaIndexCacheSize()),
-     nodeDataFile("nodes.dat",
-                  parameter.GetNodeCacheSize()),
-     areaDataFile("areas.dat",
-                  parameter.GetAreaCacheSize()),
-     wayDataFile("ways.dat",
-                  parameter.GetWayCacheSize()),
-     typeConfig(NULL)
+   : parameter(parameter),
+     isOpen(false)
   {
-    // no code
+    log.Debug() << "Database::Database()";
   }
 
   Database::~Database()
   {
-    delete typeConfig;
+    log.Debug() << "Database::~Database()";
+
+    if (IsOpen()) {
+      Close();
+    }
   }
 
   bool Database::Open(const std::string& path)
@@ -224,115 +83,29 @@ namespace osmscout {
 
     this->path=path;
 
-    typeConfig=new TypeConfig();
+    typeConfig=std::make_shared<TypeConfig>();
 
-    if (!LoadTypeData(path,*typeConfig)) {
-      std::cerr << "Cannot load 'types.dat'!" << std::endl;
-      delete typeConfig;
-      typeConfig=NULL;
+    if (!typeConfig->LoadFromDataFile(path)) {
+      log.Error() << "Cannot load 'types.dat'!";
       return false;
     }
 
     FileScanner scanner;
-    std::string file=AppendFileToDir(path,"bounding.dat");
 
-    if (!scanner.Open(file,FileScanner::Normal,true)) {
-      std::cerr << "Cannot open 'bounding.dat'" << std::endl;
-      delete typeConfig;
-      typeConfig=NULL;
-      return false;
+    try {
+      scanner.Open(AppendFileToDir(path,"bounding.dat"),
+                   FileScanner::Normal,
+                   false);
+
+      scanner.ReadBox(boundingBox);
+
+      log.Debug() << "BoundingBox: " << boundingBox.GetDisplayText();
+
+      scanner.Close();
     }
-
-    uint32_t minLonDat;
-    uint32_t minLatDat;
-    uint32_t maxLonDat;
-    uint32_t maxLatDat;
-
-    scanner.ReadNumber(minLatDat);
-    scanner.ReadNumber(minLonDat);
-    scanner.ReadNumber(maxLatDat);
-    scanner.ReadNumber(maxLonDat);
-
-    if (scanner.HasError() || !scanner.Close()) {
-      std::cerr << "Error while reading/closing '" << file << "'" << std::endl;
-      delete typeConfig;
-      typeConfig=NULL;
-      return false;
-    }
-
-    minLon=minLonDat/conversionFactor-180.0;
-    minLat=minLatDat/conversionFactor-90.0;
-    maxLon=maxLonDat/conversionFactor-180.0;
-    maxLat=maxLatDat/conversionFactor-90.0;
-
-    if (!nodeDataFile.Open(path,FileScanner::LowMemRandom,true)) {
-      std::cerr << "Cannot open 'nodes.dat'!" << std::endl;
-      delete typeConfig;
-      typeConfig=NULL;
-      return false;
-    }
-
-    if (!areaDataFile.Open(path,FileScanner::LowMemRandom,true)) {
-      std::cerr << "Cannot open 'areas.dat'!" << std::endl;
-      delete typeConfig;
-      typeConfig=NULL;
-      return false;
-    }
-
-    if (!wayDataFile.Open(path,FileScanner::LowMemRandom,true)) {
-      std::cerr << "Cannot open 'ways.dat'!" << std::endl;
-      delete typeConfig;
-      typeConfig=NULL;
-      return false;
-    }
-
-    if (!optimizeAreasLowZoom.Open(path)) {
-      std::cerr << "Cannot load area low zoom optimizations!" << std::endl;
-      delete typeConfig;
-      typeConfig=NULL;
-      return false;
-    }
-
-
-    if (!optimizeWaysLowZoom.Open(path)) {
-      std::cerr << "Cannot load ways low zoom optimizations!" << std::endl;
-      delete typeConfig;
-      typeConfig=NULL;
-      return false;
-    }
-
-    if (!areaAreaIndex.Load(path)) {
-      std::cerr << "Cannot load area area index!" << std::endl;
-      delete typeConfig;
-      typeConfig=NULL;
-      return false;
-    }
-
-    if (!areaNodeIndex.Load(path)) {
-      std::cerr << "Cannot load area node index!" << std::endl;
-      delete typeConfig;
-      typeConfig=NULL;
-      return false;
-    }
-
-    if (!areaWayIndex.Load(path)) {
-      std::cerr << "Cannot load area way index!" << std::endl;
-      delete typeConfig;
-      typeConfig=NULL;
-      return false;
-    }
-
-    if (!waterIndex.Load(path)) {
-      std::cerr << "Cannot load water index!" << std::endl;
-      delete typeConfig;
-      typeConfig=NULL;
-      return false;
-    }
-
-    if (!cityStreetIndex.Load(path)) {
-      std::cerr << "Cannot load city street index!" << std::endl;
-      delete typeConfig;
-      typeConfig=NULL;
+    catch (IOException& e) {
+      log.Error() << e.GetDescription();
+      scanner.CloseFailsafe();
       return false;
     }
 
@@ -346,27 +119,61 @@ namespace osmscout {
     return isOpen;
   }
 
-
   void Database::Close()
   {
-    nodeDataFile.Close();
-    wayDataFile.Close();
-    areaDataFile.Close();
+    if (nodeDataFile &&
+        nodeDataFile->IsOpen()) {
+      nodeDataFile->Close();
+      nodeDataFile=NULL;
+    }
 
-    optimizeWaysLowZoom.Close();
-    optimizeAreasLowZoom.Close();
-    areaAreaIndex.Close();
-    areaNodeIndex.Close();
-    areaWayIndex.Close();
+    if (areaDataFile &&
+        areaDataFile->IsOpen()) {
+      areaDataFile->Close();
+      areaDataFile=NULL;
+    }
+
+    if (wayDataFile &&
+        wayDataFile->IsOpen()) {
+      wayDataFile->Close();
+      wayDataFile=NULL;
+    }
+
+    if (areaNodeIndex) {
+      areaNodeIndex->Close();
+      areaNodeIndex=NULL;
+    }
+
+    if (areaAreaIndex) {
+      areaAreaIndex->Close();
+      areaAreaIndex=NULL;
+    }
+
+    if (areaWayIndex) {
+      areaWayIndex->Close();
+      areaWayIndex=NULL;
+    }
+
+    if (locationIndex) {
+      locationIndex=NULL;
+    }
+
+    if (waterIndex) {
+      waterIndex->Close();
+      waterIndex=NULL;
+    }
+
+    if (optimizeWaysLowZoom) {
+      optimizeWaysLowZoom->Close();
+      optimizeWaysLowZoom=NULL;
+    }
+
+    if (optimizeAreasLowZoom) {
+      optimizeAreasLowZoom->Close();
+      optimizeAreasLowZoom=NULL;
+    }
 
     isOpen=false;
-  }
-
-  void Database::FlushCache()
-  {
-    nodeDataFile.FlushCache();
-    areaDataFile.FlushCache();
-    wayDataFile.FlushCache();
   }
 
   std::string Database::GetPath() const
@@ -374,572 +181,304 @@ namespace osmscout {
     return path;
   }
 
-  TypeConfig* Database::GetTypeConfig() const
+  TypeConfigRef Database::GetTypeConfig() const
   {
     return typeConfig;
   }
 
-  bool Database::GetBoundingBox(double& minLat,double& minLon,
-                                double& maxLat,double& maxLon) const
+  NodeDataFileRef Database::GetNodeDataFile() const
+  {
+    std::lock_guard<std::mutex> guard(nodeDataFileMutex);
+
+    if (!IsOpen()) {
+      return NULL;
+    }
+
+    if (!nodeDataFile) {
+      nodeDataFile=std::make_shared<NodeDataFile>();
+    }
+
+    if (!nodeDataFile->IsOpen()) {
+      StopClock timer;
+
+      if (!nodeDataFile->Open(typeConfig,
+                              path,
+                              true)) {
+        log.Error() << "Cannot open 'nodes.dat'!";
+        return NULL;
+      }
+
+      timer.Stop();
+
+      log.Debug() << "Opening NodeDataFile: " << timer.ResultString();
+    }
+
+    return nodeDataFile;
+  }
+
+  AreaDataFileRef Database::GetAreaDataFile() const
+  {
+    std::lock_guard<std::mutex> guard(areaDataFileMutex);
+
+    if (!IsOpen()) {
+      return NULL;
+    }
+
+    if (!areaDataFile) {
+      areaDataFile=std::make_shared<AreaDataFile>();
+    }
+
+    if (!areaDataFile->IsOpen()) {
+      StopClock timer;
+
+      if (!areaDataFile->Open(typeConfig,
+                              path,
+                              true)) {
+        log.Error() << "Cannot open 'areas.dat'!";
+        return NULL;
+      }
+
+      timer.Stop();
+
+      log.Debug() << "Opening AreaDataFile: " << timer.ResultString();
+    }
+
+    return areaDataFile;
+  }
+
+  WayDataFileRef Database::GetWayDataFile() const
+  {
+    std::lock_guard<std::mutex> guard(wayDataFileMutex);
+
+    if (!IsOpen()) {
+      return NULL;
+    }
+
+    if (!wayDataFile) {
+      wayDataFile=std::make_shared<WayDataFile>();
+    }
+
+    if (!wayDataFile->IsOpen()) {
+      StopClock timer;
+
+      if (!wayDataFile->Open(typeConfig,
+                             path,
+                             true)) {
+        log.Error() << "Cannot open 'ways.dat'!";
+        return NULL;
+      }
+
+      timer.Stop();
+
+      log.Debug() << "Opening WayDataFile: " << timer.ResultString();
+    }
+
+    return wayDataFile;
+  }
+
+  AreaNodeIndexRef Database::GetAreaNodeIndex() const
+  {
+    std::lock_guard<std::mutex> guard(areaNodeIndexMutex);
+
+    if (!IsOpen()) {
+      return NULL;
+    }
+
+    if (!areaNodeIndex) {
+      areaNodeIndex=std::make_shared<AreaNodeIndex>(/*parameter.GetAreaNodeIndexCacheSize()*/);
+
+      StopClock timer;
+
+      if (!areaNodeIndex->Open(path)) {
+        log.Error() << "Cannot load area node index!";
+        areaNodeIndex=NULL;
+
+        return NULL;
+      }
+
+      timer.Stop();
+
+      log.Debug() << "Opening AreaNodeIndex: " << timer.ResultString();
+    }
+
+    return areaNodeIndex;
+  }
+
+  AreaAreaIndexRef Database::GetAreaAreaIndex() const
+  {
+    std::lock_guard<std::mutex> guard(areaAreaIndexMutex);
+
+    if (!IsOpen()) {
+      return NULL;
+    }
+
+    if (!areaAreaIndex) {
+      areaAreaIndex=std::make_shared<AreaAreaIndex>(parameter.GetAreaAreaIndexCacheSize());
+
+      StopClock timer;
+
+      if (!areaAreaIndex->Open(path)) {
+        log.Error() << "Cannot load area area index!";
+        areaAreaIndex=NULL;
+
+        return NULL;
+      }
+
+      timer.Stop();
+
+      log.Debug() << "Opening AreaAreaIndex: " << timer.ResultString();
+    }
+
+    return areaAreaIndex;
+  }
+
+  AreaWayIndexRef Database::GetAreaWayIndex() const
+  {
+    std::lock_guard<std::mutex> guard(areaWayIndexMutex);
+
+    if (!IsOpen()) {
+      return NULL;
+    }
+
+    if (!areaWayIndex) {
+      areaWayIndex=std::make_shared<AreaWayIndex>();
+
+      StopClock timer;
+
+      if (!areaWayIndex->Open(typeConfig,
+                              path)) {
+        log.Error() << "Cannot load area way index!";
+        areaWayIndex=NULL;
+
+        return NULL;
+      }
+
+      timer.Stop();
+
+      log.Debug() << "Opening AreaWayIndex: " << timer.ResultString();
+    }
+
+    return areaWayIndex;
+  }
+
+  LocationIndexRef Database::GetLocationIndex() const
+  {
+    std::lock_guard<std::mutex> guard(locationIndexMutex);
+
+    if (!IsOpen()) {
+      return NULL;
+    }
+
+    if (!locationIndex) {
+      locationIndex=std::make_shared<LocationIndex>();
+
+      StopClock timer;
+
+      if (!locationIndex->Load(path)) {
+        log.Error() << "Cannot load location index!";
+        locationIndex=NULL;
+
+        return NULL;
+      }
+
+      timer.Stop();
+
+      log.Debug() << "Opening LocationIndex: " << timer.ResultString();
+    }
+
+    return locationIndex;
+  }
+
+  WaterIndexRef Database::GetWaterIndex() const
+  {
+    std::lock_guard<std::mutex> guard(waterIndexMutex);
+
+    if (!IsOpen()) {
+      return NULL;
+    }
+
+    if (!waterIndex) {
+      waterIndex=std::make_shared<WaterIndex>();
+
+      StopClock timer;
+
+      if (!waterIndex->Open(path)) {
+        log.Error() << "Cannot load water index!";
+        waterIndex=NULL;
+
+        return NULL;
+      }
+
+      timer.Stop();
+
+      log.Debug() << "Opening WaterIndex: " << timer.ResultString();
+    }
+
+    return waterIndex;
+  }
+
+  OptimizeAreasLowZoomRef Database::GetOptimizeAreasLowZoom() const
+  {
+    std::lock_guard<std::mutex> guard(optimizeAreasMutex);
+
+    if (!IsOpen()) {
+      return NULL;
+    }
+
+    if (!optimizeAreasLowZoom) {
+      optimizeAreasLowZoom=std::make_shared<OptimizeAreasLowZoom>();
+
+      StopClock timer;
+
+      if (!optimizeAreasLowZoom->Open(typeConfig,
+                                      path)) {
+        log.Error() << "Cannot load optimize areas low zoom index!";
+        optimizeAreasLowZoom=NULL;
+
+        return NULL;
+      }
+
+
+      timer.Stop();
+
+      log.Debug() << "Opening OptimizeAreasLowZoom: " << timer.ResultString();
+    }
+
+    return optimizeAreasLowZoom;
+  }
+
+  OptimizeWaysLowZoomRef Database::GetOptimizeWaysLowZoom() const
+  {
+    std::lock_guard<std::mutex> guard(optimizeWaysMutex);
+
+    if (!optimizeWaysLowZoom) {
+      optimizeWaysLowZoom=std::make_shared<OptimizeWaysLowZoom>();
+
+      StopClock timer;
+
+      if (!optimizeWaysLowZoom->Open(typeConfig,
+                                     path)) {
+        log.Error() << "Cannot load optimize areas low zoom index!";
+        optimizeWaysLowZoom=NULL;
+
+        return NULL;
+      }
+
+      timer.Stop();
+
+      log.Debug() << "Opening OptimizeWaysLowZoom: " << timer.ResultString();
+    }
+
+    return optimizeWaysLowZoom;
+  }
+
+  bool Database::GetBoundingBox(GeoBox& boundingBox) const
   {
     if (!IsOpen()) {
       return false;
     }
 
-    minLat=this->minLat;
-    minLon=this->minLon;
-    maxLat=this->maxLat;
-    maxLon=this->maxLon;
-
-    return true;
-  }
-
-  bool Database::GetObjectsNodes(const AreaSearchParameter& parameter,
-                                 const TypeSet &nodeTypes,
-                                 double lonMin, double latMin,
-                                 double lonMax, double latMax,
-                                 std::string& nodeIndexTime,
-                                 std::string& nodesTime,
-                                 std::vector<NodeRef>& nodes) const
-  {
-
-    if (parameter.IsAborted()) {
-      return false;
-    }
-
-    nodes.clear();
-
-    if (parameter.IsAborted()) {
-      return false;
-    }
-
-    std::vector<FileOffset> nodeOffsets;
-    StopClock               nodeIndexTimer;
-
-    if (nodeTypes.HasTypes()) {
-      if (!areaNodeIndex.GetOffsets(lonMin,latMin,lonMax,latMax,
-                                    nodeTypes,
-                                    parameter.GetMaximumNodes(),
-                                    nodeOffsets)) {
-        std::cout << "Error getting nodes from area node index!" << std::endl;
-        return false;
-      }
-    }
-
-    nodeIndexTimer.Stop();
-    nodeIndexTime=nodeIndexTimer.ResultString();
-
-    if (parameter.IsAborted()) {
-      return false;
-    }
-
-    std::sort(nodeOffsets.begin(),nodeOffsets.end());
-
-    if (parameter.IsAborted()) {
-      return false;
-    }
-
-    StopClock nodesTimer;
-
-    if (!GetNodesByOffset(nodeOffsets,
-                          nodes)) {
-      std::cout << "Error reading nodes in area!" << std::endl;
-      return false;
-    }
-
-    nodesTimer.Stop();
-    nodesTime=nodesTimer.ResultString();
-
-    if (parameter.IsAborted()) {
-      return false;
-    }
-
-    return true;
-  }
-
-  bool Database::GetObjectsAreas(const AreaSearchParameter& parameter,
-                                 const TypeSet& areaTypes,
-                                 const Magnification& magnification,
-                                 double lonMin, double latMin,
-                                 double lonMax, double latMax,
-                                 std::string& areaOptimizedTime,
-                                 std::string& areaIndexTime,
-                                 std::string& areasTime,
-                                 std::vector<AreaRef>& areas) const
-  {
-    TypeSet internalAreaTypes(areaTypes);
-
-    if (parameter.IsAborted()) {
-      return false;
-    }
-
-    std::vector<FileOffset> areaOffsets;
-    StopClock               areaOptimizedTimer;
-
-    if (internalAreaTypes.HasTypes()) {
-      if (parameter.GetUseLowZoomOptimization() &&
-          optimizeAreasLowZoom.HasOptimizations(magnification.GetMagnification())) {
-        optimizeAreasLowZoom.GetAreas(lonMin,
-                                      latMin,
-                                      lonMax,
-                                      latMax,
-                                      magnification,
-                                      parameter.GetMaximumWays(),
-                                      internalAreaTypes,
-                                      areas);
-      }
-    }
-
-    areaOptimizedTimer.Stop();
-    areaOptimizedTime=areaOptimizedTimer.ResultString();
-
-    if (parameter.IsAborted()) {
-      return false;
-    }
-
-    std::vector<FileOffset> offsets;
-    StopClock               areaIndexTimer;
-
-    if (internalAreaTypes.HasTypes()) {
-      if (!areaAreaIndex.GetOffsets(lonMin,
-                                    latMin,
-                                    lonMax,
-                                    latMax,
-                                    magnification.GetLevel()+
-                                    parameter.GetMaximumAreaLevel(),
-                                    internalAreaTypes,
-                                    parameter.GetMaximumAreas(),
-                                    offsets)) {
-        std::cout << "Error getting areas from area index!" << std::endl;
-        return false;
-      }
-    }
-
-    areaIndexTimer.Stop();
-    areaIndexTime=areaIndexTimer.ResultString();
-
-    if (parameter.IsAborted()) {
-      return false;
-    }
-
-    std::sort(offsets.begin(),offsets.end());
-
-    if (parameter.IsAborted()) {
-      return false;
-    }
-
-    StopClock areasTimer;
-
-    if (!offsets.empty()) {
-      if (!GetAreasByOffset(offsets,
-                            areas)) {
-        std::cout << "Error reading areas in area!" << std::endl;
-        return false;
-      }
-    }
-
-    areasTimer.Stop();
-    areasTime=areasTimer.ResultString();
-
-    return !parameter.IsAborted();
-  }
-
-  bool Database::GetObjectsWays(const AreaSearchParameter& parameter,
-                                const std::vector<TypeSet>& wayTypes,
-                                const Magnification& magnification,
-                                double lonMin, double latMin,
-                                double lonMax, double latMax,
-                                std::string& wayOptimizedTime,
-                                std::string& wayIndexTime,
-                                std::string& waysTime,
-                                std::vector<WayRef>& ways) const
-  {
-    std::vector<TypeSet> internalWayTypes(wayTypes);
-
-    if (parameter.IsAborted()) {
-      return false;
-    }
-
-    std::vector<FileOffset> offsets;
-    StopClock               wayOptimizedTimer;
-
-    if (!internalWayTypes.empty()) {
-      if (parameter.GetUseLowZoomOptimization() &&
-          optimizeWaysLowZoom.HasOptimizations(magnification.GetMagnification())) {
-        optimizeWaysLowZoom.GetWays(lonMin,
-                                    latMin,
-                                    lonMax,
-                                    latMax,
-                                    magnification,
-                                    parameter.GetMaximumWays(),
-                                    internalWayTypes,
-                                    ways);
-      }
-    }
-
-    wayOptimizedTimer.Stop();
-    wayOptimizedTime=wayOptimizedTimer.ResultString();
-
-    if (parameter.IsAborted()) {
-      return false;
-    }
-
-    StopClock wayIndexTimer;
-
-    if (!internalWayTypes.empty()) {
-      if (!areaWayIndex.GetOffsets(lonMin,
-                                   latMin,
-                                   lonMax,
-                                   latMax,
-                                   internalWayTypes,
-                                   parameter.GetMaximumWays(),
-                                   offsets)) {
-        std::cout << "Error getting ways Glations from area way index!" << std::endl;
-        return false;
-      }
-    }
-
-    wayIndexTimer.Stop();
-    wayIndexTime=wayIndexTimer.ResultString();
-
-    if (parameter.IsAborted()) {
-      return false;
-    }
-
-    std::sort(offsets.begin(),offsets.end());
-
-    if (parameter.IsAborted()) {
-      return false;
-    }
-
-    StopClock waysTimer;
-
-    if (!offsets.empty()) {
-      if (!GetWaysByOffset(offsets,
-                           ways)) {
-        std::cout << "Error reading ways in area!" << std::endl;
-        return false;
-      }
-    }
-
-    waysTimer.Stop();
-    waysTime=waysTimer.ResultString();
-
-    return !parameter.IsAborted();
-  }
-
-  bool Database::GetObjects(const TypeSet &nodeTypes,
-                            const std::vector<TypeSet>& wayTypes,
-                            const TypeSet& areaTypes,
-                            double lonMin, double latMin,
-                            double lonMax, double latMax,
-                            const Magnification& magnification,
-                            const AreaSearchParameter& parameter,
-                            std::vector<NodeRef>& nodes,
-                            std::vector<WayRef>& ways,
-                            std::vector<AreaRef>& areas) const
-  {
-    return GetObjects(parameter,
-                      magnification,
-                      nodeTypes,
-                      lonMin,latMin,lonMax,latMax,
-                      nodes,
-                      wayTypes,
-                      lonMin,latMin,lonMax,latMax,
-                      ways,
-                      areaTypes,
-                      lonMin,latMin,lonMax,latMax,
-                      areas);
-  }
-
-  bool Database::GetObjects(const AreaSearchParameter& parameter,
-                            const Magnification& magnification,
-                            const TypeSet &nodeTypes,
-                            double nodeLonMin, double nodeLatMin,
-                            double nodeLonMax, double nodeLatMax,
-                            std::vector<NodeRef>& nodes,
-                            const std::vector<TypeSet>& wayTypes,
-                            double wayLonMin, double wayLatMin,
-                            double wayLonMax, double wayLatMax,
-                            std::vector<WayRef>& ways,
-                            const TypeSet& areaTypes,
-                            double areaLonMin, double areaLatMin,
-                            double areaLonMax, double areaLatMax,
-                            std::vector<AreaRef>& areas) const
-  {
-    std::string nodeIndexTime;
-    std::string nodesTime;
-
-    std::string areaOptimizedTime;
-    std::string areaIndexTime;
-    std::string areasTime;
-
-    std::string wayOptimizedTime;
-    std::string wayIndexTime;
-    std::string waysTime;
-
-    if (!IsOpen()) {
-      return false;
-    }
-
-    nodes.clear();
-    ways.clear();
-    areas.clear();
-
-    if (parameter.IsAborted()) {
-      return false;
-    }
-
-    bool nodesSuccess;
-    bool waysSuccess;
-    bool areasSuccess;
-
-#pragma omp parallel if(parameter.GetUseMultithreading())
-#pragma omp sections
-    {
-#pragma omp section
-      nodesSuccess=GetObjectsNodes(parameter,
-                                   nodeTypes,
-                                   nodeLonMin,
-                                   nodeLatMin,
-                                   nodeLonMax,
-                                   nodeLatMax,
-                                   nodeIndexTime,
-                                   nodesTime,
-                                   nodes);
-
-#pragma omp section
-      waysSuccess=GetObjectsWays(parameter,
-                                 wayTypes,
-                                 magnification,
-                                 wayLonMin,
-                                 wayLatMin,
-                                 wayLonMax,
-                                 wayLatMax,
-                                 wayOptimizedTime,
-                                 wayIndexTime,
-                                 waysTime,
-                                 ways);
-
-#pragma omp section
-      areasSuccess=GetObjectsAreas(parameter,
-                                   areaTypes,
-                                   magnification,
-                                   areaLonMin,
-                                   areaLatMin,
-                                   areaLonMax,
-                                   areaLatMax,
-                                   areaOptimizedTime,
-                                   areaIndexTime,
-                                   areasTime,
-                                   areas);
-    }
-
-    if (!nodesSuccess ||
-        !waysSuccess ||
-        !areasSuccess) {
-      return false;
-    }
-
-    if (debugPerformance) {
-      std::cout << "Query: ";
-      std::cout << "n " << nodeIndexTime << " ";
-      std::cout << "w " << wayIndexTime << " ";
-      std::cout << "a " << areaIndexTime << std::endl;
-
-      std::cout << "Load: ";
-      std::cout << "n " << nodesTime << " ";
-      std::cout << "w " << wayOptimizedTime << "/" << waysTime << " ";
-      std::cout << "a " << areaOptimizedTime << "/" << areasTime;
-      std::cout << std::endl;
-    }
-
-    return true;
-  }
-
-  bool Database::GetObjects(double lonMin, double latMin,
-                            double lonMax, double latMax,
-                            const TypeSet& types,
-                            std::vector<NodeRef>& nodes,
-                            std::vector<WayRef>& ways,
-                            std::vector<AreaRef>& areas) const
-  {
-    if (!IsOpen()) {
-      return false;
-    }
-
-    std::vector<TypeSet>    wayTypes;
-    std::vector<FileOffset> nodeOffsets;
-    std::vector<FileOffset> wayWayOffsets;
-    std::vector<FileOffset> wayAreaOffsets;
-
-    nodes.clear();
-    ways.clear();
-    areas.clear();
-
-    wayTypes.push_back(types);;
-
-    StopClock nodeIndexTimer;
-
-    if (!areaNodeIndex.GetOffsets(lonMin,latMin,lonMax,latMax,
-                                  types,
-                                  std::numeric_limits<size_t>::max(),
-                                  nodeOffsets)) {
-      std::cout << "Error getting nodes from area node index!" << std::endl;
-      return false;
-    }
-
-    nodeIndexTimer.Stop();
-
-    StopClock wayIndexTimer;
-
-    if (!areaWayIndex.GetOffsets(lonMin,
-                                 latMin,
-                                 lonMax,
-                                 latMax,
-                                 wayTypes,
-                                 std::numeric_limits<size_t>::max(),
-                                 wayWayOffsets)) {
-      std::cout << "Error getting ways and relations from area way index!" << std::endl;
-    }
-
-    wayIndexTimer.Stop();
-
-    StopClock areaAreaIndexTimer;
-
-    if (!areaAreaIndex.GetOffsets(lonMin,
-                                  latMin,
-                                  lonMax,
-                                  latMax,
-                                  std::numeric_limits<size_t>::max(),
-                                  types,
-                                  std::numeric_limits<size_t>::max(),
-                                  wayAreaOffsets)) {
-      std::cout << "Error getting ways and relations from area index!" << std::endl;
-    }
-
-    areaAreaIndexTimer.Stop();
-
-    StopClock sortTimer;
-
-    std::sort(nodeOffsets.begin(),nodeOffsets.end());
-    std::sort(wayWayOffsets.begin(),wayWayOffsets.end());
-    std::sort(wayAreaOffsets.begin(),wayAreaOffsets.end());
-
-    sortTimer.Stop();
-
-    StopClock nodesTimer;
-
-    if (!GetNodesByOffset(nodeOffsets,
-                          nodes)) {
-      std::cout << "Error reading nodes in area!" << std::endl;
-      return false;
-    }
-
-    nodesTimer.Stop();
-
-    StopClock waysTimer;
-
-    if (!GetWaysByOffset(wayWayOffsets,
-                         ways)) {
-      std::cout << "Error reading ways in area!" << std::endl;
-      return false;
-    }
-
-    waysTimer.Stop();
-
-    StopClock areasTimer;
-
-    if (!GetAreasByOffset(wayAreaOffsets,
-                          areas)) {
-      std::cout << "Error reading areas in area!" << std::endl;
-      return false;
-    }
-
-    areasTimer.Stop();
-
-    if (debugPerformance) {
-      std::cout << "I/O: ";
-      std::cout << "n " << nodeIndexTimer << " ";
-      std::cout << "w " << wayIndexTimer << " ";
-      std::cout << "a " << areaAreaIndexTimer;
-      std::cout << " - ";
-      std::cout << "s "  << sortTimer;
-      std::cout << " - ";
-      std::cout << "n " << nodesTimer << " ";
-      std::cout << "w " << waysTimer << " ";
-      std::cout << "a " << areasTimer;
-      std::cout << std::endl;
-    }
-
-    return true;
-  }
-
-  bool Database::GetObjects(const std::set<ObjectFileRef>& objects,
-                            OSMSCOUT_HASHMAP<FileOffset,NodeRef>& nodesMap,
-                            OSMSCOUT_HASHMAP<FileOffset,AreaRef>& areasMap,
-                            OSMSCOUT_HASHMAP<FileOffset,WayRef>& waysMap) const
-  {
-    if (!IsOpen()) {
-      return false;
-    }
-
-    std::set<FileOffset> nodeOffsets;
-    std::set<FileOffset> areaOffsets;
-    std::set<FileOffset> wayOffsets;
-
-    for (std::set<ObjectFileRef>::const_iterator o=objects.begin();
-        o!=objects.end();
-        ++o) {
-      ObjectFileRef object(*o);
-
-      switch (object.GetType()) {
-      case osmscout::refNode:
-        nodeOffsets.insert(object.GetFileOffset());
-        break;
-      case osmscout::refArea:
-        areaOffsets.insert(object.GetFileOffset());
-        break;
-      case osmscout::refWay:
-        wayOffsets.insert(object.GetFileOffset());
-        break;
-      default:
-        break;
-      }
-    }
-
-    if (!GetNodesByOffset(nodeOffsets,nodesMap) ||
-        !GetAreasByOffset(areaOffsets,areasMap) ||
-        !GetWaysByOffset(wayOffsets,waysMap)) {
-      std::cerr << "Error while resolving locations" << std::endl;
-      return false;
-    }
-
-    return true;
-  }
-
-  bool Database::GetGroundTiles(double lonMin, double latMin,
-                                double lonMax, double latMax,
-                                const Magnification& magnification,
-                                std::list<GroundTile>& tiles) const
-  {
-    if (!IsOpen()) {
-      return false;
-    }
-
-    StopClock timer;
-
-    if (!waterIndex.GetRegions(lonMin,
-                               latMin,
-                               lonMax,
-                               latMax,
-                               magnification,
-                               tiles)) {
-      std::cerr << "Error reading ground tiles in area!" << std::endl;
-      return false;
-    }
-
-    timer.Stop();
+    boundingBox=this->boundingBox;
 
     return true;
   }
@@ -947,599 +486,351 @@ namespace osmscout {
   bool Database::GetNodeByOffset(const FileOffset& offset,
                                  NodeRef& node) const
   {
-    if (!IsOpen()) {
+    NodeDataFileRef nodeDataFile=GetNodeDataFile();
+
+    if (!nodeDataFile) {
       return false;
     }
 
-    std::vector<FileOffset> offsets;
-    std::vector<NodeRef>    nodes;
+    StopClock time;
 
-    offsets.push_back(offset);
+    bool result=nodeDataFile->GetByOffset(offset,node);
 
-    if (GetNodesByOffset(offsets,nodes)) {
-      if (!nodes.empty()) {
-        node=*nodes.begin();
-        return true;
-      }
+    time.Stop();
+
+    if (time.GetMilliseconds()>100) {
+      log.Warn() << "Retrieving 1 node by offset took " << time.ResultString();
     }
 
-    return false;
+    return result;
   }
 
   bool Database::GetNodesByOffset(const std::vector<FileOffset>& offsets,
                                   std::vector<NodeRef>& nodes) const
   {
-    if (!IsOpen()) {
+    NodeDataFileRef nodeDataFile=GetNodeDataFile();
+
+    if (!nodeDataFile) {
       return false;
     }
 
-    return nodeDataFile.GetByOffset(offsets,nodes);
+    StopClock time;
+
+    bool result=nodeDataFile->GetByOffset(offsets,nodes);
+
+    time.Stop();
+
+    if (time.GetMilliseconds()>100) {
+      log.Warn() << "Retrieving " << nodes.size() << " nodes by offset took " << time.ResultString();
+    }
+
+    return result;
   }
 
   bool Database::GetNodesByOffset(const std::set<FileOffset>& offsets,
                                   std::vector<NodeRef>& nodes) const
   {
-    if (!IsOpen()) {
+    NodeDataFileRef nodeDataFile=GetNodeDataFile();
+
+    if (!nodeDataFile) {
       return false;
     }
 
-    return nodeDataFile.GetByOffset(offsets,nodes);
+    StopClock time;
+
+    bool result=nodeDataFile->GetByOffset(offsets,nodes);
+
+    time.Stop();
+
+    if (time.GetMilliseconds()>100) {
+      log.Warn() << "Retrieving " << nodes.size() << " nodes by offset took " << time.ResultString();
+    }
+
+    return result;
   }
 
   bool Database::GetNodesByOffset(const std::list<FileOffset>& offsets,
                                   std::vector<NodeRef>& nodes) const
   {
-    if (!IsOpen()) {
+    NodeDataFileRef nodeDataFile=GetNodeDataFile();
+
+    if (!nodeDataFile) {
       return false;
     }
 
-    return nodeDataFile.GetByOffset(offsets,nodes);
+    StopClock time;
+
+    bool result=nodeDataFile->GetByOffset(offsets,nodes);
+
+    time.Stop();
+
+    if (time.GetMilliseconds()>100) {
+      log.Warn() << "Retrieving " << nodes.size() << " nodes by offset took " << time.ResultString();
+    }
+
+    return result;
   }
 
   bool Database::GetNodesByOffset(const std::set<FileOffset>& offsets,
-                                  OSMSCOUT_HASHMAP<FileOffset,NodeRef>& dataMap) const
+                                  std::unordered_map<FileOffset,NodeRef>& dataMap) const
   {
-    if (!IsOpen()) {
+    NodeDataFileRef nodeDataFile=GetNodeDataFile();
+
+    if (!nodeDataFile) {
       return false;
     }
 
-    return nodeDataFile.GetByOffset(offsets,dataMap);
+    StopClock time;
+
+    bool result=nodeDataFile->GetByOffset(offsets,dataMap);
+
+    time.Stop();
+
+    if (time.GetMilliseconds()>100) {
+      log.Warn() << "Retrieving " << dataMap.size() << " nodes by offset took " << time.ResultString();
+    }
+
+    return result;
   }
 
   bool Database::GetAreaByOffset(const FileOffset& offset,
                                  AreaRef& area) const
   {
-    if (!IsOpen()) {
+    AreaDataFileRef areaDataFile=GetAreaDataFile();
+
+    if (!areaDataFile) {
       return false;
     }
 
-    std::vector<FileOffset>  offsets;
-    std::vector<AreaRef> areas;
+    StopClock time;
 
-    offsets.push_back(offset);
+    bool result=areaDataFile->GetByOffset(offset,area);
 
-    if (GetAreasByOffset(offsets,areas)) {
-      if (!areas.empty()) {
-        area=*areas.begin();
-        return true;
-      }
+    time.Stop();
+
+    if (time.GetMilliseconds()>100) {
+      log.Warn() << "Retrieving 1 area by offset took " << time.ResultString();
     }
 
-    return false;
+    return result;
   }
 
   bool Database::GetAreasByOffset(const std::vector<FileOffset>& offsets,
                                   std::vector<AreaRef>& areas) const
   {
-    if (!IsOpen()) {
+    AreaDataFileRef areaDataFile=GetAreaDataFile();
+
+    if (!areaDataFile) {
       return false;
     }
 
-    return areaDataFile.GetByOffset(offsets,areas);
+    StopClock time;
+
+    bool result=areaDataFile->GetByOffset(offsets,areas);
+
+    if (time.GetMilliseconds()>100) {
+      log.Warn() << "Retrieving " << areas.size() << " areas by offset took " << time.ResultString();
+    }
+
+    return result;
   }
 
   bool Database::GetAreasByOffset(const std::set<FileOffset>& offsets,
                                   std::vector<AreaRef>& areas) const
   {
-    if (!IsOpen()) {
+    AreaDataFileRef areaDataFile=GetAreaDataFile();
+
+    if (!areaDataFile) {
       return false;
     }
 
-    return areaDataFile.GetByOffset(offsets,areas);
+    StopClock time;
+
+    bool result=areaDataFile->GetByOffset(offsets,areas);
+
+    if (time.GetMilliseconds()>100) {
+      log.Warn() << "Retrieving " << areas.size() << " areas by offset took " << time.ResultString();
+    }
+
+    return result;
   }
 
   bool Database::GetAreasByOffset(const std::list<FileOffset>& offsets,
                                   std::vector<AreaRef>& areas) const
   {
-    if (!IsOpen()) {
+    AreaDataFileRef areaDataFile=GetAreaDataFile();
+
+    if (!areaDataFile) {
       return false;
     }
 
-    return areaDataFile.GetByOffset(offsets,areas);
+    StopClock time;
+
+    bool result=areaDataFile->GetByOffset(offsets,areas);
+
+    if (time.GetMilliseconds()>100) {
+      log.Warn() << "Retrieving " << areas.size() << " areas by offset took " << time.ResultString();
+    }
+
+    return result;
   }
 
   bool Database::GetAreasByOffset(const std::set<FileOffset>& offsets,
-                                  OSMSCOUT_HASHMAP<FileOffset,AreaRef>& dataMap) const
+                                  std::unordered_map<FileOffset,AreaRef>& dataMap) const
   {
-    if (!IsOpen()) {
+    AreaDataFileRef areaDataFile=GetAreaDataFile();
+
+    if (!areaDataFile) {
       return false;
     }
 
-    return areaDataFile.GetByOffset(offsets,dataMap);
+    StopClock time;
+
+    bool result=areaDataFile->GetByOffset(offsets,dataMap);
+
+    if (time.GetMilliseconds()>100) {
+      log.Warn() << "Retrieving " << dataMap.size() << " areas by offset took " << time.ResultString();
+    }
+
+    return result;
+  }
+
+  bool Database::GetAreasByBlockSpan(const DataBlockSpan& span,
+                           std::vector<AreaRef>& area) const
+  {
+    AreaDataFileRef areaDataFile=GetAreaDataFile();
+
+    if (!areaDataFile) {
+      return false;
+    }
+
+    return areaDataFile->GetByBlockSpan(span,area);
+  }
+
+  bool Database::GetAreasByBlockSpans(const std::vector<DataBlockSpan>& spans,
+                            std::vector<AreaRef>& areas) const
+  {
+    AreaDataFileRef areaDataFile=GetAreaDataFile();
+
+    if (!areaDataFile) {
+      return false;
+    }
+
+    return areaDataFile->GetByBlockSpans(spans,areas);
   }
 
   bool Database::GetWayByOffset(const FileOffset& offset,
                                 WayRef& way) const
   {
-    if (!IsOpen()) {
+    WayDataFileRef wayDataFile=GetWayDataFile();
+
+    if (!wayDataFile) {
       return false;
     }
 
-    std::vector<FileOffset> offsets;
-    std::vector<WayRef>     ways;
+    StopClock time;
 
-    offsets.push_back(offset);
+    bool result=wayDataFile->GetByOffset(offset,way);
 
-    if (GetWaysByOffset(offsets,ways)) {
-      if (!ways.empty()) {
-        way=*ways.begin();
-        return true;
-      }
+    if (time.GetMilliseconds()>100) {
+      log.Warn() << "Retrieving 1 way by offset took " << time.ResultString();
     }
 
-    return false;
+    return result;
   }
 
   bool Database::GetWaysByOffset(const std::vector<FileOffset>& offsets,
                                  std::vector<WayRef>& ways) const
   {
-    if (!IsOpen()) {
+    WayDataFileRef wayDataFile=GetWayDataFile();
+
+    if (!wayDataFile) {
       return false;
     }
 
-    return wayDataFile.GetByOffset(offsets,ways);
+    StopClock time;
+
+    bool result=wayDataFile->GetByOffset(offsets,ways);
+
+    if (time.GetMilliseconds()>100) {
+      log.Warn() << "Retrieving " << ways.size() << " ways by offset took " << time.ResultString();
+    }
+
+    return result;
   }
 
   bool Database::GetWaysByOffset(const std::set<FileOffset>& offsets,
                                  std::vector<WayRef>& ways) const
   {
-    if (!IsOpen()) {
+    WayDataFileRef wayDataFile=GetWayDataFile();
+
+    if (!wayDataFile) {
       return false;
     }
 
-    return wayDataFile.GetByOffset(offsets,ways);
+    StopClock time;
+
+    bool result=wayDataFile->GetByOffset(offsets,ways);
+
+    if (time.GetMilliseconds()>100) {
+      log.Warn() << "Retrieving " << ways.size() << " ways by offset took " << time.ResultString();
+    }
+
+    return result;
   }
 
   bool Database::GetWaysByOffset(const std::list<FileOffset>& offsets,
                                  std::vector<WayRef>& ways) const
   {
-    if (!IsOpen()) {
+    WayDataFileRef wayDataFile=GetWayDataFile();
+
+    if (!wayDataFile) {
       return false;
     }
 
-    return wayDataFile.GetByOffset(offsets,ways);
+    StopClock time;
+
+    bool result=wayDataFile->GetByOffset(offsets,ways);
+
+    if (time.GetMilliseconds()>100) {
+      log.Warn() << "Retrieving " << ways.size() << " ways by offset took " << time.ResultString();
+    }
+
+    return result;
   }
 
   bool Database::GetWaysByOffset(const std::set<FileOffset>& offsets,
-                                 OSMSCOUT_HASHMAP<FileOffset,WayRef>& dataMap) const
+                                 std::unordered_map<FileOffset,WayRef>& dataMap) const
   {
-    if (!IsOpen()) {
+    WayDataFileRef wayDataFile=GetWayDataFile();
+
+    if (!wayDataFile) {
       return false;
     }
 
-    return wayDataFile.GetByOffset(offsets,dataMap);
-  }
+    StopClock time;
 
-  bool Database::VisitAdminRegions(AdminRegionVisitor& visitor) const
-  {
-    if (!IsOpen()) {
-      return false;
+    bool result=wayDataFile->GetByOffset(offsets,dataMap);
+
+    if (time.GetMilliseconds()>100) {
+      log.Warn() << "Retrieving " << dataMap.size() << " ways by offset took " << time.ResultString();
     }
 
-    return cityStreetIndex.VisitAdminRegions(visitor);
-  }
-
-  bool Database::VisitAdminRegionLocations(const AdminRegion& region,
-                                           LocationVisitor& visitor) const
-  {
-    if (!IsOpen()) {
-      return false;
-    }
-
-    return cityStreetIndex.VisitAdminRegionLocations(region,
-                                                     visitor);
-  }
-
-  bool Database::VisitLocationAddresses(const Location& location,
-                                        AddressVisitor& visitor) const
-  {
-    if (!IsOpen()) {
-      return false;
-    }
-
-    return cityStreetIndex.VisitLocationAddresses(location,
-                                                  visitor);
-  }
-
-  bool Database::ResolveAdminRegionHierachie(const AdminRegionRef& adminRegion,
-                                             std::map<FileOffset,AdminRegionRef >& refs) const
-  {
-    if (!IsOpen()) {
-      return false;
-    }
-
-    return cityStreetIndex.ResolveAdminRegionHierachie(adminRegion,
-                                                       refs);
-  }
-
-  bool Database::HandleAdminRegion(const LocationSearch& search,
-                                   const LocationSearch::Entry& searchEntry,
-                                   const osmscout::AdminRegionMatchVisitor::AdminRegionResult& adminRegionResult,
-                                   LocationSearchResult& result) const
-  {
-    if (searchEntry.locationPattern.empty()) {
-      LocationSearchResult::Entry entry;
-
-      entry.adminRegion=adminRegionResult.adminRegion;
-
-      if (adminRegionResult.isMatch) {
-        entry.adminRegionMatchQuality=LocationSearchResult::match;
-      }
-      else {
-        entry.adminRegionMatchQuality=LocationSearchResult::candidate;
-      }
-
-      entry.locationMatchQuality=LocationSearchResult::none;
-      entry.poiMatchQuality=LocationSearchResult::none;
-      entry.addressMatchQuality=LocationSearchResult::none;
-
-      result.results.push_back(entry);
-
-      return true;
-    }
-
-    osmscout::LocationMatchVisitor visitor(searchEntry.locationPattern,
-                                           search.limit>=result.results.size() ? search.limit-result.results.size() : 0);
-
-
-    if (!VisitAdminRegionLocations(adminRegionResult.adminRegion,
-                                   visitor)) {
-      return false;
-    }
-
-    if (visitor.poiResults.empty() &&
-        visitor.locationResults.empty()) {
-      // If we search for a location within an area,
-      // we do not return the found area as hit, if we
-      // did not find the location in it.
-      return true;
-    }
-
-    for (std::list<osmscout::LocationMatchVisitor::POIResult>::const_iterator poiResult=visitor.poiResults.begin();
-        poiResult!=visitor.poiResults.end();
-        ++poiResult) {
-      HandleAdminRegionPOI(search,
-                           adminRegionResult,
-                           *poiResult,
-                           result);
-    }
-
-    for (std::list<osmscout::LocationMatchVisitor::LocationResult>::const_iterator locationResult=visitor.locationResults.begin();
-        locationResult!=visitor.locationResults.end();
-        ++locationResult) {
-      if (!HandleAdminRegionLocation(search,
-                                     searchEntry,
-                                     adminRegionResult,
-                                     *locationResult,
-                                     result)) {
-        return false;
-      }
-    }
-
-    return true;
-  }
-
-  bool Database::HandleAdminRegionLocation(const LocationSearch& search,
-                                           const LocationSearch::Entry& searchEntry,
-                                           const osmscout::AdminRegionMatchVisitor::AdminRegionResult& adminRegionResult,
-                                           const osmscout::LocationMatchVisitor::LocationResult& locationResult,
-                                           LocationSearchResult& result) const
-  {
-    if (searchEntry.addressPattern.empty()) {
-      LocationSearchResult::Entry entry;
-
-      entry.adminRegion=locationResult.adminRegion;
-      entry.location=locationResult.location;
-
-      if (adminRegionResult.isMatch) {
-        entry.adminRegionMatchQuality=LocationSearchResult::match;
-      }
-      else {
-        entry.adminRegionMatchQuality=LocationSearchResult::candidate;
-      }
-
-      if (locationResult.isMatch) {
-        entry.locationMatchQuality=LocationSearchResult::match;
-      }
-      else {
-        entry.locationMatchQuality=LocationSearchResult::candidate;
-      }
-
-      entry.poiMatchQuality=LocationSearchResult::none;
-      entry.addressMatchQuality=LocationSearchResult::none;
-
-      result.results.push_back(entry);
-
-      return true;
-    }
-
-    osmscout::AddressMatchVisitor visitor(searchEntry.addressPattern,
-                                          search.limit>=result.results.size() ? search.limit-result.results.size() : 0);
-
-
-    if (!VisitLocationAddresses(locationResult.location,
-                                visitor)) {
-      return false;
-    }
-
-    if (visitor.results.empty()) {
-      LocationSearchResult::Entry entry;
-
-      entry.adminRegion=locationResult.adminRegion;
-      entry.location=locationResult.location;
-
-      if (adminRegionResult.isMatch) {
-        entry.adminRegionMatchQuality=LocationSearchResult::match;
-      }
-      else {
-        entry.adminRegionMatchQuality=LocationSearchResult::candidate;
-      }
-
-      if (locationResult.isMatch) {
-        entry.locationMatchQuality=LocationSearchResult::match;
-      }
-      else {
-        entry.locationMatchQuality=LocationSearchResult::candidate;
-      }
-
-      entry.poiMatchQuality=LocationSearchResult::none;
-      entry.addressMatchQuality=LocationSearchResult::none;
-
-      result.results.push_back(entry);
-
-      return true;
-    }
-
-    for (std::list<osmscout::AddressMatchVisitor::AddressResult>::const_iterator addressResult=visitor.results.begin();
-        addressResult!=visitor.results.end();
-        ++addressResult) {
-      if (!HandleAdminRegionLocationAddress(search,
-                                            adminRegionResult,
-                                            locationResult,
-                                            *addressResult,
-                                            result)) {
-        return false;
-      }
-    }
-
-    return true;
-  }
-
-  bool Database::HandleAdminRegionPOI(const LocationSearch& /*search*/,
-                                      const osmscout::AdminRegionMatchVisitor::AdminRegionResult& adminRegionResult,
-                                      const osmscout::LocationMatchVisitor::POIResult& poiResult,
-                                      LocationSearchResult& result) const
-  {
-    LocationSearchResult::Entry entry;
-
-    entry.adminRegion=adminRegionResult.adminRegion;
-    entry.poi=poiResult.poi;
-
-    if (adminRegionResult.isMatch) {
-      entry.adminRegionMatchQuality=LocationSearchResult::match;
-    }
-    else {
-      entry.adminRegionMatchQuality=LocationSearchResult::candidate;
-    }
-
-    if (poiResult.isMatch) {
-      entry.poiMatchQuality=LocationSearchResult::match;
-    }
-    else {
-      entry.poiMatchQuality=LocationSearchResult::candidate;
-    }
-
-    entry.locationMatchQuality=LocationSearchResult::none;
-    entry.addressMatchQuality=LocationSearchResult::none;
-
-    result.results.push_back(entry);
-
-    return true;
-  }
-
-  bool Database::HandleAdminRegionLocationAddress(const LocationSearch& /*search*/,
-                                                  const osmscout::AdminRegionMatchVisitor::AdminRegionResult& adminRegionResult,
-                                                  const osmscout::LocationMatchVisitor::LocationResult& locationResult,
-                                                  const osmscout::AddressMatchVisitor::AddressResult& addressResult,
-                                                  LocationSearchResult& result) const
-  {
-    LocationSearchResult::Entry entry;
-
-    entry.adminRegion=locationResult.adminRegion;
-    entry.location=addressResult.location;
-    entry.address=addressResult.address;
-
-    if (adminRegionResult.isMatch) {
-      entry.adminRegionMatchQuality=LocationSearchResult::match;
-    }
-    else {
-      entry.adminRegionMatchQuality=LocationSearchResult::candidate;
-    }
-
-    if (locationResult.isMatch) {
-      entry.locationMatchQuality=LocationSearchResult::match;
-    }
-    else {
-      entry.locationMatchQuality=LocationSearchResult::candidate;
-    }
-
-    entry.poiMatchQuality=LocationSearchResult::none;
-
-    if (addressResult.isMatch) {
-      entry.addressMatchQuality=LocationSearchResult::match;
-    }
-    else {
-      entry.addressMatchQuality=LocationSearchResult::candidate;
-    }
-
-    result.results.push_back(entry);
-
-    return true;
-  }
-
-  bool Database::SearchForLocations(const LocationSearch& search,
-                                    LocationSearchResult& result) const
-  {
-    result.limitReached=false;
-    result.results.clear();
-
-    for (std::list<LocationSearch::Entry>::const_iterator searchEntry=search.searches.begin();
-        searchEntry!=search.searches.end();
-        ++searchEntry) {
-      if (searchEntry->adminRegionPattern.empty()) {
-        continue;
-      }
-
-      osmscout::AdminRegionMatchVisitor adminRegionVisitor(searchEntry->adminRegionPattern,
-                                                           search.limit);
-
-      if (!VisitAdminRegions(adminRegionVisitor)) {
-        return false;
-      }
-
-      if (adminRegionVisitor.limitReached) {
-        result.limitReached=true;
-      }
-
-      for (std::list<osmscout::AdminRegionMatchVisitor::AdminRegionResult>::const_iterator regionResult=adminRegionVisitor.results.begin();
-          regionResult!=adminRegionVisitor.results.end();
-          ++regionResult) {
-        if (!HandleAdminRegion(search,
-                               *searchEntry,
-                               *regionResult,
-                               result)) {
-          return false;
-        }
-      }
-    }
-
-    result.results.sort();
-    result.results.unique();
-
-    return true;
-  }
-
-  bool Database::GetClosestRoutableNode(double lat,
-                                        double lon,
-                                        const osmscout::Vehicle& vehicle,
-                                        double radius,
-                                        osmscout::ObjectFileRef& object,
-                                        size_t& nodeIndex) const
-  {
-    object.Invalidate();
-
-    double                         topLat;
-    double                         botLat;
-    double                         leftLon;
-    double                         rightLon;
-    std::vector<osmscout::NodeRef> nodes;
-    std::vector<osmscout::AreaRef> areas;
-    std::vector<osmscout::WayRef>  ways;
-    double                         minDistance=std::numeric_limits<double>::max();
-
-    osmscout::GetEllipsoidalDistance(lat,
-                                     lon,
-                                     315.0,
-                                     radius,
-                                     topLat,
-                                     leftLon);
-
-    osmscout::GetEllipsoidalDistance(lat,
-                                     lon,
-                                     135.0,
-                                     radius,
-                                     botLat,
-                                     rightLon);
-
-    osmscout::TypeSet      routableTypes;
-
-    for (size_t typeId=0; typeId<=typeConfig->GetMaxTypeId(); typeId++) {
-      if (typeConfig->GetTypeInfo(typeId).CanRoute(vehicle)) {
-        routableTypes.SetType(typeId);
-      }
-    }
-
-    if (!GetObjects(leftLon,
-                    botLat,
-                    rightLon,
-                    topLat,
-                    routableTypes,
-                    nodes,
-                    ways,
-                    areas)) {
-      return false;
-    }
-
-    // We ignore nodes, we do not assume that they are routable at all
-
-    for (std::vector<osmscout::AreaRef>::const_iterator a=areas.begin();
-        a!=areas.end();
-        ++a) {
-      osmscout::AreaRef area(*a);
-
-      for (size_t i=0; i<area->rings[0].nodes.size(); i++) {
-        double distance=sqrt((area->rings[0].nodes[i].GetLat()-lat)*(area->rings[0].nodes[i].GetLat()-lat)+
-                             (area->rings[0].nodes[i].GetLon()-lon)*(area->rings[0].nodes[i].GetLon()-lon));
-
-        if (distance<minDistance) {
-          minDistance=distance;
-
-          object.Set(area->GetFileOffset(),osmscout::refArea);
-          nodeIndex=i;
-        }
-      }
-    }
-
-    for (std::vector<osmscout::WayRef>::const_iterator w=ways.begin();
-        w!=ways.end();
-        ++w) {
-      osmscout::WayRef way(*w);
-
-      for (size_t i=0;  i<way->nodes.size(); i++) {
-        double distance=sqrt((way->nodes[i].GetLat()-lat)*(way->nodes[i].GetLat()-lat)+
-                             (way->nodes[i].GetLon()-lon)*(way->nodes[i].GetLon()-lon));
-        if (distance<minDistance) {
-          minDistance=distance;
-
-          object.Set(way->GetFileOffset(),osmscout::refWay);
-          nodeIndex=i;
-        }
-      }
-    }
-
-    return true;
+    return result;
   }
 
   void Database::DumpStatistics()
   {
-    nodeDataFile.DumpStatistics();
-    areaDataFile.DumpStatistics();
-    wayDataFile.DumpStatistics();
+    if (areaAreaIndex) {
+      areaAreaIndex->DumpStatistics();
+    }
 
-    areaAreaIndex.DumpStatistics();
-    areaNodeIndex.DumpStatistics();
-    areaWayIndex.DumpStatistics();
-    cityStreetIndex.DumpStatistics();
-    waterIndex.DumpStatistics();
+    if (locationIndex) {
+      locationIndex->DumpStatistics();
+    }
+
+    if (waterIndex) {
+      waterIndex->DumpStatistics();
+    }
   }
 }

@@ -21,7 +21,9 @@
 */
 
 #include <list>
+#include <memory>
 #include <set>
+#include <unordered_set>
 
 #include <osmscout/Location.h>
 #include <osmscout/TypeConfig.h>
@@ -31,6 +33,7 @@
 namespace osmscout {
 
   /**
+   * \ingroup Database
    * Location index returns objects by names (the name should be changed). You
    * can currently either search for regions like 'cities' or for named locations in
    * areas like 'street in city'.
@@ -45,18 +48,27 @@ namespace osmscout {
     static const char* const FILENAME_LOCATION_IDX;
 
   private:
-    std::string path;
+    std::string                     path;
+    mutable uint8_t                 bytesForNodeFileOffset;
+    mutable uint8_t                 bytesForAreaFileOffset;
+    mutable uint8_t                 bytesForWayFileOffset;
+    std::unordered_set<std::string> regionIgnoreTokens;
+    std::unordered_set<std::string> locationIgnoreTokens;
+    FileOffset                      indexOffset;
 
   private:
+    void Read(FileScanner& scanner,
+              ObjectFileRef& object) const;
+
     bool LoadAdminRegion(FileScanner& scanner,
                          AdminRegion& region) const;
 
-    bool VisitRegionEntries(FileScanner& scanner,
-                            AdminRegionVisitor& visitor,
-                            bool& stopped) const;
+    AdminRegionVisitor::Action VisitRegionEntries(FileScanner& scanner,
+                                                  AdminRegionVisitor& visitor) const;
 
     bool VisitRegionLocationEntries(FileScanner& scanner,
                                     LocationVisitor& visitor,
+                                    bool recursive,
                                     bool& stopped) const;
 
     bool LoadRegionDataEntry(FileScanner& scanner,
@@ -65,6 +77,7 @@ namespace osmscout {
                              bool& stopped) const;
 
     bool VisitLocationAddressEntries(FileScanner& scanner,
+                                     const AdminRegion& region,
                                      const Location& location,
                                      AddressVisitor& visitor,
                                      bool& stopped) const;
@@ -75,6 +88,9 @@ namespace osmscout {
 
     bool Load(const std::string& path);
 
+    bool IsRegionIgnoreToken(const std::string& token) const;
+    bool IsLocationIgnoreToken(const std::string& token) const;
+
     /**
      * Visit all admin regions
      */
@@ -84,12 +100,14 @@ namespace osmscout {
      * Visit all locations within the given admin region
      */
     bool VisitAdminRegionLocations(const AdminRegion& region,
-                                   LocationVisitor& visitor) const;
+                                   LocationVisitor& visitor,
+                                   bool recursive=true) const;
 
     /**
      * Visit all addresses for a given location (in a given AdminRegion)
      */
-    bool VisitLocationAddresses(const Location& location,
+    bool VisitLocationAddresses(const AdminRegion& region,
+                                const Location& location,
                                 AddressVisitor& visitor) const;
 
     bool ResolveAdminRegionHierachie(const AdminRegionRef& region,
@@ -97,6 +115,8 @@ namespace osmscout {
 
     void DumpStatistics();
   };
+
+  typedef std::shared_ptr<LocationIndex> LocationIndexRef;
 }
 
 #endif

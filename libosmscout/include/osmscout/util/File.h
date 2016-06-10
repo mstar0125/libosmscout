@@ -29,32 +29,52 @@
 namespace osmscout {
 
   /**
-   * Return the size of the file in the parameter size. Returns true, if the file size
-   * could be calculated, else false.
+   * \defgroup File Platform independent file access
+   *
+   * Classes and methods related to low-level platform
+   * independent access to files on disk.
    */
-  extern OSMSCOUT_API bool GetFileSize(const std::string& filename, FileOffset& size);
 
   /**
+   * \ingroup File
+   *
+   * Return the size of the file in the parameter size.
+   *
+   * @throws IOException
+   */
+  extern OSMSCOUT_API FileOffset GetFileSize(const std::string& filename);
+
+  /**
+   * \ingroup File
+   *
    * Deletes the given file
    */
   extern OSMSCOUT_API bool RemoveFile(const std::string& filename);
 
   /**
+   * \ingroup File
+   *
    * Rename a file
    */
   extern OSMSCOUT_API bool RenameFile(const std::string& oldFilename,
                                       const std::string& newFilename);
 
   /**
+   * \ingroup File
+   *
    * Append the filename 'name' to the directory name 'name' correctly adding directory
    * delimiter if necessary.
    */
   extern OSMSCOUT_API std::string AppendFileToDir(const std::string& dir, const std::string& file);
 
   /**
-   * Number of bytes needed to address the given size.
+   * \ingroup File
+   *
+   * Number of bytes needed to address the complete content of the given file.
+   *
+   * @throws IOException
    */
-  extern OSMSCOUT_API uint8_t BytesNeeededToAddressFileData(FileOffset size);
+  extern OSMSCOUT_API uint8_t BytesNeededToAddressFileData(const std::string& filename);
 }
 
 #endif

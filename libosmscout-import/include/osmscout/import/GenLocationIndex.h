@@ -20,6 +20,10 @@
   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307  USA
 */
 
+#include <memory>
+#include <unordered_map>
+#include <unordered_set>
+
 #include <osmscout/Node.h>
 #include <osmscout/Area.h>
 #include <osmscout/Way.h>
@@ -35,13 +39,13 @@ namespace osmscout {
   private:
     /**
      * An area can contain an number of location nodes. Since they do not have
-     * their own area we define the nod ename as an alias for the containing
-     * area, since this is the best aproximation.
+     * their own area we define the node name as an alias for the containing
+     * area, since this is the best approximation.
      */
     struct RegionAlias
     {
-      FileOffset             reference; //! Reference to the node that is the alias
-      std::string            name;      //! The alias itself
+      FileOffset  reference; //!< Reference to the node that is the alias
+      std::string name;      //!< The alias itself
     };
 
     /**
@@ -49,14 +53,19 @@ namespace osmscout {
      */
     struct RegionPOI
     {
-      ObjectFileRef object; //! Object
-      std::string   name;   //! Name of the POI
+      ObjectFileRef object; //!< Object
+      std::string   name;   //!< Name of the POI
+
+      bool operator<(const RegionPOI& other) const
+      {
+        return object.GetFileOffset()<other.object.GetFileOffset();
+      }
     };
 
     struct RegionAddress
     {
-      ObjectFileRef object; //! Object with the given address
-      std::string   name;   //! The house number
+      ObjectFileRef object; //!< Object with the given address
+      std::string   name;   //!< The house number
 
       bool operator<(const RegionAddress& other) const
       {
@@ -66,14 +75,14 @@ namespace osmscout {
 
     struct RegionLocation
     {
-      FileOffset               addressOffset; //! Offset of place where the address list offset is stored
-      std::list<ObjectFileRef> objects;       //! Objects that represent this location
-      std::list<RegionAddress> addresses;     //! Addresses at this location
+      FileOffset               addressOffset; //!< Offset of place where the address list offset is stored
+      std::list<ObjectFileRef> objects;       //!< Objects that represent this location
+      std::list<RegionAddress> addresses;     //!< Addresses at this location
     };
 
     struct Region;
 
-    typedef Ref<Region> RegionRef;
+    typedef std::shared_ptr<Region> RegionRef;
 
     /**
       An area. An area is a administrative region, a city, a country, ...
@@ -81,26 +90,26 @@ namespace osmscout {
       An area has a name and also a number of locations, which are possibly
       within the area but area currently also represented by this area.
       */
-    struct Region : public Referencable
+    struct Region
     {
-      FileOffset                           indexOffset; //! Offset into the index file
-      FileOffset                           dataOffset;  //! Offset into the index file
+      FileOffset                           indexOffset; //!< Offset into the index file
+      FileOffset                           dataOffset;  //!< Offset into the index file
 
-      ObjectFileRef                        reference;   //! Reference to the object this area is based on
-      std::string                          name;        //! The name of this area
+      ObjectFileRef                        reference;   //!< Reference to the object this area is based on
+      std::string                          name;        //!< The name of this area
 
-      std::list<RegionAlias>               aliases;     //! Location that are represented by this region
-      std::vector<std::vector<GeoCoord> >  areas;       //! the geometric area of this region
+      std::list<RegionAlias>               aliases;     //!< Location that are represented by this region
+      std::vector<std::vector<GeoCoord> >  areas;       //!< the geometric area of this region
 
       double                               minlon;
       double                               minlat;
       double                               maxlon;
       double                               maxlat;
 
-      std::list<RegionPOI>                 pois;        //! A list of POIs in this region
-      std::map<std::string,RegionLocation> locations;   //! list of indexed objects in this region
+      std::list<RegionPOI>                 pois;        //!< A list of POIs in this region
+      std::map<std::string,RegionLocation> locations;   //!< list of indexed objects in this region
 
-      std::list<RegionRef>                 regions;     //! A list of sub regions
+      std::list<RegionRef>                 regions;     //!< A list of sub regions
 
       void CalculateMinMax()
       {
@@ -154,9 +163,9 @@ namespace osmscout {
      */
     struct RegionReference
     {
-      ObjectFileRef          reference; //! Reference of the object that
-                                        //! is the alias
-      FileOffset             offset;    //! Fileoffset of the area
+      ObjectFileRef          reference; //!< Reference of the object that
+                                        //!< is the alias
+      FileOffset             offset;    //!< File offset of the area
 
       inline bool operator<(const RegionReference& other) const
       {
@@ -165,21 +174,54 @@ namespace osmscout {
     };
 
   private:
+    uint8_t bytesForNodeFileOffset;
+    uint8_t bytesForAreaFileOffset;
+    uint8_t bytesForWayFileOffset;
+
+  private:
+    void Write(FileWriter& writer,
+               const ObjectFileRef& object);
+
+    void AnalyseStringForIgnoreTokens(const std::string& string,
+                                      std::unordered_map<std::string,size_t>& ignoreTokens,
+                                      std::unordered_set<std::string>& blacklist);
+
+    void CalculateRegionNameIgnoreTokens(const Region& parent,
+                                         std::unordered_map<std::string,size_t>& ignoreTokens,
+                                         std::unordered_set<std::string>& blacklist);
+
+    void CalculateLocationNameIgnoreTokens(const Region& parent,
+                                           std::unordered_map<std::string,size_t>& ignoreTokens,
+                                           std::unordered_set<std::string>& blacklist);
+
+    bool CalculateIgnoreTokens(const Region& rootRegion,
+                               std::list<std::string>& regionTokens,
+                               std::list<std::string>& locationTokens);
+
+
     void DumpRegion(const Region& parent,
                     size_t indent,
                     std::ostream& out);
 
+    void DumpRegionAndData(const Region& parent,
+                           size_t indent,
+                           std::ostream& out);
+
     bool DumpRegionTree(Progress& progress,
                         const Region& rootRegion,
                         const std::string& filename);
+
+    bool DumpLocationTree(Progress& progress,
+                          const Region& rootRegion,
+                          const std::string& filename);
 
     void AddRegion(Region& parent,
                    const RegionRef& region);
 
     bool GetBoundaryAreas(const ImportParameter& parameter,
                           Progress& progress,
-                          const TypeConfig& typeConfig,
-                          TypeId boundaryId,
+                          const TypeConfigRef& typeConfig,
+                          const TypeInfoSet& boundaryTypes,
                           std::list<Boundary>& boundaryAreas);
 
     void SortInBoundaries(Progress& progress,
@@ -187,9 +229,9 @@ namespace osmscout {
                           const std::list<Boundary>& boundaryAreas,
                           size_t level);
 
-    bool IndexRegionAreas(const ImportParameter& parameter,
+    bool IndexRegionAreas(const TypeConfig& typeConfig,
+                          const ImportParameter& parameter,
                           Progress& progress,
-                          const OSMSCOUT_HASHSET<TypeId>& regionTypes,
                           Region& rootRegion);
 
     void SortInRegion(RegionRef& area,
@@ -205,15 +247,15 @@ namespace osmscout {
                           const RegionAlias& location,
                           const GeoCoord& node);
 
-    bool IndexRegionNodes(const ImportParameter& parameter,
+    bool IndexRegionNodes(const TypeConfigRef& typeConfig,
+                          const ImportParameter& parameter,
                           Progress& progress,
-                          const OSMSCOUT_HASHSET<TypeId>& regionTypes,
                           RegionRef& rootRegion,
                           const RegionIndex& regionIndex);
 
     bool AddLocationAreaToRegion(Region& region,
                                  const Area& area,
-                                 const std::vector<GeoCoord>& nodes,
+                                 const std::vector<Point>& nodes,
                                  const std::string& name,
                                  double minlon,
                                  double minlat,
@@ -223,72 +265,64 @@ namespace osmscout {
     void AddLocationAreaToRegion(RegionRef& rootRegion,
                                  const Area& area,
                                  const Area::Ring& ring,
+                                 const std::string& name,
                                  const RegionIndex& regionIndex);
 
-    bool IndexLocationAreas(const ImportParameter& parameter,
+    bool IndexLocationAreas(const TypeConfig& typeConfig,
+                            const ImportParameter& parameter,
                             Progress& progress,
-                            const OSMSCOUT_HASHSET<TypeId>& indexables,
                             RegionRef& rootRegion,
                             const RegionIndex& regionIndex);
 
     bool AddLocationWayToRegion(Region& region,
                                 const Way& way,
+                                const std::string& name,
                                 double minlon,
                                 double minlat,
                                 double maxlon,
                                 double maxlat);
 
-    bool IndexLocationWays(const ImportParameter& parameter,
+    bool IndexLocationWays(const TypeConfigRef& typeConfig,
+                           const ImportParameter& parameter,
                            Progress& progress,
-                           const OSMSCOUT_HASHSET<TypeId>& indexables,
                            RegionRef& rootRegion,
                            const RegionIndex& regionIndex);
 
     void AddAddressAreaToRegion(Progress& progress,
                                 Region& region,
-                                const Area& area,
-                                const std::vector<GeoCoord>& nodes,
-                                const Area::Ring& ring,
+                                const FileOffset& fileOffset,
+                                const std::string& location,
+                                const std::string& address,
+                                const std::vector<Point>& nodes,
                                 double minlon,
                                 double minlat,
                                 double maxlon,
                                 double maxlat,
                                 bool& added);
 
-    void AddAddressAreaToRegion(Progress& progress,
-                                RegionRef& region,
-                                const Area& area,
-                                const Area::Ring& ring,
-                                const RegionIndex& regionIndex,
-                                bool& added);
-
     void AddPOIAreaToRegion(Progress& progress,
                             Region& region,
-                            const Area& area,
-                            const std::vector<GeoCoord>& nodes,
-                            const Area::Ring& ring,
+                            const FileOffset& fileOffset,
+                            const std::string& name,
+                            const std::vector<Point>& nodes,
                             double minlon,
                             double minlat,
                             double maxlon,
                             double maxlat,
-                                bool& added);
-
-    void AddPOIAreaToRegion(Progress& progress,
-                            RegionRef& region,
-                            const Area& area,
-                            const Area::Ring& ring,
-                            const RegionIndex& regionIndex,
                             bool& added);
 
-    bool IndexAddressAreas(const ImportParameter& parameter,
+    bool IndexAddressAreas(const TypeConfig& typeConfig,
+                           const ImportParameter& parameter,
                            Progress& progress,
                            RegionRef& rootRegion,
-                           const OSMSCOUT_HASHSET<TypeId>& poiTypes,
                            const RegionIndex& regionIndex);
 
     bool AddAddressWayToRegion(Progress& progress,
                                Region& region,
-                               const Way& way,
+                               const FileOffset& fileOffset,
+                               const std::string& location,
+                               const std::string& address,
+                               const std::vector<Point>& nodes,
                                double minlon,
                                double minlat,
                                double maxlon,
@@ -297,58 +331,69 @@ namespace osmscout {
 
     bool AddPOIWayToRegion(Progress& progress,
                            Region& region,
-                           const Way& way,
+                           const FileOffset& fileOffset,
+                           const std::string& name,
+                           const std::vector<Point>& nodes,
                            double minlon,
                            double minlat,
                            double maxlon,
                            double maxlat,
                            bool& added);
 
-    bool IndexAddressWays(const ImportParameter& parameter,
+    bool IndexAddressWays(const TypeConfig& typeConfig,
+                          const ImportParameter& parameter,
                           Progress& progress,
                           RegionRef& rootRegion,
-                          const OSMSCOUT_HASHSET<TypeId>& poiTypes,
                           const RegionIndex& regionIndex);
 
     void AddAddressNodeToRegion(Progress& progress,
                                 Region& region,
-                                const Node& node,
+                                const FileOffset& fileOffset,
+                                const std::string& location,
+                                const std::string& address,
                                 bool& added);
 
     void AddPOINodeToRegion(Region& region,
-                            const Node& node,
+                            const FileOffset& fileOffset,
+                            const std::string& name,
                             bool& added);
 
-    bool IndexAddressNodes(const ImportParameter& parameter,
+    bool IndexAddressNodes(const TypeConfig& typeConfig,
+                           const ImportParameter& parameter,
                            Progress& progress,
                            RegionRef& rootRegion,
-                           const OSMSCOUT_HASHSET<TypeId>& poiTypes,
                            const RegionIndex& regionIndex);
 
-    bool WriteRegionIndexEntry(FileWriter& writer,
+    void WriteIgnoreTokens(FileWriter& writer,
+                           const std::list<std::string>& regionIgnoreTokens,
+                           const std::list<std::string>& locationIgnoreTokens);
+
+    void WriteRegionIndexEntry(FileWriter& writer,
                                const Region& parentRegion,
                                Region& region);
 
-    bool WriteRegionIndex(FileWriter& writer,
+    void WriteRegionIndex(FileWriter& writer,
                           Region& root);
 
-    bool WriteRegionDataEntry(FileWriter& writer,
+    void WriteRegionDataEntry(FileWriter& writer,
                               Region& region);
 
-    bool WriteRegionData(FileWriter& writer,
+    void WriteRegionData(FileWriter& writer,
                          Region& root);
 
-    bool WriteAddressDataEntry(FileWriter& writer,
+    void WriteAddressDataEntry(FileWriter& writer,
                                Region& region);
 
-    bool WriteAddressData(FileWriter& writer,
+    void WriteAddressData(FileWriter& writer,
                           Region& root);
 
   public:
-    std::string GetDescription() const;
-    bool Import(const ImportParameter& parameter,
-                Progress& progress,
-                const TypeConfig& typeConfig);
+    void GetDescription(const ImportParameter& parameter,
+                        ImportModuleDescription& description) const;
+
+    bool Import(const TypeConfigRef& typeConfig,
+                const ImportParameter& parameter,
+                Progress& progress);
   };
 }
 

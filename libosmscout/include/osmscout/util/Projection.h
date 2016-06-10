@@ -22,14 +22,43 @@
 
 #include <osmscout/private/CoreImportExport.h>
 
-#include <osmscout/system/SSEMathPublic.h>
+#include <osmscout/GeoCoord.h>
 
+#include <osmscout/util/GeoBox.h>
 #include <osmscout/util/Magnification.h>
+
+#include <osmscout/system/SSEMathPublic.h>
 
 namespace osmscout {
 
+  /**
+   * \ingroup Geometry
+   *
+   * The Projection class is an abstract base class for multiple projection implementations.
+   *
+   * The Projection class allows transformation of geo coordinates to screen/image coordinates and
+   * screen/image coordinates back to geo coordinates.
+   */
   class OSMSCOUT_API Projection
   {
+  protected:
+    double        lon;            //!< Longitude coordinate of the center of the image
+    double        lat;            //!< Latitude coordinate of the center of the image
+    double        angle;          //!< Display rotation angle
+    Magnification magnification;  //!< Current magnification
+    double        dpi;            //!< Screen DPI
+    size_t        width;          //!< Width of image
+    size_t        height;         //!< Height of image
+
+    double        lonMin;         //!< Longitude of the upper left corner of the image
+    double        latMin;         //!< Latitude of the upper left corner of the image
+    double        lonMax;         //!< Longitude of the lower right corner of the image
+    double        latMax;         //!< Latitude of the lower right corner of the image
+
+    double        pixelSize;      //!< Size of a pixel in meter
+    double        meterInPixel;   //!< Number of on screen pixel for one meter on the ground
+    double        meterInMM;      //!< Number of on screen millimeters for one meter on the ground
+
   public:
 
     /**
@@ -38,7 +67,7 @@ namespace osmscout {
     class BatchTransformer
     {
     public:
-      //this should be private, but that would exclude future projection
+      // this should be private, but that would exclude future projection
       // implementors. I don't know a nice way to handle this
       const Projection&  projection;
 #ifdef OSMSCOUT_HAVE_SSE2
@@ -63,28 +92,29 @@ namespace osmscout {
         Flush();
       }
 
-      inline bool GeoToPixel(double lon,
+      inline void GeoToPixel(double lon,
                              double lat,
                              double& x,
                              double& y)
       {
 #ifdef OSMSCOUT_HAVE_SSE2
+        if (projection.CanBatch()) {
+          this->lon[count]=lon;
+          this->lat[count]=lat;
+          xPointer[count]=&x;
+          yPointer[count]=&y;
+          count++;
 
-        this->lon[count]=lon;
-        this->lat[count]=lat;
-        xPointer[count]=&x;
-        yPointer[count]=&y;
-        count++;
-
-        if (count==2) {
-          count=0;
-          return projection.GeoToPixel(*this);
+          if (count==2) {
+            count=0;
+            projection.GeoToPixel(*this);
+          }
         }
-
-        return true;
-
+        else {
+          projection.GeoToPixel(lon,lat,x,y);
+        }
 #else
-        return projection.GeoToPixel(lon,lat,x,y);
+        projection.GeoToPixel(lon,lat,x,y);
 #endif
       }
 
@@ -102,62 +132,154 @@ namespace osmscout {
       }
     };
 
+    Projection();
     virtual ~Projection();
+
+    virtual bool CanBatch() const = 0;
+    virtual bool IsValid() const = 0;
+
+    inline GeoCoord GetCenter() const
+    {
+      return GeoCoord(lat,lon);
+    }
 
     /**
      * Returns longitude coordinate of the region center.
      *
      */
-    virtual double GetLon() const = 0;
+    inline double GetLon() const
+    {
+      return lon;
+    }
 
     /**
      * Returns latitude coordinate of the region center.
      *
      */
-    virtual double GetLat() const = 0;
-
-    virtual size_t GetWidth() const = 0;
-    virtual size_t GetHeight() const = 0;
-
-    /**
-     * Returns minimum longitude value of the area covered by the projection.
-     */
-    virtual double GetLonMin() const = 0;
+    inline double GetLat() const
+    {
+      return lat;
+    }
 
     /**
-     * Returns minimum latitude value of the area covered by the projection.
+     * Returns the angle ([0..2*PI[) of the display in relation to the north. A degree of 0 means
+     * north is to the top, a degree of PI, renders with the south to the top of the display).
      */
-    virtual double GetLatMin() const = 0;
+    inline double GetAngle() const
+    {
+      return angle;
+    }
 
     /**
-     * Returns maximum longitude value of the area covered by the projection.
+     * Returns the width of the screen
      */
-    virtual double GetLonMax() const = 0;
+    inline size_t GetWidth() const
+    {
+      return width;
+    }
 
     /**
-     * Returns maximum latitude value of the area covered by the projection.
+     * Returns the height of the screen
      */
-    virtual double GetLatMax() const = 0;
+    inline size_t GetHeight() const
+    {
+      return height;
+    }
 
     /**
      * Return the magnification as part of the projection.
      */
-    virtual Magnification GetMagnification() const = 0;
+    inline Magnification GetMagnification() const
+    {
+      return magnification;
+    }
 
-    virtual bool Set(double lon, double lat,
-                     const Magnification& magnification,
-                     size_t width, size_t height) = 0;
+    /**
+     * Return the DPI as part of the projection.
+     */
+    inline double GetDPI() const
+    {
+      return dpi;
+    }
 
     /**
      * Returns true, if the given geo coordinate is in the bounding box
      */
-    virtual bool GeoIsIn(double lon, double lat) const = 0;
+    inline bool GeoIsIn(double lon, double lat) const
+    {
+      return lon>=lonMin && lon<=lonMax && lat>=latMin && lat<=latMax;
+    }
 
     /**
      * Returns true, if the given bounding box is completely within the projection bounding box
      */
-    virtual bool GeoIsIn(double lonMin, double latMin,
-                         double lonMax, double latMax) const = 0;
+    inline bool GeoIsIn(double lonMin, double latMin,
+                        double lonMax, double latMax) const
+    {
+      return !(lonMin>this->lonMax ||
+               lonMax<this->lonMin ||
+               latMin>this->latMax ||
+               latMax<this->latMin);
+    }
+
+    /**
+     * Returns the bounding box of the area covered
+     */
+    inline void GetDimensions(GeoBox& boundingBox) const
+    {
+      boundingBox.Set(GeoCoord(latMin,lonMin),
+                      GeoCoord(latMax,lonMax));
+    }
+
+    /**
+     * Returns the size of a pixel in meter
+     */
+    inline double GetPixelSize() const
+    {
+      return pixelSize;
+    }
+
+    /**
+     * Returns the number of on screen pixel for one meter on the ground
+     */
+    inline double GetMeterInPixel() const
+    {
+      return meterInPixel;
+    }
+
+    /**
+     * Returns the number of on screen millimeters for one meter on the ground
+     */
+    inline double GetMeterInMM() const
+    {
+      return meterInMM;
+    }
+
+    /**
+     * Convert a width in mm into the equivalent pixel size based on the given DPI
+     *
+     * @param width
+     *    Width in mm
+     * @return
+     *    Width in screen pixel
+     */
+    inline double ConvertWidthToPixel(double width) const
+    {
+      return width*dpi/25.4;
+    }
+
+    /**
+     * Convert a width in pixel into the equivalent mm size based on the given DPI
+     *
+     * @param width
+     *    Width in screen pixel
+     * @return
+     *    Width in mm
+     */
+    inline double ConvertPixelToWidth(double pixel) const
+    {
+      return pixel*25.4/dpi;
+    }
 
     /**
      * Converts a pixel coordinate to a geo coordinate
@@ -168,47 +290,243 @@ namespace osmscout {
     /**
      * Converts a geo coordinate to a pixel coordinate
      */
-    virtual bool GeoToPixel(double lon, double lat,
+    virtual void GeoToPixel(double lon, double lat,
                             double& x, double& y) const = 0;
 
     /**
-     * Returns the bounding box of the area covered
+     * Converts a geo coordinate to a pixel coordinate
      */
-    virtual bool GetDimensions(double& lonMin, double& latMin,
-                               double& lonMax, double& latMax) const = 0;
-
-    /**
-     * Returns the size of a pixel in mm
-     */
-    virtual double GetPixelSize() const = 0;
+    virtual void GeoToPixel(const GeoCoord& coord,
+                            double& x, double& y) const = 0;
 
   protected:
-    virtual bool GeoToPixel(const BatchTransformer& transformData) const = 0;
+    virtual void GeoToPixel(const BatchTransformer& transformData) const = 0;
 
     friend class BatchTransformer;
   };
 
+  /**
+   * Mercator projection that tries to render the resulting map in the same
+   * physical size on all devices. If the physical DPI of the device is
+   * correctly given, objects on any device has the same size. Bigger devices
+   * will show "more" map thus.
+   *
+   * Scale is calculated based on the assumption that the original OpenStreetMap
+   * tiles were designed for 96 DPI displays.
+   *
+   */
+  class OSMSCOUT_API MercatorProjectionOld : public Projection
+  {
+  protected:
+    bool   valid;          //!< projection is valid
+
+    double latOffset;      //!< Absolute and untransformed screen position of lat coordinate
+    double angleSin;
+    double angleCos;
+    double angleNegSin;
+    double angleNegCos;
+
+    double scale;
+    double scaleGradtorad; //!< Precalculated scale*Gradtorad
+
+  public:
+    MercatorProjectionOld();
+
+    inline bool CanBatch() const
+    {
+      return false;
+    }
+
+    inline bool IsValid() const
+    {
+      return valid;
+    }
+
+    inline bool Set(double lon,double lat,
+                    const Magnification& magnification,
+                    size_t width,size_t height)
+    {
+      return Set(lon,lat,0,magnification,GetDPI(),width,height);
+    }
+
+    inline bool Set(double lon, double lat,
+                    double angle,
+                    const Magnification& magnification,
+                    size_t width, size_t height)
+    {
+      return Set(lon,lat,angle,magnification,GetDPI(),width,height);
+    }
+
+    inline bool Set(double lon, double lat,
+                    const Magnification& magnification,
+                    double dpi,
+                    size_t width, size_t height)
+    {
+      return Set(lon,lat,0,magnification,dpi,width,height);
+    }
+
+    bool Set(double lon, double lat,
+             double angle,
+             const Magnification& magnification,
+             double dpi,
+             size_t width, size_t height);
+
+    bool PixelToGeo(double x, double y,
+                    double& lon, double& lat) const;
+
+    void GeoToPixel(double lon, double lat,
+                    double& x, double& y) const;
+
+    void GeoToPixel(const GeoCoord& coord,
+                    double& x, double& y) const;
+
+    bool Move(double horizPixel,
+              double vertPixel);
+
+    inline bool MoveUp(double pixel)
+    {
+      return Move(0,pixel);
+    }
+
+    inline bool MoveDown(double pixel)
+    {
+      return Move(0,-pixel);
+    }
+
+    inline bool MoveLeft(double pixel)
+    {
+      return Move(-pixel,0);
+    }
+
+    inline bool MoveRight(double pixel)
+    {
+      return Move(pixel,0);
+    }
+
+  protected:
+     void GeoToPixel(const BatchTransformer& transformData) const;
+  };
+
+  /**
+   * Mercator projection that tries to render the resulting map in the same
+   * physical size on all devices. If the physical DPI of the device is
+   * correctly given, objects on any device has the same size. Bigger devices
+   * will show "more" map thus.
+   *
+   * Scale is calculated based on the assumption that the original OpenStreetMap
+   * tiles were designed for 96 DPI displays.
+   *
+   */
   class OSMSCOUT_API MercatorProjection : public Projection
   {
   protected:
-    bool                valid;         //! projects is valid
-    double              lon;           //! Longitude coordinate of the center of the image
-    double              lat;           //! Latitude coordinate of the center of the image
-    double              lonMin;        //! Longitude of the upper left corner of the image
-    double              latMin;        //! Latitude of the upper left corner of the image
-    double              lonMax;        //! Longitude of the lower right corner of the image
-    double              latMax;        //! Latitude of the lower right corner of the image
+    bool   valid;          //!< projection is valid
 
-    size_t              width;         //! Width of image
-    size_t              height;        //! Height of image
+    double latOffset;      //!< Absolute and untransformed screen position of lat coordinate
+    double angleSin;
+    double angleCos;
+    double angleNegSin;
+    double angleNegCos;
 
-    double              lonOffset;
-    double              latOffset;
-    double              scale;
-    double              scaleGradtorad; //!Precalculated scale*Gradtorad
+    double scale;
+    double scaleGradtorad; //!< Precalculated scale*Gradtorad
+
+  public:
+    MercatorProjection();
+
+    inline bool CanBatch() const
+    {
+      return false;
+    }
+
+    inline bool IsValid() const
+    {
+      return valid;
+    }
+
+    inline bool Set(double lon,double lat,
+                    const Magnification& magnification,
+                    size_t width,size_t height)
+    {
+      return Set(lon,lat,0,magnification,GetDPI(),width,height);
+    }
+
+    inline bool Set(double lon, double lat,
+                    double angle,
+                    const Magnification& magnification,
+                    size_t width, size_t height)
+    {
+      return Set(lon,lat,angle,magnification,GetDPI(),width,height);
+    }
+
+    inline bool Set(double lon, double lat,
+                    const Magnification& magnification,
+                    double dpi,
+                    size_t width, size_t height)
+    {
+      return Set(lon,lat,0,magnification,dpi,width,height);
+    }
+
+    bool Set(double lon, double lat,
+             double angle,
+             const Magnification& magnification,
+             double dpi,
+             size_t width, size_t height);
+
+    bool PixelToGeo(double x, double y,
+                    double& lon, double& lat) const;
+
+    void GeoToPixel(double lon, double lat,
+                    double& x, double& y) const;
+
+    void GeoToPixel(const GeoCoord& coord,
+                    double& x, double& y) const;
+
+    bool Move(double horizPixel,
+              double vertPixel);
+
+    inline bool MoveUp(double pixel)
+    {
+      return Move(0,pixel);
+    }
+
+    inline bool MoveDown(double pixel)
+    {
+      return Move(0,-pixel);
+    }
+
+    inline bool MoveLeft(double pixel)
+    {
+      return Move(-pixel,0);
+    }
+
+    inline bool MoveRight(double pixel)
+    {
+      return Move(pixel,0);
+    }
+
+  protected:
+    void GeoToPixel(const BatchTransformer& transformData) const;
+  };
+
+  /**
+   * Mercator projection as used by the OpenStreetMap tile rendering code.
+   *
+   * The TileProjection simplifies the general Mercator projection code to
+   * make sure that there are no effects based on rounding errors or similar.
+   */
+  class OSMSCOUT_API TileProjection : public Projection
+  {
+  protected:
+    bool   valid;          //!< projection is valid
+
+    double lonOffset;
+    double latOffset;
+    double scale;
+    double scaleGradtorad; //!< Precalculated scale*Gradtorad
 
 #ifdef OSMSCOUT_HAVE_SSE2
-      //some extra vars for special sse needs
+    //some extra vars for special sse needs
       v2df              sse2LonOffset;
       v2df              sse2LatOffset;
       v2df              sse2Scale;
@@ -217,94 +535,55 @@ namespace osmscout {
 #endif
 
   private:
-    Magnification       magnification; //! Current maginification
-
-    double              pixelSize;     //! Size of a pixel in meter
+    bool SetInternal(double lonMin,double latMin,
+                     double lonMax,double latMax,
+                     const Magnification& magnification,
+                     double dpi,
+                     size_t width,size_t height);
 
   public:
-    MercatorProjection();
+    TileProjection();
 
-    inline double GetLon() const
+    inline bool CanBatch() const
     {
-      return lon;
+      return true;
     }
 
-    inline double GetLat() const
+    inline bool IsValid() const
     {
-      return lat;
+      return valid;
     }
 
-    inline size_t GetWidth() const
+    inline bool Set(size_t tileX, size_t tileY,
+                    const Magnification& magnification,
+                    size_t width, size_t height)
     {
-      return width;
+      return Set(tileX,tileY,magnification,GetDPI(),width,height);
     }
 
-    inline size_t GetHeight() const
-    {
-      return height;
-    }
-
-    inline double GetLonMin() const
-    {
-      return lonMin;
-    }
-
-    inline double GetLatMin() const
-    {
-      return latMin;
-    }
-
-    inline double GetLonMax() const
-    {
-      return lonMax;
-    }
-
-    inline double GetLatMax() const
-    {
-      return latMax;
-    }
-
-    inline Magnification GetMagnification() const
-    {
-      return magnification;
-    }
-
-    bool Set(double lon, double lat,
+    bool Set(size_t tileX, size_t tileY,
              const Magnification& magnification,
+             double dpi,
              size_t width, size_t height);
 
-    bool Set(double lonMin, double latMin,
-             double lonMax, double latMax,
+    bool Set(size_t tileAX, size_t tileAY,
+             size_t tileBX, size_t tileBY,
              const Magnification& magnification,
-             size_t width);
-
-    bool GeoIsIn(double lon, double lat) const;
-    bool GeoIsIn(double lonMin, double latMin,
-                 double lonMax, double latMax) const;
+             double dpi,
+             size_t width, size_t height);
 
     bool PixelToGeo(double x, double y,
                     double& lon, double& lat) const;
 
-    bool GeoToPixel(double lon, double lat,
+    void GeoToPixel(double lon, double lat,
                     double& x, double& y) const;
 
-    bool GetDimensions(double& lonMin, double& latMin,
-                       double& lonMax, double& latMax) const;
-
-    double GetPixelSize() const;
+    void GeoToPixel(const GeoCoord& coord,
+                    double& x, double& y) const;
 
   protected:
-     bool GeoToPixel(const BatchTransformer& transformData) const;
 
-  };
-
-  class OSMSCOUT_API ReversedYAxisMercatorProjection : public MercatorProjection
-  {
-  private:
-    bool PixelToGeo(double x, double y, double& lon, double& lat) const;
-    bool GeoToPixel(double lon, double lat, double& x, double& y) const;
-  protected:
-    bool GeoToPixel(const BatchTransformer& transformData) const;
+    void GeoToPixel(const BatchTransformer& transformData) const;
   };
 }
 

@@ -22,45 +22,23 @@
 #include <limits>
 
 #include <osmscout/Database.h>
+#include <osmscout/MapService.h>
+
 #include <osmscout/MapPainterAgg.h>
-#include <osmscout/StyleConfigLoader.h>
 
 #include <osmscout/util/StopClock.h>
+#include <osmscout/util/Tiling.h>
 
 /*
   Example for the nordrhein-westfalen.osm (to be executed in the Demos top
   level directory), drawing the "Ruhrgebiet":
 
-  src/Tiler ../TravelJinni/ ../TravelJinni/standard.oss 51.2 6.5 51.7 8 10 13
+  src/Tiler ../maps/nordrhein-westfalen ../stylesheets/standard.oss 51.2 6.5 51.7 8 10 13
 */
 
-static unsigned long tileWidth=256;
-static unsigned long tileHeight=256;
-
-// See http://wiki.openstreetmap.org/wiki/Slippy_map_tilenames for details about
-// coordinate transformation
-
-size_t long2tilex(double lon, double z)
-{
-  return (size_t)(floor((lon + 180.0) / 360.0 *pow(2.0,z)));
-}
-
-size_t lat2tiley(double lat, double z)
-{
-  return (size_t)(floor((1.0 - log( tan(lat * M_PI/180.0) + 1.0 / cos(lat * M_PI/180.0)) / M_PI) / 2.0 * pow(2.0,z)));
-}
-
-double tilex2long(int x, double z)
-{
-  return x / pow(2.0,z) * 360.0 - 180;
-}
-
-double tiley2lat(int y, double z)
-{
-  double n = M_PI - 2.0 * M_PI * y / pow(2.0,z);
-
-  return 180.0 / M_PI * atan(0.5 * (exp(n) - exp(-n)));
-}
+static unsigned int tileWidth=256;
+static unsigned int tileHeight=256;
+static const double DPI=96.0;
 
 bool write_ppm(const agg::rendering_buffer& buffer,
                const char* file_name)
@@ -86,12 +64,11 @@ bool write_ppm(const agg::rendering_buffer& buffer,
 
 int main(int argc, char* argv[])
 {
-  std::string   map;
-  std::string   style;
-  double        latTop,latBottom,lonLeft,lonRight;
-  unsigned long xTileStart,xTileEnd,xTileCount,yTileStart,yTileEnd,yTileCount;
-  unsigned long startZoom;
-  unsigned long endZoom;
+  std::string  map;
+  std::string  style;
+  double       latTop,latBottom,lonLeft,lonRight;
+  unsigned int startLevel;
+  unsigned int endLevel;
 
   if (argc!=9) {
     std::cerr << "DrawMap ";
@@ -125,32 +102,33 @@ int main(int argc, char* argv[])
     return 1;
   }
 
-  if (sscanf(argv[7],"%lu",&startZoom)!=1) {
+  if (sscanf(argv[7],"%u",&startLevel)!=1) {
     std::cerr << "start zoom is not numeric!" << std::endl;
     return 1;
   }
 
-  if (sscanf(argv[8],"%lu",&endZoom)!=1) {
+  if (sscanf(argv[8],"%u",&endLevel)!=1) {
     std::cerr << "end zoom is not numeric!" << std::endl;
     return 1;
   }
 
   osmscout::DatabaseParameter databaseParameter;
-  osmscout::Database          database(databaseParameter);
+  osmscout::DatabaseRef       database=std::make_shared<osmscout::Database>(databaseParameter);
+  osmscout::MapServiceRef     mapService=std::make_shared<osmscout::MapService>(database);
 
-  if (!database.Open(map.c_str())) {
+  if (!database->Open(map.c_str())) {
     std::cerr << "Cannot open database" << std::endl;
 
     return 1;
   }
 
-  osmscout::StyleConfig styleConfig(database.GetTypeConfig());
+  osmscout::StyleConfigRef styleConfig=std::make_shared<osmscout::StyleConfig>(database->GetTypeConfig());
 
-  if (!osmscout::LoadStyleConfig(style.c_str(),styleConfig)) {
+  if (!styleConfig->Load(style)) {
     std::cerr << "Cannot open style" << std::endl;
   }
 
-  osmscout::MercatorProjection  projection;
+  osmscout::TileProjection      projection;
   osmscout::MapParameter        drawParameter;
   osmscout::AreaSearchParameter searchParameter;
   osmscout::MapData             data;
@@ -158,7 +136,7 @@ int main(int argc, char* argv[])
   // Change this, to match your system
   drawParameter.SetFontName("/usr/share/fonts/truetype/msttcorefonts/Verdana.ttf");
   drawParameter.SetFontName("/usr/share/fonts/TTF/DejaVuSans.ttf");
-  drawParameter.SetFontSize(6.0);
+  drawParameter.SetFontSize(5.0);
   // Fadings make problems with tile approach, we disable it
   drawParameter.SetDrawFadings(false);
   // To get accurate label drawing at tile borders, we take into account labels
@@ -167,29 +145,35 @@ int main(int argc, char* argv[])
 
   searchParameter.SetUseLowZoomOptimization(false);
   searchParameter.SetMaximumAreaLevel(3);
-  searchParameter.SetMaximumNodes(std::numeric_limits<unsigned long>::max());
-  searchParameter.SetMaximumWays(std::numeric_limits<unsigned long>::max());
-  searchParameter.SetMaximumAreas(std::numeric_limits<unsigned long>::max());
 
-  for (size_t zoom=std::min(startZoom,endZoom);
-       zoom<=std::max(startZoom,endZoom);
-       zoom++) {
-    xTileStart=long2tilex(std::min(lonLeft,lonRight),zoom);
-    xTileEnd=long2tilex(std::max(lonLeft,lonRight),zoom);
+  osmscout::MapPainterAgg painter(styleConfig);
+
+  for (size_t level=std::min(startLevel,endLevel);
+       level<=std::max(startLevel,endLevel);
+       level++) {
+    osmscout::Magnification magnification;
+    int                     xTileStart,xTileEnd,xTileCount,yTileStart,yTileEnd,yTileCount;
+
+    magnification.SetLevel(level);
+
+    xTileStart=osmscout::LonToTileX(std::min(lonLeft,lonRight),
+                                    magnification);
+    xTileEnd=osmscout::LonToTileX(std::max(lonLeft,lonRight),
+                                  magnification);
     xTileCount=xTileEnd-xTileStart+1;
 
-    yTileStart=lat2tiley(std::max(latTop,latBottom),zoom);
-    yTileEnd=lat2tiley(std::min(latTop,latBottom),zoom);
+    yTileStart=osmscout::LatToTileY(std::max(latTop,latBottom),
+                                    magnification);
+    yTileEnd=osmscout::LatToTileY(std::min(latTop,latBottom),
+                                  magnification);
+
     yTileCount=yTileEnd-yTileStart+1;
 
-    std::cout << "Drawing zoom " << zoom << ", " << (xTileCount)*(yTileCount) << " tiles [" << xTileStart << "," << yTileStart << " - " <<  xTileEnd << "," << yTileEnd << "]" << std::endl;
+    std::cout << "Drawing zoom " << level << ", " << (xTileCount)*(yTileCount) << " tiles [" << xTileStart << "," << yTileStart << " - " <<  xTileEnd << "," << yTileEnd << "]" << std::endl;
 
-    unsigned long           bitmapSize=tileWidth*tileHeight*3*xTileCount*yTileCount;
-    unsigned char           *buffer=new unsigned char[bitmapSize];
-    osmscout::MapPainterAgg painter;
-    osmscout::Magnification magnification;
+    unsigned long bitmapSize=tileWidth*tileHeight*3*xTileCount*yTileCount;
+    unsigned char *buffer=new unsigned char[bitmapSize];
 
-    magnification.SetLevel(zoom);
 
     memset(buffer,0,bitmapSize);
 
@@ -202,69 +186,43 @@ int main(int argc, char* argv[])
     double maxTime=0.0;
     double totalTime=0.0;
 
-    osmscout::TypeSet              nodeTypes;
-    std::vector<osmscout::TypeSet> wayTypes;
-    osmscout::TypeSet              areaTypes;
+    osmscout::TypeInfoSet nodeTypes;
+    osmscout::TypeInfoSet wayTypes;
+    osmscout::TypeInfoSet areaTypes;
 
-    styleConfig.GetNodeTypesWithMaxMag(magnification,
-                                       nodeTypes);
+    styleConfig->GetNodeTypesWithMaxMag(magnification,
+                                        nodeTypes);
 
-    styleConfig.GetWayTypesByPrioWithMaxMag(magnification,
-                                            wayTypes);
+    styleConfig->GetWayTypesWithMaxMag(magnification,
+                                       wayTypes);
 
-    styleConfig.GetAreaTypesWithMaxMag(magnification,
-                                       areaTypes);
+    styleConfig->GetAreaTypesWithMaxMag(magnification,
+                                        areaTypes);
 
-    for (size_t y=yTileStart; y<=yTileEnd; y++) {
-      for (size_t x=xTileStart; x<=xTileEnd; x++) {
-        double              minLat2,minLat,lat,maxLat,maxLat2;
-        double              minLon2,minLon,lon,maxLon,maxLon2;
+    for (int y=yTileStart; y<=yTileEnd; y++) {
+      for (int x=xTileStart; x<=xTileEnd; x++) {
         agg::pixfmt_rgb24   pf(rbuf);
         osmscout::StopClock timer;
+        osmscout::GeoBox    boundingBox;
 
-        minLat2=tiley2lat(y+2,zoom);
-        minLat=tiley2lat(y+1,zoom);
-        maxLat=tiley2lat(y,zoom);
-        maxLat2=tiley2lat(y-1,zoom);
-
-        minLon2=tilex2long(x-1,zoom);
-        minLon=tilex2long(x,zoom);
-        maxLon=tilex2long(x+1,zoom);
-        maxLon2=tilex2long(x+2,zoom);
-
-        lat=(minLat+maxLat)/2;
-        lon=(minLon+maxLon)/2;
-
-        std::cout << "Drawing tile [" << minLat << "," << lat << "," << maxLat << "]x[" << minLon << "," << lon << "," << maxLon << "]" << std::endl;
-        //std::cout << x << "," << y << "/";
-        //std::cout << x-xTileStart << "," << y-yTileStart << std::endl;
-
-        projection.Set(lon,lat,
+        projection.Set(x,y,
                        magnification,
+                       DPI,
                        tileWidth,
                        tileHeight);
 
+        projection.GetDimensions(boundingBox);
 
-        database.GetObjects(searchParameter,
-                            projection.GetMagnification(),
-                            nodeTypes,
-                            minLon2,
-                            minLat2,
-                            maxLon2,
-                            maxLat2,
-                            data.nodes,
-                            wayTypes,
-                            minLon,
-                            minLat,
-                            maxLon,
-                            maxLat,
-                            data.ways,
-                            areaTypes,
-                            minLon2,
-                            minLat2,
-                            maxLon2,
-                            maxLat2,
-                            data.areas);
+        std::cout << "Drawing tile " << level << "." << y << "." << x << " " << boundingBox.GetDisplayText() << std::endl;
+
+        osmscout::GeoBox dataBoundingBox(osmscout::GeoCoord(osmscout::TileYToLat(y-1,magnification),osmscout::TileXToLon(x-1,magnification)),
+                                         osmscout::GeoCoord(osmscout::TileYToLat(y+1,magnification),osmscout::TileXToLon(x+1,magnification)));
+
+        std::list<osmscout::TileRef> tiles;
+
+        mapService->LookupTiles(magnification,dataBoundingBox,tiles);
+        mapService->LoadMissingTileData(searchParameter,*styleConfig,tiles);
+        mapService->ConvertTilesToMapData(tiles,data);
 
         size_t bufferOffset=xTileCount*tileWidth*3*(y-yTileStart)*tileHeight+
                             (x-xTileStart)*tileWidth*3;
@@ -273,8 +231,7 @@ int main(int argc, char* argv[])
                     tileWidth,tileHeight,
                     tileWidth*xTileCount*3);
 
-        painter.DrawMap(styleConfig,
-                        projection,
+        painter.DrawMap(projection,
                         drawParameter,
                         data,
                         &pf);
@@ -287,7 +244,7 @@ int main(int argc, char* argv[])
         maxTime=std::max(maxTime,time);
         totalTime+=time;
 
-        std::string output=osmscout::NumberToString(zoom)+"_"+osmscout::NumberToString(x)+"_"+osmscout::NumberToString(y)+".ppm";
+        std::string output=osmscout::NumberToString(level)+"_"+osmscout::NumberToString(x)+"_"+osmscout::NumberToString(y)+".ppm";
 
         write_ppm(rbuf,output.c_str());
       }
@@ -298,7 +255,7 @@ int main(int argc, char* argv[])
                 tileHeight*yTileCount,
                 tileWidth*xTileCount*3);
 
-    std::string output=osmscout::NumberToString(zoom)+"_full_map.ppm";
+    std::string output=osmscout::NumberToString(level)+"_full_map.ppm";
 
     write_ppm(rbuf,output.c_str());
 
@@ -311,7 +268,7 @@ int main(int argc, char* argv[])
     std::cout << "max: " << maxTime << " msec" << std::endl;
   }
 
-  database.Close();
+  database->Close();
 
   return 0;
 }

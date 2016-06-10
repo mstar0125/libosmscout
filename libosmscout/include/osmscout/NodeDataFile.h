@@ -20,14 +20,27 @@
   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307  USA
 */
 
+#include <memory>
+
 #include <osmscout/Node.h>
 #include <osmscout/DataFile.h>
 
 namespace osmscout {
   /**
+    \ingroup Database
     Abstraction for getting cached access to the 'nodes.dat' file.
     */
-  typedef DataFile<Node> NodeDataFile;
+  class OSMSCOUT_API NodeDataFile : public DataFile<Node>
+  {
+  public:
+    static const char* NODES_DAT;
+    static const char* NODES_IDMAP;
+
+  public:
+    NodeDataFile();
+  };
+
+  typedef std::shared_ptr<NodeDataFile> NodeDataFileRef;
 }
 
 #endif

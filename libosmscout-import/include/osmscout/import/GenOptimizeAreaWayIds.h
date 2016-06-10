@@ -22,8 +22,6 @@
 
 #include <osmscout/ImportFeatures.h>
 
-#include <map>
-
 #include <osmscout/import/Import.h>
 
 #include <osmscout/Area.h>
@@ -35,35 +33,39 @@ namespace osmscout {
 
   class OptimizeAreaWayIdsGenerator : public ImportModule
   {
-  private:
-    bool ScanWayAreaIds(const ImportParameter& parameter,
-                        Progress& progress,
-                        NodeUseMap& nodeUseMap);
-
-    bool ScanRelAreaIds(const ImportParameter& parameter,
-                        Progress& progress,
-                        NodeUseMap& nodeUseMap);
-
-    bool ScanWayWayIds(const ImportParameter& parameter,
-                       Progress& progress,
-                       NodeUseMap& nodeUseMap);
-
-    bool CopyWayArea(const ImportParameter& parameter,
-                     Progress& progress,
-                     NodeUseMap& nodeUseMap);
-
-    bool CopyRelArea(const ImportParameter& parameter,
-                     Progress& progress,
-                     NodeUseMap& nodeUseMap);
-
-    bool CopyWayWay(const ImportParameter& parameter,
-                    Progress& progress,
-                    NodeUseMap& nodeUseMap);
   public:
-    std::string GetDescription() const;
-    bool Import(const ImportParameter& parameter,
-                Progress& progress,
-                const TypeConfig& typeConfig);
+    static const char* AREAS3_TMP;
+    static const char* WAYS_TMP;
+
+  private:
+    bool ScanAreaIds(const ImportParameter& parameter,
+                     Progress& progress,
+                     const TypeConfig& typeConfig,
+                     std::unordered_set<Id>& usedIdSet,
+                     std::unordered_set<Id>& usedIdAtLeastTwiceSet);
+
+    bool ScanWayIds(const ImportParameter& parameter,
+                    Progress& progress,
+                    const TypeConfig& typeConfig,
+                    std::unordered_set<Id>& usedIdSet,
+                    std::unordered_set<Id>& usedIdAtLeastTwiceSet);
+
+    bool CopyAreas(const ImportParameter& parameter,
+                   Progress& progress,
+                   const TypeConfig& typeConfig,
+                   const std::unordered_set<Id>& usedIdAtLeastTwiceSet);
+
+    bool CopyWays(const ImportParameter& parameter,
+                  Progress& progress,
+                  const TypeConfig& typeConfig,
+                  const std::unordered_set<Id>& usedIdAtLeastTwiceSet);
+  public:
+    void GetDescription(const ImportParameter& parameter,
+                        ImportModuleDescription& description) const;
+
+    bool Import(const TypeConfigRef& typeConfig,
+                const ImportParameter& parameter,
+                Progress& progress);
   };
 }
 

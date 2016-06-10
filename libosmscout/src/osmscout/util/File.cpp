@@ -19,28 +19,30 @@
 
 #include <osmscout/private/Config.h>
 
+#include <osmscout/util/Exception.h>
 #include <osmscout/util/File.h>
+#include <osmscout/util/Number.h>
 
 #include <stdio.h>
 #include <stdlib.h>
 
 namespace osmscout {
 
-  bool GetFileSize(const std::string& filename, FileOffset& size)
+  FileOffset GetFileSize(const std::string& filename)
   {
     FILE *file;
 
     file=fopen(filename.c_str(),"rb");
 
     if (file==NULL) {
-      return false;
+      throw IOException(filename,"Opening file");
     }
 
 #if defined(HAVE_FSEEKO)
     if (fseeko(file,0L,SEEK_END)!=0) {
       fclose(file);
 
-      return false;
+      throw IOException(filename,"Seeking end of file");
     }
 
     off_t pos=ftello(file);
@@ -48,32 +50,32 @@ namespace osmscout {
     if (pos==-1) {
       fclose(file);
 
-      return false;
+      throw IOException(filename,"Getting current file position");
     }
 
-    size=(unsigned long)pos;
+    fclose(file);
+
+    return (FileOffset)pos;
 
 #else
     if (fseek(file,0L,SEEK_END)!=0) {
       fclose(file);
 
-      return false;
+      throw IOException(filename,"Seeking end of file");
     }
 
-    unsigned long pos=ftell(file);
+    long int pos=ftell(file);
 
     if (pos==-1) {
       fclose(file);
 
-      return false;
+      throw IOException(filename,"Getting current file position");
     }
-
-    size=(unsigned long)pos;
-#endif
 
     fclose(file);
 
-    return true;
+    return (FileOffset)pos;
+#endif
   }
 
   bool RemoveFile(const std::string& filename)
@@ -116,19 +118,10 @@ namespace osmscout {
 #endif
   }
 
-  uint8_t BytesNeeededToAddressFileData(FileOffset size)
+  uint8_t BytesNeededToAddressFileData(const std::string& filename)
   {
-    uint8_t bytes=0;
+    FileOffset fileSize=GetFileSize(filename);
 
-    while (size>0) {
-      size=size/256;
-      bytes++;
-    }
-
-    if (bytes==0) {
-      bytes=1;
-    }
-
-    return bytes;
+    return BytesNeededToEncodeNumber(fileSize);
   }
 }

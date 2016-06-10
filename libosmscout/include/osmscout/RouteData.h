@@ -28,6 +28,9 @@
 
 namespace osmscout {
 
+  /**
+   * \ingroup Routing
+   */
   class OSMSCOUT_API RouteData
   {
   public:
@@ -100,6 +103,15 @@ namespace osmscout {
     inline const std::list<RouteEntry>& Entries() const
     {
       return entries;
+    }
+
+    inline void Append(RouteData routePart)
+    {
+      entries.splice(entries.end() , routePart.Entries());
+    }
+
+    inline void PopEntry(){
+      entries.pop_back();
     }
   };
 }

@@ -20,16 +20,21 @@
   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307  USA
 */
 
+#include <memory>
+#include <mutex>
 #include <vector>
 
-#include <osmscout/TypeSet.h>
+#include <osmscout/DataFile.h>
 
 #include <osmscout/util/Cache.h>
+#include <osmscout/util/Geometry.h>
 #include <osmscout/util/FileScanner.h>
 
 namespace osmscout {
 
   /**
+    \ingroup Database
+
     AreaAreaIndex allows you to find areas in
     a given region.
 
@@ -43,37 +48,28 @@ namespace osmscout {
     */
   class OSMSCOUT_API AreaAreaIndex
   {
+  public:
+    static const char* AREA_AREA_IDX;
+
   private:
     /**
-      An individual index entry in a index cell
-      */
-    struct IndexEntry
-    {
-      TypeId     type;
-      FileOffset offset;
-    };
-
-    /**
-      Datastructure for every index cell of our index.
+      Data structure for every index cell of our index.
       */
     struct IndexCell
     {
-      FileOffset              children[4]; //! File index of each of the four children, or 0 if there is no child
-      std::vector<IndexEntry> areas;
+      FileOffset children[4]; //!< File index of each of the four children, or 0 if there is no child
+      FileOffset data;        //!< The file index at which the data payload starts
     };
 
     typedef Cache<FileOffset,IndexCell> IndexCache;
 
     struct IndexCacheValueSizer : public IndexCache::ValueSizer
     {
-      unsigned long GetSize(const IndexCell& value) const
+      size_t GetSize(const IndexCell& value) const
       {
-        unsigned long memory=0;
+        size_t memory=0;
 
         memory+=sizeof(value);
-
-        // Areas
-        memory+=value.areas.size()*sizeof(IndexEntry);
 
         return memory;
       }
@@ -97,39 +93,60 @@ namespace osmscout {
     };
 
   private:
-    std::string                     filepart;       //! name of the data file
-    std::string                     datafilename;   //! Fullpath and name of the data file
-    mutable FileScanner             scanner;        //! Scanner instance for reading this file
+    std::string           datafilename;   //!< Full path and name of the data file
+    mutable FileScanner   scanner;        //!< Scanner instance for reading this file
 
-    std::vector<double>             cellWidth;      //! Precalculated cellWidth for each level of the quadtree
-    std::vector<double>             cellHeight;     //! Precalculated cellHeight for each level of the quadtree
-    uint32_t                        maxLevel;       //! Maximum level in index
-    FileOffset                      topLevelOffset; //! File offset of the top level index entry
+    uint32_t              maxLevel;       //!< Maximum level in index
+    FileOffset            topLevelOffset; //!< File offset of the top level index entry
 
-    mutable IndexCache              indexCache;     //! Cached map of all index entries by file offset
+    mutable IndexCache    indexCache;     //!< Cached map of all index entries by file offset
+
+    mutable std::mutex    lookupMutex;
 
   private:
     bool GetIndexCell(uint32_t level,
                       FileOffset offset,
-                      IndexCache::CacheRef& cacheRef) const;
+                      IndexCell& indexCell,
+                      FileOffset& dataOffset) const;
+
+    bool ReadCellData(const TypeConfig& typeConfig,
+                      const TypeInfoSet& types,
+                      FileOffset dataOffset,
+                      std::vector<DataBlockSpan>& spans) const;
+
+    void PushCellsForNextLevel(double minlon,
+                               double minlat,
+                               double maxlon,
+                               double maxlat,
+                               const IndexCell & cellIndexData,
+                               const CellDimension& cellDimension,
+                               size_t cx,
+                               size_t cy,
+                               std::vector<CellRef>& nextCellRefs) const;
 
   public:
     AreaAreaIndex(size_t cacheSize);
+    virtual ~AreaAreaIndex();
 
     void Close();
-    bool Load(const std::string& path);
+    bool Open(const std::string& path);
 
-    bool GetOffsets(double minlon,
-                    double minlat,
-                    double maxlon,
-                    double maxlat,
-                    size_t maxLevel,
-                    const TypeSet& types,
-                    size_t maxCount,
-                    std::vector<FileOffset>& offsets) const;
+    inline bool IsOpen() const
+    {
+      return scanner.IsOpen();
+    }
+
+    bool GetAreasInArea(const TypeConfig& typeConfig,
+                        const GeoBox& boundingBox,
+                        size_t maxLevel,
+                        const TypeInfoSet& types,
+                        std::vector<DataBlockSpan>& spans,
+                        TypeInfoSet& loadedTypes) const;
 
     void DumpStatistics();
   };
+
+  typedef std::shared_ptr<AreaAreaIndex> AreaAreaIndexRef;
 }
 
 #endif

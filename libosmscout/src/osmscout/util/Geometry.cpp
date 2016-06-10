@@ -29,7 +29,7 @@
 #endif
 
 #include <osmscout/system/Assert.h>
-
+#include <iostream>
 namespace osmscout {
 
   size_t Pow(size_t a, size_t b)
@@ -46,6 +46,57 @@ namespace osmscout {
     }
 
     return res;
+  }
+
+  /**
+   * Calculates the distance between a point p and a line defined by the points a and b.
+   * @param p
+   *    The point in distance to a line
+   * @param a
+   *    One point defining the line
+   * @param b
+   *    Another point defining the line
+   * @param intersection
+   *    The point that is closest to 'p', either 'a', 'b', or a point on the line between
+   *    'a' and 'b'.
+   * @return
+   *    The distance
+   */
+   double CalculateDistancePointToLineSegment(const GeoCoord& p,
+                                              const GeoCoord& a,
+                                              const GeoCoord& b,
+                                              GeoCoord& intersection)
+  {
+    double xdelta=b.lon-a.lon;
+    double ydelta=b.lat-a.lat;
+
+    if (xdelta==0 && ydelta==0) {
+      return std::numeric_limits<double>::infinity();
+    }
+
+    double u=((p.lon-a.lon)*xdelta+(p.lat-a.lat)*ydelta)/(xdelta*xdelta+ydelta*ydelta);
+
+    double cx,cy;
+
+    if (u<0) {
+      cx=a.lon;
+      cy=a.lat;
+    }
+    else if (u>1) {
+      cx=b.lon;
+      cy=b.lat;
+    }
+    else {
+      cx=a.lon+u*xdelta;
+      cy=a.lat+u*ydelta;
+    }
+
+    double dx=cx-p.lon;
+    double dy=cy-p.lat;
+
+    intersection.Set(cy,cx);
+
+    return sqrt(dx*dx+dy*dy);
   }
 
   /**
@@ -66,6 +117,28 @@ namespace osmscout {
     double a = sin(dLat/2)*sin(dLat/2)+cosdLonDiv2*cosdLonDiv2*sindLonDiv2*sindLonDiv2;
 
     double c = 2*atan2(sqrt(a),sqrt(1-a));
+
+    return r*c;
+  }
+
+  /**
+    Calculating basic cost for the A* algorithm based on the
+    spherical distance of two points on earth
+    */
+  double GetSphericalDistance(const GeoCoord& a,
+                              const GeoCoord& b)
+  {
+    double r=6371.01; // Average radius of earth
+    double dLat=(b.GetLat()-a.GetLat())*M_PI/180;
+    double dLon=(b.GetLon()-a.GetLon())*M_PI/180;
+
+    double sindLonDiv2;
+    double cosdLonDiv2;
+    sincos(dLon/2, sindLonDiv2, cosdLonDiv2);
+
+    double aa = sin(dLat/2)*sin(dLat/2)+cosdLonDiv2*cosdLonDiv2*sindLonDiv2*sindLonDiv2;
+
+    double c = 2*atan2(sqrt(aa),sqrt(1-aa));
 
     return r*c;
   }
@@ -167,6 +240,13 @@ namespace osmscout {
     return b * A * (sigma - deltasigma)/1000; // We want the distance in Km
   }
 
+
+  double GetEllipsoidalDistance(const GeoCoord& a,
+                                const GeoCoord& b)
+  {
+    return GetEllipsoidalDistance(a.GetLon(),a.GetLat(),b.GetLon(),b.GetLat());
+  }
+
   void GetEllipsoidalDistance(double lat1, double lon1,
                               double bearing, double distance,
                               double& lat2, double& lon2)
@@ -253,6 +333,31 @@ namespace osmscout {
     return bearing;
   }
 
+  double GetSphericalBearingInitial(const GeoCoord& a,
+                                    const GeoCoord& b)
+  {
+    double aLon=a.GetLon()*M_PI/180;
+    double aLat=a.GetLat()*M_PI/180;
+
+    double bLon=b.GetLon()*M_PI/180;
+    double bLat=b.GetLat()*M_PI/180;
+
+    double dLon=bLon-aLon;
+
+    double sindLon, sinaLat, sinbLat;
+    double cosdLon, cosaLat, cosbLat;
+    sincos(dLon, sindLon, cosdLon);
+    sincos(aLat, sinaLat, cosaLat);
+    sincos(bLat, sinbLat, cosbLat);
+
+    double y=sindLon*cosbLat;
+    double x=cosaLat*sinbLat-sinaLat*cosbLat*cosdLon;
+
+    double bearing=atan2(y,x);
+
+    return bearing;
+  }
+
   /**
    * Taken the path from A to B over a sphere return the bearing (0..2PI) at the destination point B.
    */
@@ -288,6 +393,35 @@ namespace osmscout {
     //double bearing=fmod(atan2(y,x)+3*M_PI,2*M_PI);
 
     return bearing;
+  }
+
+  std::string BearingDisplayString(double bearing)
+  {
+    int grad=(int)round(bearing*180/M_PI);
+
+    grad=grad % 360;
+
+    if (grad<0) {
+      grad+=360;
+    }
+
+    if (grad>0 && grad<=45) {
+      return "N";
+    }
+    else if (grad>45 && grad<=135) {
+      return "E";
+    }
+    else if (grad>135 && grad<=225) {
+      return "S";
+    }
+    else if (grad>225 && grad<=315) {
+      return "W";
+    }
+    else if (grad>315 && grad<=360) {
+      return "N";
+    }
+
+    return "?";
   }
 
   double NormalizeRelativeAngel(double angle)
@@ -366,4 +500,251 @@ namespace osmscout {
       }
     }
   }
+
+
+  /**
+   * return the minimum distance from the point p to the line segment [p1,p2]
+   * this could be the distance from p to p1 or to p2 if q the orthogonal projection of p
+   * on the line supporting the segment is outside [p1,p2]
+   * r is the abscissa of q on the line, 0 <= r <= 1 if q is between p1 and p2.
+   */
+  double distanceToSegment(double px, double py, double p1x, double p1y, double p2x, double p2y, double &r, double &qx, double &qy){
+
+    if(p1x == p2x && p1y == p2y){
+        return NAN;
+    }
+
+    double rn = (px-p1x)*(p2x-p1x) + (py-p1y)*(p2y-p1y);
+    double rd = (p2x-p1x)*(p2x-p1x) + (p2y-p1y)*(p2y-p1y);
+    r = rn / rd;
+    double ppx = p1x + r*(p2x-p1x);
+    double ppy = p1y + r*(p2y-p1y);
+    double s =  ((p1y-py)*(p2x-p1x)-(p1x-px)*(p2y-p1y)) / rd;
+
+
+    if ((r >= 0) && (r <= 1))
+    {
+        qx = ppx;
+        qy = ppy;
+        return fabs(s)*sqrt(rd);
+    }
+    else
+    {
+        double dist1 = (px-p1x)*(px-p1x) + (py-p1y)*(py-p1y);
+        double dist2 = (px-p2x)*(px-p2x) + (py-p2y)*(py-p2y);
+        if (dist1 < dist2)
+        {
+            qx = p1x;
+            qy = p1y;
+            return sqrt(dist1);
+        }
+        else
+        {
+            qx = p2x;
+            qy = p2y;
+            return sqrt(dist2);
+        }
+    }
+  }
+
+  void PolygonMerger::AddPolygon(const std::vector<Point>& polygonCoords)
+  {
+    assert(polygonCoords.size()>=3);
+
+    std::vector<Point> coords(polygonCoords);
+
+    if (!AreaIsClockwise(polygonCoords)) {
+      std::reverse(coords.begin(),coords.end());
+    }
+
+    nodes.reserve(nodes.size()+coords.size());
+
+    // Optimize: index retrieval (next is current in the next iteration)
+    // Optimize: No need to reverse the arrays, if we just traverse the other way round as second case
+
+    for (size_t i=0; i<coords.size(); i++) {
+      size_t current=i;
+      size_t next=(i+1==coords.size()) ? 0 : i+1;
+
+      auto currentNode=nodeIdIndexMap.find(coords[current].GetId());
+      auto nextNode=nodeIdIndexMap.find(coords[next].GetId());
+
+      if (currentNode==nodeIdIndexMap.end()) {
+        Point node=coords[current];
+
+        nodes.push_back(node);
+
+        currentNode=nodeIdIndexMap.insert(std::make_pair(node.GetId(),nodes.size()-1)).first;
+      }
+
+      if (nextNode==nodeIdIndexMap.end()) {
+        Point node=coords[next];
+
+        nodes.push_back(node);
+
+        nextNode=nodeIdIndexMap.insert(std::make_pair(node.GetId(),nodes.size()-1)).first;
+      }
+
+      Edge edge;
+
+      edge.fromIndex=currentNode->second;
+      edge.toIndex=nextNode->second;
+
+      edges.push_back(edge);
+    }
+  }
+
+  void PolygonMerger::RemoveEliminatingEdges()
+  {
+    std::unordered_map<Id,std::list<std::list<Edge>::iterator > > idEdgeMap;
+
+    // We first group edge by the sum of the from and to index. This way,
+    // were can be sure, that a node(a=>b) is in the same list as a node(b=>a).
+    for (std::list<Edge>::iterator edge=edges.begin();
+        edge!=edges.end();
+        ++edge) {
+      idEdgeMap[edge->fromIndex+edge->toIndex].push_back(edge);
+    }
+
+    for (auto& edgeList : idEdgeMap) {
+      auto currentEdge=edgeList.second.begin();
+
+      while (currentEdge!=edgeList.second.end()) {
+        auto lookup=currentEdge;
+
+        lookup++;
+        while (lookup!=edgeList.second.end() &&
+            !((*currentEdge)->fromIndex==(*lookup)->toIndex &&
+              (*currentEdge)->toIndex==(*lookup)->fromIndex)) {
+          lookup++;
+        }
+
+        if (lookup!=edgeList.second.end()) {
+          //std::cout << "Delete matching edges " << (*currentEdge)->fromIndex << "=>" << (*currentEdge)->toIndex << " and " << (*lookup)->fromIndex << "=>" << (*lookup)->toIndex << std::endl;
+          // Delete lookup from list of edges
+          edges.erase(*lookup);
+          // Delete currentEdge from list of edges
+          edges.erase(*currentEdge);
+          // Delete lookup from list
+          edgeList.second.erase(lookup);
+          // Delete currentEdge from list
+          currentEdge=edgeList.second.erase(currentEdge);
+        }
+        else {
+          currentEdge++;
+        }
+      }
+    }
+  }
+
+  bool PolygonMerger::Merge(std::list<Polygon>& result)
+  {
+    result.clear();
+
+    RemoveEliminatingEdges();
+
+    std::unordered_map<Id,std::list<std::list<Edge>::iterator > > idEdgeMap;
+
+    // We first group edge by from index.
+    for (std::list<Edge>::iterator edge=edges.begin();
+        edge!=edges.end();
+        ++edge) {
+      //std::cout << "* " << edge->fromIndex << "=>" << edge->toIndex << std::endl;
+      idEdgeMap[edge->fromIndex].push_back(edge);
+    }
+
+    std::list<std::list<Edge> > polygons;
+
+    while (!edges.empty()) {
+      std::list<Edge>::iterator current=edges.begin();
+
+      // Start a new polygon
+      //std::cout << "---" << std::endl;
+      polygons.push_back(std::list<Edge>());
+
+      //std::cout << "* " << current->fromIndex << "=>" << current->toIndex << std::endl;
+      polygons.back().push_back(*current);
+
+      // Delete entry from the idEdgeMap
+      std::unordered_map<Id,std::list<std::list<Edge>::iterator > >::iterator mapEntry;
+
+      mapEntry=idEdgeMap.find(current->fromIndex);
+
+      assert(mapEntry!=idEdgeMap.end());
+
+      for (std::list<std::list<Edge>::iterator>::iterator edge=mapEntry->second.begin();
+          edge!=mapEntry->second.end();
+          ++edge) {
+        if (*edge==current) {
+          mapEntry->second.erase(edge);
+          break;
+        }
+      }
+
+      // Delete entry from the list of edges
+      edges.pop_front();
+
+      do {
+        mapEntry=idEdgeMap.find(polygons.back().back().toIndex);
+
+        if (mapEntry->second.empty()) {
+          std::cerr << "No matching node found" << std::endl;
+          return false;
+        }
+
+        current=mapEntry->second.front();
+
+        mapEntry->second.pop_front();
+
+        //std::cout << "* " << current->fromIndex << "=>" << current->toIndex << std::endl;
+        polygons.back().push_back(*current);
+
+        edges.erase(current);
+      } while (!edges.empty() && polygons.back().back().toIndex!=polygons.back().front().fromIndex);
+
+      if (polygons.back().back().toIndex!=polygons.back().front().fromIndex) {
+        //std::cerr << "Merges run out of edges" << std::endl;
+        return false;
+      }
+    }
+
+    for (const auto& polygon : polygons) {
+      result.push_back(Polygon());
+
+      for (const auto& edge : polygon) {
+        result.back().coords.push_back(nodes[edge.fromIndex]);
+      }
+    }
+
+    return true;
+  }
+
+  CellDimension cellDimension[] = {
+      { 360.0,                      180.0                      }, //  0
+      { 180.0,                       90.0                      }, //  1
+      {  90.0,                       45.0                      }, //  2
+      {  45.0,                       22.5                      }, //  3
+      {  22.5,                       11.25                     }, //  4
+      {  11.25,                       5.625                    }, //  5
+      {   5.625,                      2.8125                   }, //  6
+      {   2.8125,                     1.40625                  }, //  7
+      {   1.40625,                    0.703125                 }, //  8
+      {   0.703125,                   0.3515625                }, //  9
+      {   0.3515625,                  0.17578125               }, // 10
+      {   0.17578125,                 0.087890625              }, // 11
+      {   0.087890625,                0.0439453125             }, // 12
+      {   0.0439453125,               0.02197265625            }, // 13
+      {   0.02197265625,              0.010986328125           }, // 14
+      {   0.010986328125,             0.0054931640625          }, // 15
+      {   0.0054931640625,            0.00274658203125         }, // 16
+      {   0.00274658203125,           0.001373291015625        }, // 17
+      {   0.001373291015625,          0.0006866455078125       }, // 18
+      {   0.0006866455078125,         0.00034332275390625      }, // 19
+      {   0.00034332275390625,        0.000171661376953125     }, // 20
+      {   0.000171661376953125,       0.0000858306884765625    }, // 21
+      {   0.0000858306884765625,      0.00004291534423828125   }, // 22
+      {   0.00004291534423828125,     0.000021457672119140625  }, // 23
+      {   0.000021457672119140625,    0.0000107288360595703125 }, // 24
+      {   0.0000107288360595703125,   0.0000107288360595703125 }  // 25
+  };
 }

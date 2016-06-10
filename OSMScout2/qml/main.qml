@@ -1,131 +1,229 @@
 import QtQuick 2.2
 
+import QtQuick.Controls 1.1
+import QtQuick.Layouts 1.1
+import QtQuick.Controls.Styles 1.1
+import QtQuick.Window 2.0
+
+import QtPositioning 5.2
+
 import net.sf.libosmscout.map 1.0
 
 import "custom"
 
-Rectangle {
+Window {
     id: mainWindow
     objectName: "main"
-    color: "white"
+    title: "OSMScout"
+    visible: true
+    width: 480
+    height: 800
 
-    function showCoordinates(lat, lon) {
-        map.showCoordinates(lat, lon)
+    function openAboutDialog() {
+        var component = Qt.createComponent("AboutDialog.qml")
+        var dialog = component.createObject(mainWindow, {})
+
+        dialog.opened.connect(onDialogOpened)
+        dialog.closed.connect(onDialogClosed)
+        dialog.open()
     }
 
     function showLocation(location) {
         map.showLocation(location)
     }
 
-    Map {
-        id: map
+    function onDialogOpened() {
+        info.visible = false
+        navigation.visible = false
+    }
+
+    function onDialogClosed() {
+        info.visible = true
+        navigation.visible = true
+
+        map.focus = true
+    }
+
+    PositionSource {
+        id: positionSource
+
+        active: true
+
+        onValidChanged: {
+            console.log("Positioning is " + valid)
+            console.log("Last error " + sourceError)
+
+            for (var m in supportedPositioningMethods) {
+                console.log("Method " + m)
+            }
+        }
+
+        onPositionChanged: {
+            console.log("Position changed:")
+
+            if (position.latitudeValid) {
+                console.log("  latitude: " + position.coordinate.latitude)
+            }
+
+            if (position.longitudeValid) {
+                console.log("  longitude: " + position.coordinate.longitude)
+            }
+
+            if (position.altitudeValid) {
+                console.log("  altitude: " + position.coordinate.altitude)
+            }
+
+            if (position.speedValid) {
+                console.log("  speed: " + position.speed)
+            }
+
+            if (position.horizontalAccuracyValid) {
+                console.log("  horizontal accuracy: " + position.horizontalAccuracy)
+            }
+
+            if (position.verticalAccuracyValid) {
+                console.log("  vertical accuracy: " + position.verticalAccuracy)
+            }
+        }
+    }
+
+    GridLayout {
+        id: content
         anchors.fill: parent
 
-        focus: true
+        Map {
+            id: map
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            focus: true
 
-        Keys.onPressed: {
-            if (event.key === Qt.Key_Plus) {
-                map.zoomIn(2.0)
+            function getFreeRect() {
+                return Qt.rect(Theme.horizSpace,
+                               Theme.vertSpace+searchDialog.height+Theme.vertSpace,
+                               map.width-2*Theme.horizSpace,
+                               map.height-searchDialog.y-searchDialog.height-3*Theme.vertSpace)
             }
-            else if (event.key === Qt.Key_Minus) {
-                map.zoomOut(2.0)
+
+            Keys.onPressed: {
+                if (event.key === Qt.Key_Plus) {
+                    map.zoomIn(2.0)
+                    event.accepted = true
+                }
+                else if (event.key === Qt.Key_Minus) {
+                    map.zoomOut(2.0)
+                    event.accepted = true
+                }
+                else if (event.key === Qt.Key_Up) {
+                    map.up()
+                    event.accepted = true
+                }
+                else if (event.key === Qt.Key_Down) {
+                    map.down()
+                    event.accepted = true
+                }
+                else if (event.key === Qt.Key_Left) {
+                    if (event.modifiers & Qt.ShiftModifier) {
+                        map.rotateLeft();
+                    }
+                    else {
+                        map.left();
+                    }
+                    event.accepted = true
+                }
+                else if (event.key === Qt.Key_Right) {
+                    if (event.modifiers & Qt.ShiftModifier) {
+                        map.rotateRight();
+                    }
+                    else {
+                        map.right();
+                    }
+                    event.accepted = true
+                }
+                else if (event.modifiers===Qt.ControlModifier &&
+                         event.key === Qt.Key_F) {
+                    searchDialog.focus = true
+                    event.accepted = true
+                }
+                else if (event.modifiers===Qt.ControlModifier &&
+                         event.key === Qt.Key_D) {
+                    map.toggleDaylight();
+                }
+                else if (event.modifiers===Qt.ControlModifier &&
+                         event.key === Qt.Key_R) {
+                    map.reloadStyle();
+                }
             }
-            else if (event.key === Qt.Key_Up) {
-                map.up()
+
+            // Use PinchArea for multipoint zoom in/out?
+
+            SearchDialog {
+                id: searchDialog
+
+                y: Theme.vertSpace
+
+                anchors.horizontalCenter: parent.horizontalCenter
+
+                desktop: map
+
+                onShowLocation: {
+                    map.showLocation(location)
+                }
+
+                onStateChanged: {
+                    if (state==="NORMAL") {
+                        onDialogClosed()
+                    }
+                    else {
+                        onDialogOpened()
+                    }
+                }
             }
-            else if (event.key === Qt.Key_Down) {
-                map.down()
+
+            // Bottom left column
+            ColumnLayout {
+                id: info
+
+                x: Theme.horizSpace
+                y: parent.height-height-Theme.vertSpace
+
+                spacing: Theme.mapButtonSpace
+
+                MapButton {
+                    id: about
+                    label: "?"
+
+                    onClicked: {
+                        openAboutDialog()
+                    }
+                }
             }
-            else if (event.key === Qt.Key_Left) {
-                map.left()
-            }
-            else if (event.key === Qt.Key_Right) {
-                map.right()
-            }
-        }
 
-        // Use PinchArea for multipoint zoom in/out?
-    }
+            // Bottom right column
+            ColumnLayout {
+                id: navigation
 
-    Column {
-        id: menu
-        anchors.top: parent.top
-        anchors.topMargin: 10
-        anchors.left: parent.left
-        anchors.leftMargin: 10
-        spacing: 10
+                x: parent.width-width-Theme.horizSpace
+                y: parent.height-height-Theme.vertSpace
 
-        MapButton {
-            id: searchGeocode
-            label: ","
+                spacing: Theme.mapButtonSpace
 
-            onClicked: {
-                var component = Qt.createComponent("SearchGeocodeDialog.qml")
-                var dialog = component.createObject(mainWindow, {"lat": map.lat, "lon": map.lon})
+                MapButton {
+                    id: zoomIn
+                    label: "+"
 
-                dialog.showCoordinates.connect(showCoordinates)
-                dialog.open()
-            }
-        }
+                    onClicked: {
+                        map.zoomIn(2.0)
+                    }
+                }
 
-        MapButton {
-            id: searchLocation
-            label: "l"
+                MapButton {
+                    id: zoomOut
+                    label: "-"
 
-            onClicked: {
-                var component = Qt.createComponent("SearchLocationDialog.qml")
-                var dialog = component.createObject(mainWindow, {})
-
-                dialog.showLocation.connect(showLocation)
-                dialog.open()
-            }
-        }
-
-        MapButton {
-            id: route
-            label: "#"
-
-            onClicked: {
-                var component = Qt.createComponent("RoutingDialog.qml")
-                var dialog = component.createObject(mainWindow, {})
-
-                dialog.open()
-            }
-        }
-
-        MapButton {
-            id: settings
-            label: "*"
-
-            onClicked: {
-                console.log("Show settings")
-            }
-        }
-    }
-
-    Column {
-        id: navigation
-        anchors.top: parent.top
-        anchors.topMargin: 10
-        anchors.right: parent.right
-        anchors.rightMargin: 10
-        spacing: 10
-
-        MapButton {
-            id: zoomIn
-            label: "+"
-
-            onClicked: {
-                map.zoomIn(2.0)
-            }
-        }
-
-        MapButton {
-            id: zoomOut
-            label: "-"
-
-            onClicked: {
-                map.zoomOut(2.0)
+                    onClicked: {
+                        map.zoomOut(2.0)
+                    }
+                }
             }
         }
     }

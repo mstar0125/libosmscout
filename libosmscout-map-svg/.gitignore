@@ -1,0 +1,5 @@
+Makefile
+include/Makefile
+src/Makefile
+
+include/osmscout/MapSVGFeatures.h

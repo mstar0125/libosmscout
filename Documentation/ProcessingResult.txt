@@ -68,10 +68,9 @@ wayway.tmp (import only):
  * Conversion of rawnodes.dat, rawways.dat and rawrels.dat to
    the export data structures.
 
-relarea.dat,
-wayarea.dat,
-wayway.dat (import only):
- * New version of *.tmp after nodes ids have been reduce to
+areas.tmp,
+ways.tmp (import only):
+ * New version of *.tmp after nodes ids have been reduced to
    only those nodes that are referenced at least twice. 
 
 turnrestr.dat (import only):
@@ -81,6 +80,11 @@ turnrestr.dat (import only):
 wayareablack.dat (import only):
  * List of areas ids that get blacklisted during relation
    parsing.
+
+distribution.dat (import only)
+ * Contains information regarding number of nodes, ways and areas
+   per type. USed during import for triggering import variants (depending
+   on data size => low memeory fallbacks).
 
 Debugging information:
 ======================
@@ -159,8 +163,15 @@ waysopt.dat (export)
 Routing:
 ========
 
+(if you create vehicle-specific routing data - which is the
+default - actual file names follow the pattern routeXXX.*,
+where XXX is the vehicle name)
+
 route.dat (export)
  * Contains the route graph.
+
+route2.dat (export)
+ * Contains additional data for the route graph.
 
 route.idx (export)
  * Contains the index over the route graph to load individual

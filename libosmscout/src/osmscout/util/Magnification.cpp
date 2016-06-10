@@ -38,11 +38,9 @@ namespace osmscout {
 
   void Magnification::SetLevel(uint32_t level)
   {
-    this->magnification=Pow(2,level);
+    this->magnification=pow(2.0,level);
     this->level=level;
   }
-
-    OSMSCOUT_HASHMAP<std::string,Magnification::Mag> stringToMagMap;
 
   MagnificationConverter::MagnificationConverter()
   {
@@ -58,16 +56,35 @@ namespace osmscout {
     stringToMagMap[std::string("suburb")]=Magnification::magSuburb;
     stringToMagMap[std::string("detail")]=Magnification::magDetail;
     stringToMagMap[std::string("close")]=Magnification::magClose;
+    stringToMagMap[std::string("closer")]=Magnification::magCloser;
     stringToMagMap[std::string("veryClose")]=Magnification::magVeryClose;
     stringToMagMap[std::string("block")]=Magnification::magBlock;
     stringToMagMap[std::string("street")]=Magnification::magStreet;
     stringToMagMap[std::string("house")]=Magnification::magHouse;
+
+    levelToStringMap[(uint32_t)log2((double)Magnification::magWorld)]="world";
+    levelToStringMap[(uint32_t)log2((double)Magnification::magContinent)] = "continent";
+    levelToStringMap[(uint32_t)log2((double)Magnification::magState)] = "state";
+    levelToStringMap[(uint32_t)log2((double)Magnification::magStateOver)] = "stateOver";
+    levelToStringMap[(uint32_t)log2((double)Magnification::magCounty)] = "county";
+    levelToStringMap[(uint32_t)log2((double)Magnification::magRegion)] = "region";
+    levelToStringMap[(uint32_t)log2((double)Magnification::magProximity)] = "proximity";
+    levelToStringMap[(uint32_t)log2((double)Magnification::magCityOver)] = "cityOver";
+    levelToStringMap[(uint32_t)log2((double)Magnification::magCity)] = "city";
+    levelToStringMap[(uint32_t)log2((double)Magnification::magSuburb)] = "suburb";
+    levelToStringMap[(uint32_t)log2((double)Magnification::magDetail)] = "detail";
+    levelToStringMap[(uint32_t)log2((double)Magnification::magClose)] = "close";
+    levelToStringMap[(uint32_t)log2((double)Magnification::magCloser)] = "closer";
+    levelToStringMap[(uint32_t)log2((double)Magnification::magVeryClose)] = "veryClose";
+    levelToStringMap[(uint32_t)log2((double)Magnification::magBlock)] = "block";
+    levelToStringMap[(uint32_t)log2((double)Magnification::magStreet)] = "street";
+    levelToStringMap[(uint32_t)log2((double)Magnification::magHouse)] = "house";
   }
 
   bool MagnificationConverter::Convert(const std::string& name,
                                        Magnification& magnification)
   {
-    OSMSCOUT_HASHMAP<std::string,Magnification::Mag>::const_iterator entry=stringToMagMap.find(name);
+    auto entry=stringToMagMap.find(name);
 
     if (entry==stringToMagMap.end()) {
       return false;
@@ -78,4 +95,17 @@ namespace osmscout {
     return true;
   }
 
+  bool MagnificationConverter::Convert(size_t level,
+                                       std::string& name)
+  {
+    auto entry=levelToStringMap.find(level);
+
+    if (entry==levelToStringMap.end()) {
+      return false;
+    }
+
+    name=entry->second;
+
+    return true;
+  }
 }

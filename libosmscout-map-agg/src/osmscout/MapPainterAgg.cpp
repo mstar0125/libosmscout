@@ -37,8 +37,9 @@
 
 namespace osmscout {
 
-  MapPainterAgg::MapPainterAgg()
-  : MapPainter(new CoordBufferImpl<Vertex2D>()),
+  MapPainterAgg::MapPainterAgg(const StyleConfigRef& styleConfig)
+  : MapPainter(styleConfig,
+               new CoordBufferImpl<Vertex2D>()),
     coordBuffer((CoordBufferImpl<Vertex2D>*)transBuffer.buffer)
   {
     // no code
@@ -50,7 +51,8 @@ namespace osmscout {
     // TODO: Clean up fonts
   }
 
-  void MapPainterAgg::SetFont(const MapParameter& parameter,
+  void MapPainterAgg::SetFont(const Projection& projection,
+                              const MapParameter& parameter,
                               double size)
   {
     if (!fontEngine->load_font(parameter.GetFontName().c_str(),
@@ -62,13 +64,14 @@ namespace osmscout {
     }
 
     //fontEngine->resolution(72);
-    fontEngine->width(size*ConvertWidthToPixel(parameter,parameter.GetFontSize()));
-    fontEngine->height(size*ConvertWidthToPixel(parameter,parameter.GetFontSize()));
+    fontEngine->width(size*projection.ConvertWidthToPixel(parameter.GetFontSize()));
+    fontEngine->height(size*projection.ConvertWidthToPixel(parameter.GetFontSize()));
     fontEngine->hinting(true);
     fontEngine->flip_y(true);
   }
 
-  void MapPainterAgg::SetOutlineFont(const MapParameter& parameter,
+  void MapPainterAgg::SetOutlineFont(const Projection& projection,
+                                     const MapParameter& parameter,
                                      double size)
   {
     if (!fontEngine->load_font(parameter.GetFontName().c_str(),
@@ -80,8 +83,8 @@ namespace osmscout {
     }
 
     //fontEngine->resolution(72);
-    fontEngine->width(size*ConvertWidthToPixel(parameter,parameter.GetFontSize()));
-    fontEngine->height(size*ConvertWidthToPixel(parameter,parameter.GetFontSize()));
+    fontEngine->width(size*projection.ConvertWidthToPixel(parameter.GetFontSize()));
+    fontEngine->height(size*projection.ConvertWidthToPixel(parameter.GetFontSize()));
     fontEngine->hinting(true);
     fontEngine->flip_y(true);
   }
@@ -103,7 +106,20 @@ namespace osmscout {
     }
   }
 
-  void MapPainterAgg::GetTextDimension(const MapParameter& parameter,
+  void MapPainterAgg::GetFontHeight(const Projection& projection,
+                                    const MapParameter& parameter,
+                                    double fontSize,
+                                    double& height)
+  {
+    SetFont(projection,
+            parameter,
+            fontSize);
+
+    height=fontEngine->height();
+  }
+
+  void MapPainterAgg::GetTextDimension(const Projection& projection,
+                                       const MapParameter& parameter,
                                        double fontSize,
                                        const std::string& text,
                                        double& xOff,
@@ -113,12 +129,14 @@ namespace osmscout {
   {
     std::wstring wideText(UTF8StringToWString(text));
 
+    SetFont(projection,
+            parameter,
+            fontSize);
+
     xOff=0;
     yOff=0;
     width=0;
     height=fontEngine->height();
-
-    SetFont(parameter,fontSize);
 
     for (size_t i=0; i<wideText.length(); i++) {
       const agg::glyph_cache* glyph=fontCacheManager->glyph(wideText[i]);
@@ -246,8 +264,7 @@ namespace osmscout {
       agg::render_scanlines(*rasterizer,*scanlineP8,*renderer_aa);
     }
 
-    double borderWidth=ConvertWidthToPixel(parameter,
-                                           fillStyle.GetBorderWidth());
+    double borderWidth=projection.ConvertWidthToPixel(fillStyle.GetBorderWidth());
 
     if (borderWidth>=parameter.GetLineMinWidthPixel()) {
       renderer_aa->color(agg::rgba(fillStyle.GetBorderColor().GetR(),
@@ -285,9 +302,9 @@ namespace osmscout {
     }
   }
 
-  bool MapPainterAgg::HasIcon(const StyleConfig& styleConfig,
-                             const MapParameter& parameter,
-                             IconStyle& style)
+  bool MapPainterAgg::HasIcon(const StyleConfig& /*styleConfig*/,
+                             const MapParameter& /*parameter*/,
+                             IconStyle& /*style*/)
   {
     //TODO
 
@@ -298,8 +315,8 @@ namespace osmscout {
                                 const MapParameter& parameter,
                                 const LabelData& label)
   {
-    if (dynamic_cast<const TextStyle*>(label.style.Get())!=NULL) {
-      const TextStyle* style=dynamic_cast<const TextStyle*>(label.style.Get());
+    if (dynamic_cast<const TextStyle*>(label.style.get())!=NULL) {
+      const TextStyle* style=dynamic_cast<const TextStyle*>(label.style.get());
       double           r=style->GetTextColor().GetR();
       double           g=style->GetTextColor().GetG();
       double           b=style->GetTextColor().GetB();
@@ -307,7 +324,8 @@ namespace osmscout {
 
       if (style->GetStyle()==TextStyle::normal) {
 
-        SetFont(parameter,
+        SetFont(projection,
+                parameter,
                 label.fontSize);
 
         //renderer_bin->color(agg::rgba(r,g,b,a));
@@ -318,7 +336,8 @@ namespace osmscout {
                  wideText);
       }
       else if (style->GetStyle()==TextStyle::emphasize) {
-        SetOutlineFont(parameter,
+        SetOutlineFont(projection,
+                       parameter,
                        label.fontSize);
 
         //renderer_bin->color(agg::rgba(r,g,b,a));
@@ -329,7 +348,8 @@ namespace osmscout {
                         wideText,
                         2);
 
-        SetFont(parameter,
+        SetFont(projection,
+                parameter,
                 label.fontSize);
 
         //renderer_bin->color(agg::rgba(r,g,b,a));
@@ -355,7 +375,8 @@ namespace osmscout {
     double       a=style.GetTextColor().GetA();
     std::wstring wideText(UTF8StringToWString(text));
 
-    SetOutlineFont(parameter,
+    SetOutlineFont(projection,
+                   parameter,
                    fontSize);
 
     //renderer_bin->color(agg::rgba(r,g,b,a));
@@ -457,17 +478,17 @@ namespace osmscout {
     }
   }
 
-  void MapPainterAgg::DrawContourSymbol(const Projection& projection,
-                                        const MapParameter& parameter,
-                                        const Symbol& symbol,
-                                        double space,
-                                        size_t transStart, size_t transEnd)
+  void MapPainterAgg::DrawContourSymbol(const Projection& /*projection*/,
+                                        const MapParameter& /*parameter*/,
+                                        const Symbol& /*symbol*/,
+                                        double /*space*/,
+                                        size_t /*transStart*/, size_t /*transEnd*/)
   {
     // Not implemented
   }
 
-  void MapPainterAgg::DrawIcon(const IconStyle* style,
-                              double x, double y)
+  void MapPainterAgg::DrawIcon(const IconStyle* /*style*/,
+                              double /*x*/, double /*y*/)
   {
     // Not implemented
   }
@@ -492,23 +513,23 @@ namespace osmscout {
     for (std::list<DrawPrimitiveRef>::const_iterator p=symbol.GetPrimitives().begin();
          p!=symbol.GetPrimitives().end();
          ++p) {
-      DrawPrimitive* primitive=p->Get();
+      DrawPrimitive* primitive=p->get();
 
       if (dynamic_cast<PolygonPrimitive*>(primitive)!=NULL) {
         PolygonPrimitive* polygon=dynamic_cast<PolygonPrimitive*>(primitive);
         FillStyleRef      style=polygon->GetFillStyle();
         agg::path_storage path;
 
-        for (std::list<Coord>::const_iterator pixel=polygon->GetCoords().begin();
+        for (std::list<Vertex2D>::const_iterator pixel=polygon->GetCoords().begin();
              pixel!=polygon->GetCoords().end();
              ++pixel) {
           if (pixel==polygon->GetCoords().begin()) {
-            path.move_to(x+ConvertWidthToPixel(parameter,pixel->x-centerX),
-                         y+ConvertWidthToPixel(parameter,maxY-pixel->y-centerY));
+            path.move_to(x+projection.ConvertWidthToPixel(pixel->GetX()-centerX),
+                         y+projection.ConvertWidthToPixel(maxY-pixel->GetY()-centerY));
           }
           else {
-            path.line_to(x+ConvertWidthToPixel(parameter,pixel->x-centerX),
-                         y+ConvertWidthToPixel(parameter,maxY-pixel->y-centerY));
+            path.line_to(x+projection.ConvertWidthToPixel(pixel->GetX()-centerX),
+                         y+projection.ConvertWidthToPixel(maxY-pixel->GetY()-centerY));
           }
         }
 
@@ -525,10 +546,10 @@ namespace osmscout {
         RectanglePrimitive* rectangle=dynamic_cast<RectanglePrimitive*>(primitive);
         FillStyleRef        style=rectangle->GetFillStyle();
         agg::path_storage   path;
-        double              xPos=x+ConvertWidthToPixel(parameter,rectangle->GetTopLeft().x-centerX);
-        double              yPos=y+ConvertWidthToPixel(parameter,maxY-rectangle->GetTopLeft().y-centerY);
-        double              width=ConvertWidthToPixel(parameter,rectangle->GetWidth());
-        double              height=ConvertWidthToPixel(parameter,rectangle->GetHeight());
+        double              xPos=x+projection.ConvertWidthToPixel(rectangle->GetTopLeft().GetX()-centerX);
+        double              yPos=y+projection.ConvertWidthToPixel(maxY-rectangle->GetTopLeft().GetY()-centerY);
+        double              width=projection.ConvertWidthToPixel(rectangle->GetWidth());
+        double              height=projection.ConvertWidthToPixel(rectangle->GetHeight());
 
         path.move_to(xPos,yPos);
         path.line_to(xPos+width,yPos);
@@ -548,10 +569,10 @@ namespace osmscout {
         CirclePrimitive*  circle=dynamic_cast<CirclePrimitive*>(primitive);
         FillStyleRef      style=circle->GetFillStyle();
         agg::path_storage path;
-        double            radius=ConvertWidthToPixel(parameter,circle->GetRadius());
+        double            radius=projection.ConvertWidthToPixel(circle->GetRadius());
 
-        agg::ellipse ellipse(x+ConvertWidthToPixel(parameter,circle->GetCenter().x-centerX),
-                             y+ConvertWidthToPixel(parameter,maxY-circle->GetCenter().y-centerY),
+        agg::ellipse ellipse(x+projection.ConvertWidthToPixel(circle->GetCenter().GetX()-centerX),
+                             y+projection.ConvertWidthToPixel(maxY-circle->GetCenter().GetY()-centerY),
                              radius,
                              radius);
 
@@ -567,8 +588,8 @@ namespace osmscout {
     }
   }
 
-  void MapPainterAgg::DrawPath(const Projection& projection,
-                               const MapParameter& parameter,
+  void MapPainterAgg::DrawPath(const Projection& /*projection*/,
+                               const MapParameter& /*parameter*/,
                                const Color& color,
                                double width,
                                const std::vector<double>& dash,
@@ -694,7 +715,7 @@ namespace osmscout {
   }
 
   void MapPainterAgg::DrawGround(const Projection& projection,
-                                 const MapParameter& parameter,
+                                 const MapParameter& /*parameter*/,
                                  const FillStyle& style)
   {
     agg::path_storage path;
@@ -715,8 +736,7 @@ namespace osmscout {
     agg::render_scanlines(*rasterizer,*scanlineP8,*renderer_aa);
   }
 
-  bool MapPainterAgg::DrawMap(const StyleConfig& styleConfig,
-                              const Projection& projection,
+  bool MapPainterAgg::DrawMap(const Projection& projection,
                               const MapParameter& parameter,
                               const MapData& data,
                               AggPixelFormat* pf)
@@ -736,8 +756,7 @@ namespace osmscout {
 
     convTextContours= new AggTextContourConverter(*convTextCurves);
 
-    Draw(styleConfig,
-         projection,
+    Draw(projection,
          parameter,
          data);
 

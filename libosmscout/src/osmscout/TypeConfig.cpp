@@ -19,184 +19,577 @@
 
 #include <osmscout/TypeConfig.h>
 
+#include <algorithm>
+
+#include <osmscout/TypeFeatures.h>
+
 #include <osmscout/system/Assert.h>
+
+#include <osmscout/ost/Parser.h>
+#include <osmscout/ost/Scanner.h>
+
+#include <osmscout/util/File.h>
+#include <osmscout/util/Logger.h>
+#include <osmscout/util/Number.h>
+#include <osmscout/util/String.h>
 
 #include <iostream>
 namespace osmscout {
 
-  TagCondition::~TagCondition()
+  FeatureValue::FeatureValue()
   {
     // no code
   }
 
-  TagNotCondition::TagNotCondition(TagCondition* condition)
-  : condition(condition)
+  FeatureValue::~FeatureValue()
   {
     // no code
   }
 
-  bool TagNotCondition::Evaluate(const std::map<TagId,std::string>& tagMap) const
+  FeatureValue& FeatureValue::operator=(const FeatureValue& /*other*/)
   {
-    return !condition->Evaluate(tagMap);
+    assert(false);
+
+    return *this;
   }
 
-  TagBoolCondition::TagBoolCondition(Type type)
-  : type(type)
+  /**
+   * Read the value of the Feature from the FileScanner
+   *
+   * @throws IOException
+   */
+  void FeatureValue::Read(FileScanner& /*scanner*/)
+  {
+    assert(false);
+  }
+
+  /**
+   * Write the FeatureValue to disk.
+   *
+   * @throws IOException.
+   */
+  void FeatureValue::Write(FileWriter& /*writer*/)
+  {
+    assert(false);
+  }
+
+  Feature::Feature()
   {
     // no code
   }
 
-  void TagBoolCondition::AddCondition(TagCondition* condition)
+  Feature::~Feature()
   {
-    conditions.push_back(condition);
+    // no code
   }
 
-  bool TagBoolCondition::Evaluate(const std::map<TagId,std::string>& tagMap) const
+  size_t Feature::RegisterLabel(const std::string& labelName,
+                                size_t index)
   {
-    switch (type) {
-    case boolAnd:
-      for (std::list<TagConditionRef>::const_iterator condition=conditions.begin();
-           condition!=conditions.end();
-           ++condition) {
-        if (!(*condition)->Evaluate(tagMap)) {
+    assert(labels.find(labelName)==labels.end());
+
+    labels[labelName]=index;
+
+    return index;
+  }
+
+  bool Feature::GetLabelIndex(const std::string& labelName,
+                             size_t& index) const
+  {
+    const auto entry=labels.find(labelName);
+
+    if (entry==labels.end()) {
+      return false;
+    }
+
+    index=entry->second;
+
+    return true;
+  }
+
+  FeatureValue* Feature::AllocateValue(void* /*buffer*/)
+  {
+    assert(false);
+    return NULL;
+  }
+
+  /**
+   * Just to make the compiler happy :-/
+   */
+  FeatureInstance::FeatureInstance()
+  : type(NULL),
+    featureBit(0),
+    index(0),
+    offset(0)
+  {
+
+  }
+
+  FeatureInstance::FeatureInstance(const FeatureRef& feature,
+                                   const TypeInfo* type,
+                                   size_t featureBit,
+                                   size_t index,
+                                   size_t offset)
+  : feature(feature),
+    type(type),
+    featureBit(featureBit),
+    index(index),
+    offset(offset)
+  {
+    assert(feature);
+  }
+
+  FeatureValueBuffer::FeatureValueBuffer()
+  : featureBits(NULL),
+    featureValueBuffer(NULL)
+  {
+    // no code
+  }
+
+  FeatureValueBuffer::FeatureValueBuffer(const FeatureValueBuffer& other)
+  : featureBits(NULL),
+    featureValueBuffer(NULL)
+  {
+    Set(other);
+  }
+
+  FeatureValueBuffer::~FeatureValueBuffer()
+  {
+    if (type) {
+      DeleteData();
+    }
+  }
+
+  void FeatureValueBuffer::Set(const FeatureValueBuffer& other)
+  {
+    if (type) {
+      DeleteData();
+    }
+    if (other.GetType()) {    
+      SetType(other.GetType());
+
+      for (size_t idx=0; idx<other.GetFeatureCount(); idx++) {
+        if (other.HasFeature(idx)) {
+          if (other.GetFeature(idx).GetFeature()->HasValue()) {
+            FeatureValue* otherValue=other.GetValue(idx);
+            FeatureValue* thisValue=AllocateValue(idx);
+
+            *thisValue=*otherValue;
+          }
+          else {
+            size_t featureBit=GetFeature(idx).GetFeatureBit();
+            size_t byteIdx=featureBit/8;
+
+            featureBits[byteIdx]=featureBits[byteIdx] | (1 << featureBit%8);
+          }
+        }
+      }
+    }
+  }
+
+  void FeatureValueBuffer::SetType(const TypeInfoRef& type)
+  {
+    if (this->type) {
+      DeleteData();
+    }
+
+    this->type=type;
+
+    AllocateBits();
+    featureValueBuffer=NULL; // buffer is allocated on first usage
+  }
+
+  void FeatureValueBuffer::DeleteData()
+  {
+    if (featureValueBuffer!=NULL) {
+      for (size_t i=0; i<type->GetFeatureCount(); i++) {
+        if (HasFeature(i)) {
+          FreeValue(i);
+        }
+      }
+
+      ::operator delete((void*)featureValueBuffer);
+      featureValueBuffer=NULL;
+    }
+
+    if (featureBits!=NULL) {
+      delete [] featureBits;
+      featureBits=NULL;
+    }
+
+    type=NULL;
+  }
+
+  void FeatureValueBuffer::AllocateBits()
+  {
+    if (type && type->HasFeatures()) {
+      featureBits=new uint8_t[type->GetFeatureMaskBytes()]();
+    }
+    else
+    {
+      featureBits=NULL;
+    }
+  }
+
+  void FeatureValueBuffer::AllocateValueBufferLazy()
+  {
+    if (featureValueBuffer==NULL &&
+        type &&
+        type->HasFeatures()) {
+      featureValueBuffer=static_cast<char*>(::operator new(type->GetFeatureValueBufferSize()));
+    }
+  }
+
+  FeatureValue* FeatureValueBuffer::AllocateValue(size_t idx)
+  {
+    size_t featureBit=GetFeature(idx).GetFeatureBit();
+    size_t byteIdx=featureBit/8;
+
+    featureBits[byteIdx]=featureBits[byteIdx] | (1 << featureBit%8);
+
+    if (type->GetFeature(idx).GetFeature()->HasValue()) {
+      FeatureValue* value=GetValueAndAllocateBuffer(idx);
+
+      return type->GetFeature(idx).GetFeature()->AllocateValue(value);
+    }
+    else {
+      return NULL;
+    }
+  }
+
+  void FeatureValueBuffer::FreeValue(size_t idx)
+  {
+    if (HasFeature(idx)){
+      if (type->GetFeature(idx).GetFeature()->HasValue()) {
+          FeatureValue* value=GetValue(idx);
+          value->~FeatureValue();
+      }
+
+      // clear feature bit
+      size_t featureBit = GetFeature(idx).GetFeatureBit();
+      size_t byteIdx = featureBit / 8;
+      featureBits[byteIdx] = featureBits[byteIdx] & ~(1 << featureBit % 8);
+    }
+  }
+
+  void FeatureValueBuffer::Parse(Progress& progress,
+                                 const TypeConfig& typeConfig,
+                                 const ObjectOSMRef& object,
+                                 const TagMap& tags)
+  {
+    for (const auto &feature : type->GetFeatures()) {
+      feature.GetFeature()->Parse(progress,
+                                  typeConfig,
+                                  feature,
+                                  object,
+                                  tags,
+                                  *this);
+    }
+  }
+
+  /**
+   * Read the FeatureValueBuffer from the given FileScanner.
+   *
+   * @throws IOException
+   */
+  void FeatureValueBuffer::Read(FileScanner& scanner)
+  {
+    for (size_t i=0; i<type->GetFeatureMaskBytes(); i++) {
+      scanner.Read(featureBits[i]);
+    }
+
+    for (const auto &feature : type->GetFeatures()) {
+      size_t idx=feature.GetIndex();
+
+      if (HasFeature(idx) &&
+          feature.GetFeature()->HasValue()) {
+        FeatureValue* value=feature.GetFeature()->AllocateValue(GetValueAndAllocateBuffer(idx));
+
+        value->Read(scanner);
+      }
+    }
+  }
+
+  /**
+   * Reads the FeatureValueBuffer to the given FileScanner.
+   * It also reads the value of the special flag as passed to the Write method.
+   *
+   * @throws IOException
+   */
+  void FeatureValueBuffer::Read(FileScanner& scanner,
+                                bool& specialFlag)
+  {
+    for (size_t i=0; i<type->GetFeatureMaskBytes(); i++) {
+      scanner.Read(featureBits[i]);
+    }
+
+    if (BitsToBytes(type->GetFeatureCount())==BitsToBytes(type->GetFeatureCount()+1)) {
+      specialFlag=(featureBits[type->GetFeatureMaskBytes()-1] & 0x80)!=0;
+    }
+    else {
+      uint8_t addByte;
+
+      scanner.Read(addByte);
+
+      specialFlag=(addByte & 0x80)!=0;
+    }
+
+    for (const auto &feature : type->GetFeatures()) {
+      size_t idx=feature.GetIndex();
+
+      if (HasFeature(idx) &&
+          feature.GetFeature()->HasValue()) {
+        FeatureValue* value=feature.GetFeature()->AllocateValue(GetValueAndAllocateBuffer(idx));
+
+        value->Read(scanner);
+      }
+    }
+  }
+
+  /**
+   * Reads the FeatureValueBuffer to the given FileScanner.
+   * It also reads the value of two special flags as passed to the Write method.
+   *
+   * @throws IOException
+   */
+  void FeatureValueBuffer::Read(FileScanner& scanner,
+                                bool& specialFlag1,
+                                bool& specialFlag2)
+  {
+    for (size_t i=0; i<type->GetFeatureMaskBytes(); i++) {
+      scanner.Read(featureBits[i]);
+    }
+
+    if (BitsToBytes(type->GetFeatureCount())==BitsToBytes(type->GetFeatureCount()+2)) {
+      specialFlag1=(featureBits[type->GetFeatureMaskBytes()-1] & 0x80)!=0;
+      specialFlag2=(featureBits[type->GetFeatureMaskBytes()-1] & 0x40)!=0;
+    }
+    else {
+      uint8_t addByte;
+
+      scanner.Read(addByte);
+
+      specialFlag1=(addByte & 0x80)!=0;
+      specialFlag2=(addByte & 0x40)!=0;
+    }
+
+    for (const auto &feature : type->GetFeatures()) {
+      size_t idx=feature.GetIndex();
+
+      if (HasFeature(idx) &&
+          feature.GetFeature()->HasValue()) {
+        FeatureValue* value=feature.GetFeature()->AllocateValue(GetValueAndAllocateBuffer(idx));
+
+        value->Read(scanner);
+      }
+    }
+  }
+
+  /**
+   * Writes the FeatureValueBuffer to the given FileWriter.
+   *
+   * @throws IOException
+   */
+  void FeatureValueBuffer::Write(FileWriter& writer) const
+  {
+    for (size_t i=0; i<type->GetFeatureMaskBytes(); i++) {
+      writer.Write(featureBits[i]);
+    }
+
+    for (const auto &feature : type->GetFeatures()) {
+      size_t idx=feature.GetIndex();
+
+      if (HasFeature(idx) &&
+          feature.GetFeature()->HasValue()) {
+        FeatureValue* value=GetValue(idx);
+
+        value->Write(writer);
+      }
+    }
+  }
+
+  /**
+   * Writes the FeatureValueBuffer to the given FileWriter.
+   * It also writes the value of the special flag passed. The flag can later be retrieved
+   * by using the matching Read method.
+   *
+   * @throws IOException
+   */
+  void FeatureValueBuffer::Write(FileWriter& writer,
+                                 bool specialFlag) const
+  {
+    if (BitsToBytes(type->GetFeatureCount())==BitsToBytes(type->GetFeatureCount()+1)) {
+      if (specialFlag) {
+        featureBits[type->GetFeatureMaskBytes()-1]|=0x80;
+      }
+      else {
+        featureBits[type->GetFeatureMaskBytes()-1]&=~0x80;
+      }
+
+      for (size_t i=0; i<type->GetFeatureMaskBytes(); i++) {
+        writer.Write(featureBits[i]);
+      }
+    }
+    else {
+      for (size_t i=0; i<type->GetFeatureMaskBytes(); i++) {
+        writer.Write(featureBits[i]);
+      }
+
+      uint8_t addByte=specialFlag ? 0x80 : 0x00;
+
+      writer.Write(addByte);
+    }
+
+    for (const auto &feature : type->GetFeatures()) {
+      size_t idx=feature.GetIndex();
+
+      if (HasFeature(idx) &&
+          feature.GetFeature()->HasValue()) {
+        FeatureValue* value=GetValue(idx);
+
+        value->Write(writer);
+      }
+    }
+  }
+
+  /**
+   * Writes the FeatureValueBuffer to the given FileWriter.
+   * It also writes the value of the special flag passed. The flag can later be retrieved
+   * by using the matching Read method.
+   *
+   * @throws IOException
+   */
+  void FeatureValueBuffer::Write(FileWriter& writer,
+                                 bool specialFlag1,
+                                 bool specialFlag2) const
+  {
+    if (BitsToBytes(type->GetFeatureCount())==BitsToBytes(type->GetFeatureCount()+2)) {
+      if (specialFlag1) {
+        featureBits[type->GetFeatureMaskBytes()-1]|=0x80;
+      }
+      else {
+        featureBits[type->GetFeatureMaskBytes()-1]&=~0x80;
+      }
+
+      if (specialFlag2) {
+        featureBits[type->GetFeatureMaskBytes()-1]|=0x40;
+      }
+      else {
+        featureBits[type->GetFeatureMaskBytes()-1]&=~0x40;
+      }
+
+      for (size_t i=0; i<type->GetFeatureMaskBytes(); i++) {
+        writer.Write(featureBits[i]);
+      }
+    }
+    else {
+      for (size_t i=0; i<type->GetFeatureMaskBytes(); i++) {
+        writer.Write(featureBits[i]);
+      }
+
+      uint8_t addByte=0;
+
+      if (specialFlag1) {
+        addByte|= 0x80;
+      }
+      if (specialFlag1) {
+        addByte|= 0x40;
+      }
+
+      writer.Write(addByte);
+    }
+
+    for (const auto &feature : type->GetFeatures()) {
+      size_t idx=feature.GetIndex();
+
+      if (HasFeature(idx) &&
+          feature.GetFeature()->HasValue()) {
+        FeatureValue* value=GetValue(idx);
+
+        value->Write(writer);
+      }
+    }
+  }
+
+  FeatureValueBuffer& FeatureValueBuffer::operator=(const FeatureValueBuffer& other)
+  {
+    Set(other);
+
+    return *this;
+  }
+
+  bool FeatureValueBuffer::operator==(const FeatureValueBuffer& other) const
+  {
+    if (this->type!=other.type) {
+      return false;
+    }
+
+    for (size_t i=0; i<GetFeatureCount(); i++) {
+      if (HasFeature(i)!=other.HasFeature(i)) {
+        return false;
+      }
+
+      // If a feature has a value, we compare the values
+      if (HasFeature(i) &&
+          other.HasFeature(i) &&
+          GetFeature(i).GetFeature()->HasValue()) {
+        FeatureValue *thisValue=GetValue(i);
+        FeatureValue *otherValue=other.GetValue(i);
+
+        if (!(*thisValue==*otherValue)) {
           return false;
         }
       }
-
-      return true;
-    case boolOr:
-      for (std::list<TagConditionRef>::const_iterator condition=conditions.begin();
-           condition!=conditions.end();
-           ++condition) {
-        if ((*condition)->Evaluate(tagMap)) {
-          return true;
-        }
-      }
-
-      return false;
-    default:
-      assert(false);
-
-      return false;
-    }
-  }
-
-  TagExistsCondition::TagExistsCondition(TagId tag)
-  : tag(tag)
-  {
-    // no code
-  }
-
-  bool TagExistsCondition::Evaluate(const std::map<TagId,std::string>& tagMap) const
-  {
-    return tagMap.find(tag)!=tagMap.end();
-  }
-
-  TagBinaryCondition::TagBinaryCondition(TagId tag,
-                                         BinaryOperator binaryOperator,
-                                         const std::string& tagValue)
-  : tag(tag),
-    binaryOperator(binaryOperator),
-    tagValue(tagValue)
-  {
-    // no code
-  }
-
-  bool TagBinaryCondition::Evaluate(const std::map<TagId,std::string>& tagMap) const
-  {
-    std::map<TagId,std::string>::const_iterator t;
-
-    t=tagMap.find(tag);
-
-    switch (binaryOperator) {
-    case  operatorEqual:
-      if (t==tagMap.end()) {
-        return false;
-      }
-      return t->second==tagValue;
-    case operatorNotEqual:
-      if (t==tagMap.end()) {
-        return true;
-      }
-      return t->second!=tagValue;
-    default:
-      assert(false);
-
-      return false;
-    }
-  }
-
-  TagIsInCondition::TagIsInCondition(TagId tag)
-  : tag(tag)
-  {
-    // no code
-  }
-
-  void TagIsInCondition::AddTagValue(const std::string& tagValue)
-  {
-    tagValues.insert(tagValue);
-  }
-
-  bool TagIsInCondition::Evaluate(const std::map<TagId,std::string>& tagMap) const
-  {
-    std::map<TagId,std::string>::const_iterator t;
-
-    t=tagMap.find(tag);
-
-    if (t==tagMap.end()) {
-      return false;
     }
 
-    return tagValues.find(t->second)!=tagValues.end();
+    return true;
   }
 
-  TagInfo::TagInfo()
-   : id(0),
-     internalOnly(true)
+  bool FeatureValueBuffer::operator!=(const FeatureValueBuffer& other) const
   {
+    return !operator==(other);
   }
 
-  TagInfo::TagInfo(const std::string& name,
-                   bool internalOnly)
-   : id(0),
-     name(name),
-     internalOnly(internalOnly)
+  const char* TypeConfig::FILE_TYPES_DAT="types.dat";
+
+  TypeInfo::TypeInfo(const std::string& name)
+    : nodeId(0),
+      wayId(0),
+      areaId(0),
+      name(name),
+      index(0),
+      internal(false),
+      featureMaskBytes(0),
+      specialFeatureMaskBytes(0),
+      valueBufferSize(0),
+      canBeNode(false),
+      canBeWay(false),
+      canBeArea(false),
+      canBeRelation(false),
+      isPath(false),
+      canRouteFoot(false),
+      canRouteBicycle(false),
+      canRouteCar(false),
+      indexAsAddress(false),
+      indexAsLocation(false),
+      indexAsRegion(false),
+      indexAsPOI(false),
+      optimizeLowZoom(false),
+      multipolygon(false),
+      pinWay(false),
+      mergeAreas(false),
+      ignoreSeaLand(false),
+      ignore(false)
   {
-    // no code
+
   }
 
-  TagInfo& TagInfo::SetId(TagId id)
-  {
-    this->id=id;
-
-    return *this;
-  }
-
-  TagInfo& TagInfo::SetToExternal()
-  {
-    internalOnly=false;
-
-    return *this;
-  }
-
-  TypeInfo::TypeInfo()
-   : id(0),
-     canBeNode(false),
-     canBeWay(false),
-     canBeArea(false),
-     canBeRelation(false),
-     canRouteFoot(false),
-     canRouteBicycle(false),
-     canRouteCar(false),
-     indexAsLocation(false),
-     indexAsRegion(false),
-     indexAsPOI(false),
-     consumeChildren(false),
-     optimizeLowZoom(false),
-     multipolygon(false),
-     pinWay(false),
-     ignoreSeaLand(false),
-     ignore(false)
+  /**
+   * We forbid copying of TypeInfo instances
+   *
+   * @param other
+   */
+  TypeInfo::TypeInfo(const TypeInfo& /*other*/)
   {
     // no code
   }
@@ -206,9 +599,37 @@ namespace osmscout {
     // no code
   }
 
-  TypeInfo& TypeInfo::SetId(TypeId id)
+  TypeInfo& TypeInfo::SetNodeId(TypeId id)
   {
-    this->id=id;
+    this->nodeId=id;
+
+    return *this;
+  }
+
+  TypeInfo& TypeInfo::SetWayId(TypeId id)
+  {
+    this->wayId=id;
+
+    return *this;
+  }
+
+  TypeInfo& TypeInfo::SetAreaId(TypeId id)
+  {
+    this->areaId=id;
+
+    return *this;
+  }
+
+  TypeInfo& TypeInfo::SetIndex(size_t index)
+  {
+    this->index=index;
+
+    return *this;
+  }
+
+  TypeInfo& TypeInfo::SetInternal()
+  {
+    this->internal=true;
 
     return *this;
   }
@@ -221,7 +642,7 @@ namespace osmscout {
   }
 
   TypeInfo& TypeInfo::AddCondition(unsigned char types,
-                                   TagCondition* condition)
+                                   const TagConditionRef& condition)
   {
     TypeCondition typeCondition;
 
@@ -249,334 +670,607 @@ namespace osmscout {
     return *this;
   }
 
-  TypeConfig::TypeConfig()
-   : nextTagId(0),
-     nextTypeId(0)
+  TypeInfo& TypeInfo::AddFeature(const FeatureRef& feature)
   {
-    // Make sure, that this is always registered first.
-    // It assures that id 0 is always reserved for tagIgnore
-    RegisterTagForInternalUse("");
+    assert(feature);
+    assert(nameToFeatureMap.find(feature->GetName())==nameToFeatureMap.end());
 
-    RegisterTagForExternalUse("name");
-    RegisterTagForExternalUse("ref");
-    RegisterTagForExternalUse("bridge");
-    RegisterTagForExternalUse("tunnel");
-    RegisterTagForExternalUse("layer");
-    RegisterTagForExternalUse("type");
-    RegisterTagForExternalUse("width");
-    RegisterTagForExternalUse("oneway");
-    RegisterTagForExternalUse("addr:housenumber");
-    RegisterTagForExternalUse("addr:street");
-    RegisterTagForExternalUse("junction");
-    RegisterTagForExternalUse("maxspeed");
-    RegisterTagForExternalUse("restriction");
-    RegisterTagForExternalUse("surface");
-    RegisterTagForExternalUse("tracktype");
-    RegisterTagForExternalUse("place");
-    RegisterTagForExternalUse("place_name");
-    RegisterTagForExternalUse("boundary");
-    RegisterTagForExternalUse("admin_level");
+    size_t featureBit=0;
+    size_t index=0;
+    size_t offset=0;
+    size_t alignment=std::max(sizeof(size_t),sizeof(void*));
 
-    RegisterTagForExternalUse("access");
-    RegisterTagForExternalUse("access:foward");
-    RegisterTagForExternalUse("access:backward");
-
-    RegisterTagForExternalUse("access:foot");
-    RegisterTagForExternalUse("access:foot:foward");
-    RegisterTagForExternalUse("access:foot:backward");
-
-    RegisterTagForExternalUse("access:bicycle");
-    RegisterTagForExternalUse("access:bicycle:foward");
-    RegisterTagForExternalUse("access:bicycle:backward");
-
-    RegisterTagForExternalUse("access:motor_vehicle");
-    RegisterTagForExternalUse("access:motor_vehicle:foward");
-    RegisterTagForExternalUse("access:motor_vehicle:backward");
-
-    RegisterTagForExternalUse("access:motorcar");
-    RegisterTagForExternalUse("access:motorcar:foward");
-    RegisterTagForExternalUse("access:motorcar:backward");
-
-    RegisterTagForInternalUse("area");
-    RegisterTagForInternalUse("natural");
-
-    TypeInfo ignore;
-    TypeInfo route;
-    TypeInfo tileLand;
-    TypeInfo tileSea;
-    TypeInfo tileCoast;
-    TypeInfo tileUnknown;
-    TypeInfo tileCoastline;
-
-    // Make sure, that this is always registered first.
-    // It assures that id 0 is always reserved for typeIgnore
-    ignore.SetType("");
-
-    AddTypeInfo(ignore);
-
-    // Internal type for showing routes
-    route.SetType("_route")
-         .CanBeWay(true);
-
-    // Internal types for the land/sea/coast tiles building the base layer for map drawing
-    tileLand.SetType("_tile_land")
-            .CanBeArea(true);
-    tileSea.SetType("_tile_sea")
-           .CanBeArea(true);
-    tileCoast.SetType("_tile_coast")
-             .CanBeArea(true);
-    tileUnknown.SetType("_tile_unknown")
-               .CanBeArea(true);
-    tileCoastline.SetType("_tile_coastline")
-               .CanBeWay(true);
-
-    AddTypeInfo(route);
-    AddTypeInfo(tileLand);
-    AddTypeInfo(tileSea);
-    AddTypeInfo(tileCoast);
-    AddTypeInfo(tileUnknown);
-    AddTypeInfo(tileCoastline);
-
-    typeTileLand=GetTypeId("_tile_land");
-    typeTileSea=GetTypeId("_tile_sea");
-    typeTileCoast=GetTypeId("_tile_coast");
-    typeTileUnknown=GetTypeId("_tile_unknown");
-    typeTileCoastline=GetTypeId("_tile_coastline");
-
-    tagRef=GetTagId("ref");
-    tagBridge=GetTagId("bridge");
-    tagTunnel=GetTagId("tunnel");
-    tagLayer=GetTagId("layer");
-    tagType=GetTagId("type");
-    tagWidth=GetTagId("width");
-    tagOneway=GetTagId("oneway");
-    tagHouseNr=GetTagId("addr:housenumber");
-    tagStreet=GetTagId("addr:street");
-    tagJunction=GetTagId("junction");
-    tagMaxSpeed=GetTagId("maxspeed");
-    tagRestriction=GetTagId("restriction");
-    tagSurface=GetTagId("surface");
-    tagTracktype=GetTagId("tracktype");
-    tagPlace=GetTagId("place");
-    tagBoundary=GetTagId("boundary");
-    tagAdminLevel=GetTagId("admin_level");
-
-    tagAccess=GetTagId("access");
-    tagAccessForward=GetTagId("access:foward");
-    tagAccessBackward=GetTagId("access:backward");
-
-    tagAccessFoot=GetTagId("access:foot");
-    tagAccessFootForward=GetTagId("access:foot:foward");
-    tagAccessFootBackward=GetTagId("access:foot:backward");
-
-    tagAccessBicycle=GetTagId("access:bicycle");
-    tagAccessBicycleForward=GetTagId("access:bicycle:foward");
-    tagAccessBicycleBackward=GetTagId("access:bicycle:backward");
-
-    tagAccessMotorVehicle=GetTagId("access:motor_vehicle");
-    tagAccessMotorVehicleForward=GetTagId("access:motor_vehicle:foward");
-    tagAccessMotorVehicleBackward=GetTagId("access:motor_vehicle:backward");
-
-    tagAccessMotorcar=GetTagId("access:motorcar");
-    tagAccessMotorcarForward=GetTagId("access:motorcar:foward");
-    tagAccessMotorcarBackward=GetTagId("access:motorcar:backward");
-
-    tagArea=GetTagId("area");
-    tagNatural=GetTagId("natural");
-
-    assert(tagRef!=tagIgnore);
-    assert(tagBridge!=tagIgnore);
-    assert(tagTunnel!=tagIgnore);
-    assert(tagLayer!=tagIgnore);
-    assert(tagType!=tagIgnore);
-    assert(tagWidth!=tagIgnore);
-    assert(tagOneway!=tagIgnore);
-    assert(tagHouseNr!=tagIgnore);
-    assert(tagStreet!=tagIgnore);
-    assert(tagJunction!=tagIgnore);
-    assert(tagMaxSpeed!=tagIgnore);
-    assert(tagRestriction!=tagIgnore);
-    assert(tagSurface!=tagIgnore);
-    assert(tagTracktype!=tagIgnore);
-    assert(tagPlace!=tagIgnore);
-    assert(tagBoundary!=tagIgnore);
-    assert(tagAdminLevel!=tagIgnore);
-
-    assert(tagAccess!=tagIgnore);
-    assert(tagAccessForward!=tagIgnore);
-    assert(tagAccessBackward!=tagIgnore);
-
-    assert(tagAccessFoot!=tagIgnore);
-    assert(tagAccessFootForward!=tagIgnore);
-    assert(tagAccessFootBackward!=tagIgnore);
-
-    assert(tagAccessBicycle!=tagIgnore);
-    assert(tagAccessBicycleForward!=tagIgnore);
-    assert(tagAccessBicycleBackward!=tagIgnore);
-
-    assert(tagAccessMotorVehicle!=tagIgnore);
-    assert(tagAccessMotorVehicleForward!=tagIgnore);
-    assert(tagAccessMotorVehicleBackward!=tagIgnore);
-
-    assert(tagAccessMotorcar!=tagIgnore);
-    assert(tagAccessMotorcarForward!=tagIgnore);
-    assert(tagAccessMotorcarBackward!=tagIgnore);
-
-    assert(tagArea!=tagIgnore);
-    assert(tagNatural!=tagIgnore);
-  }
-
-  TypeConfig::~TypeConfig()
-  {
-    // no code
-  }
-
-  const std::vector<TagInfo>& TypeConfig::GetTags() const
-  {
-    return tags;
-  }
-
-  const std::vector<TypeInfo>& TypeConfig::GetTypes() const
-  {
-    return types;
-  }
-
-  TagId TypeConfig::RegisterTagForInternalUse(const std::string& tagName)
-  {
-    OSMSCOUT_HASHMAP<std::string,TagId>::const_iterator mapping=stringToTagMap.find(tagName);
-
-    if (mapping!=stringToTagMap.end()) {
-      return mapping->second;
+    if (!features.empty()) {
+      featureBit=features.back().GetFeatureBit()+1+feature->GetFeatureBitCount();
+      index=features.back().GetIndex()+1;
+      offset=features.back().GetOffset()+features.back().GetFeature()->GetValueSize();
+      if (offset%alignment!=0) {
+        offset=(offset/alignment+1)*alignment;
+      }
     }
 
-    TagInfo tagInfo(tagName,true);
 
-    if (tagInfo.GetId()==0) {
-      tagInfo.SetId(nextTagId);
+    features.push_back(FeatureInstance(feature,
+                                       this,
+                                       featureBit,
+                                       index,
+                                       offset));
+    nameToFeatureMap.insert(std::make_pair(feature->GetName(),index));
 
-      nextTagId++;
-    }
-    else {
-      nextTagId=std::max(nextTagId,(TagId)(tagInfo.GetId()+1));
-    }
+    size_t featureBitCount=0;
 
-    tags.push_back(tagInfo);
-    stringToTagMap[tagInfo.GetName()]=tagInfo.GetId();
-
-    return tagInfo.GetId();
-  }
-
-  TagId TypeConfig::RegisterTagForExternalUse(const std::string& tagName)
-  {
-    OSMSCOUT_HASHMAP<std::string,TagId>::const_iterator mapping=stringToTagMap.find(tagName);
-
-    if (mapping!=stringToTagMap.end()) {
-      tags[mapping->second].SetToExternal();
-
-      return mapping->second;
+    if (!features.empty()) {
+      featureBitCount=features.back().GetFeatureBit()+feature->GetFeatureBitCount()+1;
     }
 
-    TagInfo tagInfo(tagName,false);
+    featureMaskBytes=BitsToBytes(featureBitCount);
+    specialFeatureMaskBytes=BitsToBytes(featureBitCount+1);
 
-    if (tagInfo.GetId()==0) {
-      tagInfo.SetId(nextTagId);
-
-      nextTagId++;
-    }
-    else {
-      nextTagId=std::max(nextTagId,(TagId)(tagInfo.GetId()+1));
-    }
-
-    tags.push_back(tagInfo);
-    stringToTagMap[tagInfo.GetName()]=tagInfo.GetId();
-
-    return tagInfo.GetId();
-  }
-
-  void TypeConfig::RegisterNameTag(const std::string& tagName, uint32_t priority)
-  {
-    TagId tagId=RegisterTagForExternalUse(tagName);
-
-    nameTagIdToPrioMap.insert(std::make_pair(tagId,priority));
-  }
-
-  void TypeConfig::RegisterNameAltTag(const std::string& tagName, uint32_t priority)
-  {
-    TagId tagId=RegisterTagForExternalUse(tagName);
-
-    nameAltTagIdToPrioMap.insert(std::make_pair(tagId,priority));
-  }
-
-  void TypeConfig::RestoreTagInfo(const TagInfo& tagInfo)
-  {
-    // We have same tags, that are already and always
-    // registered in the constructor, we skip them here...
-    if (stringToTagMap.find(tagInfo.GetName())!=stringToTagMap.end()) {
-      return;
-    }
-
-    assert(stringToTagMap.find(tagInfo.GetName())==stringToTagMap.end());
-    assert(tagInfo.GetId()!=0 ||
-           (tagInfo.GetId()==0 && tagInfo.GetName().empty()));
-
-    nextTagId=std::max(nextTagId,(TagId)(tagInfo.GetId()+1));
-
-    if (tags.size()>=tagInfo.GetId()) {
-      tags.resize(tagInfo.GetId()+1);
-    }
-
-    tags[tagInfo.GetId()]=tagInfo;
-    stringToTagMap[tagInfo.GetName()]=tagInfo.GetId();
-  }
-
-  void TypeConfig::RestoreNameTagInfo(TagId tagId, uint32_t priority)
-  {
-    nameTagIdToPrioMap.insert(std::make_pair(tagId,priority));
-  }
-
-  void TypeConfig::RestoreNameAltTagInfo(TagId tagId, uint32_t priority)
-  {
-    nameAltTagIdToPrioMap.insert(std::make_pair(tagId,priority));
-  }
-
-  TypeConfig& TypeConfig::AddTypeInfo(TypeInfo& typeInfo)
-  {
-    if (nameToTypeMap.find(typeInfo.GetName())!=nameToTypeMap.end()) {
-      return *this;
-    }
-
-    if (typeInfo.GetId()==0) {
-      typeInfo.SetId(nextTypeId);
-
-      nextTypeId++;
-    }
-    else {
-      nextTypeId=std::max(nextTypeId,(TypeId)(typeInfo.GetId()+1));
-    }
-
-    //std::cout << "Type: " << typeInfo.GetId() << " " << typeInfo.GetName() << std::endl;
-
-    types.push_back(typeInfo);
-    nameToTypeMap[typeInfo.GetName()]=typeInfo;
-
-    idToTypeMap[typeInfo.GetId()]=typeInfo;
+    valueBufferSize=offset+feature->GetValueSize();
 
     return *this;
   }
 
+  TypeInfo& TypeInfo::AddGroup(const std::string& groupName)
+  {
+    groups.insert(groupName);
+
+    return *this;
+  }
+
+  bool TypeInfo::HasFeature(const std::string& featureName) const
+  {
+    return nameToFeatureMap.find(featureName)!=nameToFeatureMap.end();
+  }
+
+  /**
+   * Return the feature with the given name
+   */
+  bool TypeInfo::GetFeature(const std::string& name,
+                            size_t& index) const
+  {
+    auto entry=nameToFeatureMap.find(name);
+
+    if (entry!=nameToFeatureMap.end()) {
+      index=entry->second;
+
+      return true;
+    }
+    else {
+      return false;
+    }
+  }
+
+  uint8_t TypeInfo::GetDefaultAccess() const
+  {
+    uint8_t access=0;
+
+    if (CanRouteFoot()) {
+      access|=(AccessFeatureValue::footForward|AccessFeatureValue::footBackward);
+    }
+
+    if (CanRouteBicycle()) {
+      access|=(AccessFeatureValue::bicycleForward|AccessFeatureValue::bicycleBackward);
+    }
+
+    if (CanRouteCar()) {
+      access|=(AccessFeatureValue::carForward|AccessFeatureValue::carBackward);
+    }
+
+    return access;
+  }
+
+  TypeInfoSet::TypeInfoSet()
+  : count(0)
+  {
+    // no code
+  }
+
+  TypeInfoSet::TypeInfoSet(const TypeConfig& typeConfig)
+  : count(0)
+  {
+    types.resize(typeConfig.GetTypeCount());
+  }
+
+  TypeInfoSet::TypeInfoSet(const TypeInfoSet& other)
+  : types(other.types),
+    count(other.count)
+  {
+    // no code
+  }
+
+  TypeInfoSet::TypeInfoSet(TypeInfoSet&& other)
+  : types(other.types),
+    count(other.count)
+  {
+    // no code
+  }
+
+  TypeInfoSet::TypeInfoSet(const std::vector<TypeInfoRef>& types)
+  {
+    for (const auto& type : types) {
+      Set(type);
+    }
+  }
+
+  void TypeInfoSet::Adapt(const TypeConfig& typeConfig)
+  {
+    types.resize(typeConfig.GetTypeCount());
+  }
+
+  void TypeInfoSet::Set(const TypeInfoRef& type)
+  {
+    assert(type);
+
+    if (type->GetIndex()>=types.size()) {
+      types.resize(type->GetIndex()+1);
+    }
+
+    if (!types[type->GetIndex()]) {
+      types[type->GetIndex()]=type;
+      count++;
+    }
+  }
+
+  void TypeInfoSet::Set(const TypeInfoSet& other)
+  {
+    types=other.types;
+    count=other.count;
+  }
+
+  void TypeInfoSet::Set(const std::vector<TypeInfoRef>& types)
+  {
+    Clear();
+
+    for (const auto& type : types) {
+      Set(type);
+    }
+  }
+
+  void TypeInfoSet::Add(const TypeInfoSet& types)
+  {
+    for (const auto& type : types) {
+      Set(type);
+    }
+  }
+
+  void TypeInfoSet::Remove(const TypeInfoRef& type)
+  {
+    assert(type);
+
+    if (type->GetIndex()<types.size() &&
+        types[type->GetIndex()]) {
+      types[type->GetIndex()]=NULL;
+      count--;
+    }
+  }
+
+  void TypeInfoSet::Remove(const TypeInfoSet& otherTypes)
+  {
+    for (const auto &type : otherTypes.types)
+    {
+      if (type &&
+          type->GetIndex()<types.size() &&
+          types[type->GetIndex()]) {
+        types[type->GetIndex()]=NULL;
+        count--;
+      }
+    }
+  }
+
+  void TypeInfoSet::Intersection(const TypeInfoSet& otherTypes)
+  {
+    for (size_t i=0; i<types.size(); i++) {
+      if (types[i] &&
+          (i>=otherTypes.types.size() ||
+          !otherTypes.types[i])) {
+        types[i]=NULL;
+        count--;
+      }
+    }
+  }
+
+  /**
+   * Returns 'true' if at least one type is set in both Sets. Else
+   * 'false' is returned.
+   */
+  bool TypeInfoSet::Intersects(const TypeInfoSet& otherTypes) const
+  {
+    size_t minSize=std::min(types.size(),otherTypes.types.size());
+
+    for (size_t i=0; i<minSize; i++) {
+      if (types[i] && otherTypes.types[i]) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  bool TypeInfoSet::operator==(const TypeInfoSet& other) const
+  {
+    if (this==&other) {
+      return true;
+    }
+
+    if (count!=other.count) {
+      return false;
+    }
+
+    for (size_t i=0; i<std::max(types.size(),other.types.size()); i++) {
+      if (i<types.size() && i<other.types.size()) {
+        if (types[i]!=other.types[i]) {
+          return false;
+        }
+      }
+      else if (i<types.size()) {
+        if (types[i]) {
+          return false;
+        }
+      }
+      else if (i<other.types.size()) {
+        if (other.types[i]) {
+          return false;
+        }
+      }
+    }
+
+    return true;
+  }
+
+  bool TypeInfoSet::operator!=(const TypeInfoSet& other) const
+  {
+    if (this==&other) {
+      return false;
+    }
+
+    if (count!=other.count) {
+      return true;
+    }
+
+    for (size_t i=0; i<std::max(types.size(),other.types.size()); i++) {
+      if (i<types.size() && i<other.types.size()) {
+        if (types[i]!=other.types[i]) {
+          return true;
+        }
+      }
+      else if (i<types.size()) {
+        if (types[i]) {
+          return true;
+        }
+      }
+      else if (i<other.types.size()) {
+        if (other.types[i]) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  TypeConfig::TypeConfig()
+   : nextTagId(0),
+     nodeTypeIdBytes(1),
+     wayTypeIdBytes(1),
+     areaTypeIdBits(1),
+     areaTypeIdBytes(1)
+  {
+    log.Debug() << "TypeConfig::TypeConfig()";
+
+    // Make sure, that this is always registered first.
+    // It assures that id 0 is always reserved for tagIgnore
+    RegisterTag("");
+
+    RegisterTag("area");
+    RegisterTag("natural");
+    RegisterTag("type");
+    RegisterTag("restriction");
+    RegisterTag("junction");
+
+    featureName=std::make_shared<NameFeature>();
+    RegisterFeature(featureName);
+
+    RegisterFeature(std::make_shared<NameAltFeature>());
+
+    featureRef=std::make_shared<RefFeature>();
+    RegisterFeature(featureRef);
+
+    featureLocation=std::make_shared<LocationFeature>();
+    RegisterFeature(featureLocation);
+
+    featureAddress=std::make_shared<AddressFeature>();
+    RegisterFeature(featureAddress);
+
+    featureAccess=std::make_shared<AccessFeature>();
+    RegisterFeature(featureAccess);
+
+    featureAccessRestricted=std::make_shared<AccessRestrictedFeature>();
+    RegisterFeature(featureAccessRestricted);
+
+    featureLayer=std::make_shared<LayerFeature>();
+    RegisterFeature(featureLayer);
+
+    featureWidth=std::make_shared<WidthFeature>();
+    RegisterFeature(featureWidth);
+
+    featureMaxSpeed=std::make_shared<MaxSpeedFeature>();
+    RegisterFeature(featureMaxSpeed);
+
+    featureGrade=std::make_shared<GradeFeature>();
+    RegisterFeature(featureGrade);
+
+    RegisterFeature(std::make_shared<AdminLevelFeature>());
+
+    featureBridge=std::make_shared<BridgeFeature>();
+    RegisterFeature(featureBridge);
+
+    featureTunnel=std::make_shared<TunnelFeature>();
+    RegisterFeature(featureTunnel);
+
+    featureRoundabout=std::make_shared<RoundaboutFeature>();
+    RegisterFeature(featureRoundabout);
+
+    RegisterFeature(std::make_shared<EleFeature>());
+    RegisterFeature(std::make_shared<DestinationFeature>());
+    RegisterFeature(std::make_shared<BuildingFeature>());
+
+    // Make sure, that this is always registered first.
+    // It assures that id 0 is always reserved for typeIgnore
+    typeInfoIgnore=std::make_shared<TypeInfo>("");
+    typeInfoIgnore->SetIgnore(true);
+
+    RegisterType(typeInfoIgnore);
+
+
+    //
+    // Internal type for showing routes
+    //
+
+    TypeInfoRef route=std::make_shared<TypeInfo>("_route");
+    route->SetInternal().CanBeWay(true);
+    RegisterType(route);
+
+    //
+    // Internal types for the land/sea/coast tiles building the base layer for map drawing
+    //
+
+    typeInfoTileLand=std::make_shared<TypeInfo>("_tile_land");
+    typeInfoTileLand->SetInternal().CanBeArea(true);
+    RegisterType(typeInfoTileLand);
+
+
+    typeInfoTileSea=std::make_shared<TypeInfo>("_tile_sea");
+    typeInfoTileSea->SetInternal().CanBeArea(true);
+    RegisterType(typeInfoTileSea);
+
+
+    typeInfoTileCoast=std::make_shared<TypeInfo>("_tile_coast");
+    typeInfoTileCoast->SetInternal().CanBeArea(true);
+    RegisterType(typeInfoTileCoast);
+
+
+    typeInfoTileUnknown=std::make_shared<TypeInfo>("_tile_unknown");
+    typeInfoTileUnknown->SetInternal().CanBeArea(true);
+    RegisterType(typeInfoTileUnknown);
+
+
+    typeInfoCoastline=std::make_shared<TypeInfo>("_tile_coastline");
+    typeInfoCoastline->SetInternal().CanBeWay(true);
+    RegisterType(typeInfoCoastline);
+
+    typeInfoOSMTileBorder=std::make_shared<TypeInfo>("_osm_tile_border");
+    typeInfoOSMTileBorder->SetInternal().CanBeWay(true);
+    RegisterType(typeInfoOSMTileBorder);
+
+    typeInfoOSMSubTileBorder=std::make_shared<TypeInfo>("_osm_subtile_border");
+    typeInfoOSMSubTileBorder->SetInternal().CanBeWay(true);
+    RegisterType(typeInfoOSMSubTileBorder);
+
+    tagArea=GetTagId("area");
+    tagNatural=GetTagId("natural");
+    tagType=GetTagId("type");
+    tagRestriction=GetTagId("restriction");
+    tagJunction=GetTagId("junction");
+
+    assert(tagArea!=tagIgnore);
+    assert(tagNatural!=tagIgnore);
+    assert(tagType!=tagIgnore);
+    assert(tagRestriction!=tagIgnore);
+    assert(tagJunction!=tagIgnore);
+  }
+
+  TypeConfig::~TypeConfig()
+  {
+    log.Debug() << "TypeConfig::~TypeConfig()";
+  }
+
+  TagId TypeConfig::RegisterTag(const std::string& tagName)
+  {
+    auto mapping=stringToTagMap.find(tagName);
+
+    if (mapping!=stringToTagMap.end()) {
+      return mapping->second;
+    }
+
+    TagInfo tagInfo(nextTagId,tagName);
+
+    nextTagId++;
+
+    tags.push_back(tagInfo);
+    stringToTagMap[tagInfo.GetName()]=tagInfo.GetId();
+
+    return tagInfo.GetId();
+  }
+
+  TagId TypeConfig::RegisterNameTag(const std::string& tagName, uint32_t priority)
+  {
+    TagId tagId=RegisterTag(tagName);
+
+    nameTagIdToPrioMap.insert(std::make_pair(tagId,priority));
+
+    return tagId;
+  }
+
+  TagId TypeConfig::RegisterNameAltTag(const std::string& tagName, uint32_t priority)
+  {
+    TagId tagId=RegisterTag(tagName);
+
+    nameAltTagIdToPrioMap.insert(std::make_pair(tagId,priority));
+
+    return tagId;
+  }
+
+  void TypeConfig::RegisterFeature(const FeatureRef& feature)
+  {
+    assert(feature);
+    assert(!feature->GetName().empty());
+
+    if (nameToFeatureMap.find(feature->GetName())!=nameToFeatureMap.end()) {
+      return;
+    }
+
+    features.push_back(feature);
+    nameToFeatureMap[feature->GetName()]=feature;
+
+    feature->Initialize(*this);
+  }
+
+  FeatureRef TypeConfig::GetFeature(const std::string& name) const
+  {
+    auto feature=nameToFeatureMap.find(name);
+
+    if (feature!=nameToFeatureMap.end()) {
+      return feature->second;
+    }
+    else {
+      return NULL;
+    }
+  }
+
+  TypeInfoRef TypeConfig::RegisterType(const TypeInfoRef& typeInfo)
+  {
+    assert(typeInfo);
+
+    auto existingType=nameToTypeMap.find(typeInfo->GetName());
+
+    if (existingType!=nameToTypeMap.end()) {
+      return existingType->second;
+    }
+
+    if ((typeInfo->CanBeArea() ||
+         typeInfo->CanBeNode()) &&
+        typeInfo->GetIndexAsAddress()) {
+      if (!typeInfo->HasFeature(LocationFeature::NAME)) {
+        typeInfo->AddFeature(featureLocation);
+      }
+      if (!typeInfo->HasFeature(AddressFeature::NAME)) {
+        typeInfo->AddFeature(featureAddress);
+      }
+    }
+
+    // All ways have a layer
+    if (typeInfo->CanBeWay()) {
+      if (!typeInfo->HasFeature(LayerFeature::NAME)) {
+        typeInfo->AddFeature(featureLayer);
+      }
+    }
+
+    // All that is PATH-like automatically has a number of features,
+    // even if it is not routable
+    if (typeInfo->IsPath()) {
+      if (!typeInfo->HasFeature(WidthFeature::NAME)) {
+        typeInfo->AddFeature(featureWidth);
+      }
+      if (!typeInfo->HasFeature(GradeFeature::NAME)) {
+        typeInfo->AddFeature(featureGrade);
+      }
+      if (!typeInfo->HasFeature(BridgeFeature::NAME)) {
+        typeInfo->AddFeature(featureBridge);
+      }
+      if (!typeInfo->HasFeature(TunnelFeature::NAME)) {
+        typeInfo->AddFeature(featureTunnel);
+      }
+      if (!typeInfo->HasFeature(RoundaboutFeature::NAME)) {
+        typeInfo->AddFeature(featureRoundabout);
+      }
+    }
+
+    // Everything routable should have access information and max speed information
+    if (typeInfo->CanRoute()) {
+      if (!typeInfo->HasFeature(AccessFeature::NAME)) {
+        typeInfo->AddFeature(featureAccess);
+      }
+      if (!typeInfo->HasFeature(AccessRestrictedFeature::NAME)) {
+        typeInfo->AddFeature(featureAccessRestricted);
+      }
+      if (!typeInfo->HasFeature(MaxSpeedFeature::NAME)) {
+        typeInfo->AddFeature(featureMaxSpeed);
+      }
+    }
+
+    // Something that has a name and is a POI automatically get the
+    // location and address features, too.
+    if (typeInfo->HasFeature(NameFeature::NAME) &&
+        typeInfo->GetIndexAsPOI()) {
+      if (!typeInfo->HasFeature(LocationFeature::NAME)) {
+        typeInfo->AddFeature(featureLocation);
+      }
+      if (!typeInfo->HasFeature(AddressFeature::NAME)) {
+        typeInfo->AddFeature(featureAddress);
+      }
+    }
+
+    typeInfo->SetIndex(types.size());
+
+    types.push_back(typeInfo);
+
+    if (!typeInfo->GetIgnore() &&
+        !typeInfo->IsInternal() &&
+        (typeInfo->CanBeNode() ||
+         typeInfo->CanBeWay() ||
+         typeInfo->CanBeArea())) {
+      if (typeInfo->CanBeNode()) {
+        typeInfo->SetNodeId((TypeId)(nodeTypes.size()+1));
+        nodeTypes.push_back(typeInfo);
+
+        nodeTypeIdBytes=BytesNeededToEncodeNumber(typeInfo->GetNodeId());
+      }
+
+      if (typeInfo->CanBeWay()) {
+        typeInfo->SetWayId((TypeId)(wayTypes.size()+1));
+        wayTypes.push_back(typeInfo);
+
+        wayTypeIdBytes=BytesNeededToEncodeNumber(typeInfo->GetWayId());
+      }
+
+      if (typeInfo->CanBeArea()) {
+        typeInfo->SetAreaId((TypeId)(areaTypes.size()+1));
+        areaTypes.push_back(typeInfo);
+
+        areaTypeIdBytes=BytesNeededToEncodeNumber(typeInfo->GetAreaId());
+        areaTypeIdBits=BitsNeededToEncodeNumber(typeInfo->GetAreaId());
+      }
+    }
+
+    nameToTypeMap[typeInfo->GetName()]=typeInfo;
+
+    return typeInfo;
+  }
+
   TypeId TypeConfig::GetMaxTypeId() const
   {
-    if (nextTypeId==0) {
+    if (types.empty()) {
       return 0;
     }
     else {
-      return nextTypeId-1;
+      return (TypeId)types.size();
     }
   }
 
   TagId TypeConfig::GetTagId(const char* name) const
   {
-    OSMSCOUT_HASHMAP<std::string,TagId>::const_iterator iter=stringToTagMap.find(name);
+    auto iter=stringToTagMap.find(name);
 
     if (iter!=stringToTagMap.end()) {
       return iter->second;
@@ -586,39 +1280,27 @@ namespace osmscout {
     }
   }
 
-  const TagInfo& TypeConfig::GetTagInfo(TagId id) const
+  TagId TypeConfig::GetTagId(const std::string& name) const
   {
-    assert(id<tags.size());
+    auto iter=stringToTagMap.find(name);
 
-    return tags[id];
-  }
-
-  const TypeInfo& TypeConfig::GetTypeInfo(TypeId id) const
-  {
-    assert(id<types.size());
-
-    return types[id];
-  }
-
-  void TypeConfig::ResolveTags(const std::map<TagId,std::string>& map,
-                               std::vector<Tag>& tags) const
-  {
-    tags.clear();
-
-    for (std::map<TagId,std::string>::const_iterator t=map.begin();
-         t!=map.end();
-         ++t) {
-      if (GetTagInfo(t->first).IsInternalOnly()) {
-        continue;
-      }
-
-      Tag tag;
-
-      tag.key=t->first;
-      tag.value=t->second;
-
-      tags.push_back(tag);
+    if (iter!=stringToTagMap.end()) {
+      return iter->second;
     }
+    else {
+      return tagIgnore;
+    }
+  }
+
+  const TypeInfoRef TypeConfig::GetTypeInfo(const std::string& name) const
+  {
+    auto typeEntry=nameToTypeMap.find(name);
+
+    if (typeEntry!=nameToTypeMap.end()) {
+      return typeEntry->second;
+    }
+
+    return TypeInfoRef();
   }
 
   bool TypeConfig::IsNameTag(TagId tag, uint32_t& priority) const
@@ -627,7 +1309,7 @@ namespace osmscout {
       return false;
     }
 
-    OSMSCOUT_HASHMAP<TagId,uint32_t>::const_iterator entry=nameTagIdToPrioMap.find(tag);
+    auto entry=nameTagIdToPrioMap.find(tag);
 
     if (entry==nameTagIdToPrioMap.end()) {
       return false;
@@ -644,7 +1326,7 @@ namespace osmscout {
       return false;
     }
 
-    OSMSCOUT_HASHMAP<TagId,uint32_t>::const_iterator entry=nameAltTagIdToPrioMap.find(tag);
+    auto entry=nameAltTagIdToPrioMap.find(tag);
 
     if (entry==nameAltTagIdToPrioMap.end()) {
       return false;
@@ -655,76 +1337,69 @@ namespace osmscout {
     return true;
   }
 
-  bool TypeConfig::GetNodeTypeId(const std::map<TagId,std::string>& tagMap,
-                                 TypeId &typeId) const
+  TypeInfoRef TypeConfig::GetNodeType(const TagMap& tagMap) const
   {
-    typeId=typeIgnore;
-
     if (tagMap.empty()) {
-      return false;
+      return typeInfoIgnore;
     }
 
-    for (size_t i=0; i<types.size(); i++) {
-      if (!types[i].HasConditions() ||
-          !types[i].CanBeNode()) {
+    for (const auto &type : types) {
+      if (!type->HasConditions() ||
+          !type->CanBeNode()) {
         continue;
       }
 
-      for (std::list<TypeInfo::TypeCondition>::const_iterator cond=types[i].GetConditions().begin();
-           cond!=types[i].GetConditions().end();
-           ++cond) {
-        if (!(cond->types & TypeInfo::typeNode)) {
+      for (const auto &cond : type->GetConditions()) {
+        if (!(cond.types & TypeInfo::typeNode)) {
           continue;
         }
 
-        if (cond->condition->Evaluate(tagMap)) {
-          typeId=types[i].GetId();
-          return true;
+        if (cond.condition->Evaluate(tagMap)) {
+          return type;
         }
       }
     }
 
-    return false;
+    return typeInfoIgnore;
   }
 
-  bool TypeConfig::GetWayAreaTypeId(const std::map<TagId,std::string>& tagMap,
-                                    TypeId &wayType,
-                                    TypeId &areaType) const
+  bool TypeConfig::GetWayAreaType(const TagMap& tagMap,
+                                  TypeInfoRef& wayType,
+                                  TypeInfoRef& areaType) const
   {
-    wayType=typeIgnore;
-    areaType=typeIgnore;
+    wayType=typeInfoIgnore;
+    areaType=typeInfoIgnore;
 
     if (tagMap.empty()) {
       return false;
     }
 
-    for (size_t i=0; i<types.size(); i++) {
-      if (!((types[i].CanBeWay() ||
-             types[i].CanBeArea()) &&
-             types[i].HasConditions())) {
+    for (const auto& type : types) {
+      if (!((type->CanBeWay() ||
+             type->CanBeArea()) &&
+             type->HasConditions())) {
         continue;
       }
 
-      for (std::list<TypeInfo::TypeCondition>::const_iterator cond=types[i].GetConditions().begin();
-           cond!=types[i].GetConditions().end();
-           ++cond) {
-        if (!((cond->types & TypeInfo::typeWay) || (cond->types & TypeInfo::typeArea))) {
+      for (const auto& cond : type->GetConditions()) {
+        if (!((cond.types & TypeInfo::typeWay) ||
+              (cond.types & TypeInfo::typeArea))) {
           continue;
         }
 
-        if (cond->condition->Evaluate(tagMap)) {
-          if (wayType==typeIgnore &&
-              (cond->types & TypeInfo::typeWay)) {
-            wayType=types[i].GetId();
+        if (cond.condition->Evaluate(tagMap)) {
+          if (wayType==typeInfoIgnore &&
+              (cond.types & TypeInfo::typeWay)) {
+            wayType=type;
           }
 
-          if (areaType==typeIgnore &&
-              (cond->types & TypeInfo::typeArea)) {
-            areaType=types[i].GetId();
+          if (areaType==typeInfoIgnore &&
+              (cond.types & TypeInfo::typeArea)) {
+            areaType=type;
           }
 
-          if (wayType!=typeIgnore ||
-              areaType!=typeIgnore) {
+          if (wayType!=typeInfoIgnore ||
+              areaType!=typeInfoIgnore) {
             return true;
           }
         }
@@ -734,175 +1409,53 @@ namespace osmscout {
     return false;
   }
 
-  bool TypeConfig::GetRelationTypeId(const std::map<TagId,std::string>& tagMap,
-                                     TypeId &typeId) const
+  TypeInfoRef TypeConfig::GetRelationType(const TagMap& tagMap) const
   {
-    typeId=typeIgnore;
-
     if (tagMap.empty()) {
-      return false;
+      return typeInfoIgnore;
     }
 
-    std::map<TagId,std::string>::const_iterator relationType=tagMap.find(tagType);
+    auto relationType=tagMap.find(tagType);
 
     if (relationType!=tagMap.end() &&
         relationType->second=="multipolygon") {
       for (size_t i=0; i<types.size(); i++) {
-        if (!types[i].HasConditions() ||
-            !types[i].CanBeArea()) {
+        if (!types[i]->HasConditions() ||
+            !types[i]->CanBeArea()) {
           continue;
         }
 
-        for (std::list<TypeInfo::TypeCondition>::const_iterator cond=types[i].GetConditions().begin();
-             cond!=types[i].GetConditions().end();
-             ++cond) {
-          if (!(cond->types & TypeInfo::typeArea)) {
+        for (const auto &cond : types[i]->GetConditions()) {
+          if (!(cond.types & TypeInfo::typeArea)) {
             continue;
           }
 
-          if (cond->condition->Evaluate(tagMap)) {
-            typeId=types[i].GetId();
-            return true;
+          if (cond.condition->Evaluate(tagMap)) {
+            return types[i];
           }
         }
       }
     }
     else {
       for (size_t i=0; i<types.size(); i++) {
-        if (!types[i].HasConditions() ||
-            !types[i].CanBeRelation()) {
+        if (!types[i]->HasConditions() ||
+            !types[i]->CanBeRelation()) {
           continue;
         }
 
-        for (std::list<TypeInfo::TypeCondition>::const_iterator cond=types[i].GetConditions().begin();
-             cond!=types[i].GetConditions().end();
-             ++cond) {
-          if (!(cond->types & TypeInfo::typeRelation)) {
+        for (const auto &cond : types[i]->GetConditions()) {
+          if (!(cond.types & TypeInfo::typeRelation)) {
             continue;
           }
 
-          if (cond->condition->Evaluate(tagMap)) {
-            typeId=types[i].GetId();
-            return true;
+          if (cond.condition->Evaluate(tagMap)) {
+            return types[i];
           }
         }
       }
     }
 
-    return false;
-  }
-
-  TypeId TypeConfig::GetTypeId(const std::string& name) const
-  {
-    OSMSCOUT_HASHMAP<std::string,TypeInfo>::const_iterator iter=nameToTypeMap.find(name);
-
-    if (iter!=nameToTypeMap.end()) {
-      return iter->second.GetId();
-    }
-
-    return typeIgnore;
-  }
-
-  TypeId TypeConfig::GetNodeTypeId(const std::string& name) const
-  {
-    OSMSCOUT_HASHMAP<std::string,TypeInfo>::const_iterator iter=nameToTypeMap.find(name);
-
-    if (iter!=nameToTypeMap.end() &&
-        iter->second.CanBeNode()) {
-      return iter->second.GetId();
-    }
-
-    return typeIgnore;
-  }
-
-  TypeId TypeConfig::GetWayTypeId(const std::string& name) const
-  {
-    OSMSCOUT_HASHMAP<std::string,TypeInfo>::const_iterator iter=nameToTypeMap.find(name);
-
-    if (iter!=nameToTypeMap.end() &&
-        iter->second.CanBeWay()) {
-      return iter->second.GetId();
-    }
-
-    return typeIgnore;
-  }
-
-  TypeId TypeConfig::GetAreaTypeId(const std::string& name) const
-  {
-    OSMSCOUT_HASHMAP<std::string,TypeInfo>::const_iterator iter=nameToTypeMap.find(name);
-
-    if (iter!=nameToTypeMap.end() &&
-        iter->second.CanBeArea()) {
-      return iter->second.GetId();
-    }
-
-    return typeIgnore;
-  }
-
-  TypeId TypeConfig::GetRelationTypeId(const std::string& name) const
-  {
-    OSMSCOUT_HASHMAP<std::string,TypeInfo>::const_iterator iter=nameToTypeMap.find(name);
-
-    if (iter!=nameToTypeMap.end() &&
-        iter->second.CanBeRelation()) {
-      return iter->second.GetId();
-    }
-
-    return typeIgnore;
-  }
-
-  void TypeConfig::GetRoutables(std::set<TypeId>& types) const
-  {
-    types.clear();
-
-    for (std::vector<TypeInfo>::const_iterator type=this->types.begin();
-         type!=this->types.end();
-         ++type) {
-      if (type->CanRouteFoot() ||
-          type->CanRouteBicycle() ||
-          type->CanRouteCar()) {
-        types.insert(type->GetId());
-      }
-    }
-  }
-
-  void TypeConfig::GetIndexables(OSMSCOUT_HASHSET<TypeId>& types) const
-  {
-    types.clear();
-
-    for (std::vector<TypeInfo>::const_iterator type=this->types.begin();
-         type!=this->types.end();
-         ++type) {
-      if (type->GetIndexAsLocation()) {
-        types.insert(type->GetId());
-      }
-    }
-  }
-
-  void TypeConfig::GetIndexAsRegionTypes(OSMSCOUT_HASHSET<TypeId>& types) const
-  {
-    types.clear();
-
-    for (std::vector<TypeInfo>::const_iterator type=this->types.begin();
-         type!=this->types.end();
-         ++type) {
-      if (type->GetIndexAsRegion()) {
-        types.insert(type->GetId());
-      }
-    }
-  }
-
-  void TypeConfig::GetIndexAsPOITypes(OSMSCOUT_HASHSET<TypeId>& types) const
-  {
-    types.clear();
-
-    for (std::vector<TypeInfo>::const_iterator type=this->types.begin();
-         type!=this->types.end();
-         ++type) {
-      if (type->GetIndexAsPOI()) {
-        types.insert(type->GetId());
-      }
-    }
+    return typeInfoIgnore;
   }
 
   void TypeConfig::RegisterSurfaceToGradeMapping(const std::string& surface,
@@ -915,7 +1468,7 @@ namespace osmscout {
   bool TypeConfig::GetGradeForSurface(const std::string& surface,
                                       size_t& grade) const
   {
-    OSMSCOUT_HASHMAP<std::string,size_t>::const_iterator entry=surfaceToGradeMap.find(surface);
+    auto entry=surfaceToGradeMap.find(surface);
 
     if (entry!=surfaceToGradeMap.end()) {
       grade=entry->second;
@@ -927,4 +1480,429 @@ namespace osmscout {
     }
   }
 
+  void TypeConfig::RegisterMaxSpeedAlias(const std::string& alias,
+                                         uint8_t maxSpeed)
+  {
+    nameToMaxSpeedMap.insert(std::make_pair(alias,
+                                            maxSpeed));
+  }
+
+  bool TypeConfig::GetMaxSpeedFromAlias(const std::string& alias,
+                                        uint8_t& maxSpeed) const
+  {
+    auto entry=nameToMaxSpeedMap.find(alias);
+
+    if (entry!=nameToMaxSpeedMap.end()) {
+      maxSpeed=entry->second;
+
+      return true;
+    }
+    else {
+      return false;
+    }
+  }
+
+
+  /**
+   * Loads the type configuration from the given *.ost file.
+   *
+   * Note:
+   * Make sure that you load from a OST file only onto a freshly initialized
+   * TypeConfig instance.
+   *
+   * @param filename
+   *    Full filename including path of the OST file
+   * @return
+   *    True, if there were no errors, else false
+   */
+  bool TypeConfig::LoadFromOSTFile(const std::string& filename)
+  {
+    FileOffset fileSize;
+    FILE*      file;
+    bool success=false;
+
+    try {
+      fileSize=GetFileSize(filename);
+
+      file=fopen(filename.c_str(),"rb");
+      if (file==NULL) {
+        log.Error() << "Cannot open file '" << filename << "'";
+        return false;
+      }
+
+      unsigned char* content=new unsigned char[fileSize];
+
+      if (fread(content,1,fileSize,file)!=(size_t)fileSize) {
+        log.Error() << "Cannot load file '" << filename << "'";
+        delete [] content;
+        fclose(file);
+        return false;
+      }
+
+      fclose(file);
+
+      ost::Scanner *scanner=new ost::Scanner(content,
+                                             fileSize);
+      ost::Parser  *parser=new ost::Parser(scanner,
+                                           *this);
+
+      delete [] content;
+
+      parser->Parse();
+
+      success=!parser->errors->hasErrors;
+
+      delete parser;
+      delete scanner;
+    }
+    catch (IOException& e) {
+      log.Error() << e.GetDescription();
+    }
+
+    return success;
+  }
+
+  /**
+   * Loads the type configuration from the given binary data file.
+   *
+   * Note:
+   * Make sure that you load from afile only onto a freshly initialized
+   * TypeConfig instance.
+   *
+   * @param directory
+   *    Full path excluding the actual filename of the data file
+   *    (filename is always "types.dat")
+   * @return
+   *    True, if there were no errors, else false
+   */
+  bool TypeConfig::LoadFromDataFile(const std::string& directory)
+  {
+    StopClock timer;
+
+    FileScanner scanner;
+
+    try {
+      scanner.Open(AppendFileToDir(directory,
+                                   "types.dat"),
+                   FileScanner::Sequential,
+                   true);
+
+      uint32_t fileFormatVersion;
+
+      scanner.Read(fileFormatVersion);
+
+      if (fileFormatVersion!=FILE_FORMAT_VERSION) {
+        log.Error() << "File '" << scanner.GetFilename() << "' does not have the expected format version! Actual " << fileFormatVersion << ", expected: " << FILE_FORMAT_VERSION;
+        return false;
+      }
+
+      // Tags
+
+      uint32_t tagCount;
+
+      scanner.ReadNumber(tagCount);
+
+      for (size_t i=1; i<=tagCount; i++) {
+        TagId       requestedId;
+        TagId       actualId;
+        std::string name;
+
+        scanner.ReadNumber(requestedId);
+        scanner.Read(name);
+
+        actualId=RegisterTag(name);
+
+        if (actualId!=requestedId) {
+          log.Error() << "Requested and actual tag id do not match";
+          return false;
+        }
+      }
+
+      // Name Tags
+
+      uint32_t nameTagCount;
+
+      scanner.ReadNumber(nameTagCount);
+
+      for (size_t i=1; i<=nameTagCount; i++) {
+        TagId       requestedId;
+        TagId       actualId;
+        std::string name;
+        uint32_t    priority = 0;
+
+        scanner.ReadNumber(requestedId);
+        scanner.Read(name);
+        scanner.ReadNumber(priority);
+
+        actualId=RegisterNameTag(name,priority);
+
+        if (actualId!=requestedId) {
+          log.Error() << "Requested and actual name tag id do not match";
+          return false;
+        }
+      }
+
+      // Alternative Name Tags
+
+      uint32_t nameAltTagCount;
+
+      scanner.ReadNumber(nameAltTagCount);
+
+      for (size_t i=1; i<=nameAltTagCount; i++) {
+        TagId       requestedId;
+        TagId       actualId;
+        std::string name;
+        uint32_t    priority = 0;
+
+        scanner.ReadNumber(requestedId);
+        scanner.Read(name);
+        scanner.ReadNumber(priority);
+
+        actualId=RegisterNameAltTag(name,priority);
+
+        if (actualId!=requestedId) {
+          log.Error() << "Requested and actual name alt tag id do not match";
+          return false;
+        }
+      }
+
+      // Types
+
+      uint32_t typeCount;
+
+      scanner.ReadNumber(typeCount);
+
+      for (size_t i=1; i<=typeCount; i++) {
+        std::string name;
+        bool        canBeNode;
+        bool        canBeWay;
+        bool        canBeArea;
+        bool        canBeRelation;
+        bool        isPath;
+        bool        canRouteFoot;
+        bool        canRouteBicycle;
+        bool        canRouteCar;
+        bool        indexAsAddress;
+        bool        indexAsLocation;
+        bool        indexAsRegion;
+        bool        indexAsPOI;
+        bool        optimizeLowZoom;
+        bool        multipolygon;
+        bool        pinWay;
+        bool        mergeAreas;
+        bool        ignore;
+        bool        ignoreSeaLand;
+
+        scanner.Read(name);
+        scanner.Read(canBeNode);
+        scanner.Read(canBeWay);
+        scanner.Read(canBeArea);
+        scanner.Read(canBeRelation);
+        scanner.Read(isPath);
+        scanner.Read(canRouteFoot);
+        scanner.Read(canRouteBicycle);
+        scanner.Read(canRouteCar);
+        scanner.Read(indexAsAddress);
+        scanner.Read(indexAsLocation);
+        scanner.Read(indexAsRegion);
+        scanner.Read(indexAsPOI);
+        scanner.Read(optimizeLowZoom);
+        scanner.Read(multipolygon);
+        scanner.Read(pinWay);
+        scanner.Read(mergeAreas);
+        scanner.Read(ignoreSeaLand);
+        scanner.Read(ignore);
+
+        TypeInfoRef typeInfo=std::make_shared<TypeInfo>(name);
+
+        typeInfo->CanBeNode(canBeNode);
+        typeInfo->CanBeWay(canBeWay);
+        typeInfo->CanBeArea(canBeArea);
+        typeInfo->CanBeRelation(canBeRelation);
+        typeInfo->SetIsPath(isPath);
+        typeInfo->CanRouteFoot(canRouteFoot);
+        typeInfo->CanRouteBicycle(canRouteBicycle);
+        typeInfo->CanRouteCar(canRouteCar);
+        typeInfo->SetIndexAsAddress(indexAsAddress);
+        typeInfo->SetIndexAsLocation(indexAsLocation);
+        typeInfo->SetIndexAsRegion(indexAsRegion);
+        typeInfo->SetIndexAsPOI(indexAsPOI);
+        typeInfo->SetOptimizeLowZoom(optimizeLowZoom);
+        typeInfo->SetMultipolygon(multipolygon);
+        typeInfo->SetPinWay(pinWay);
+        typeInfo->SetMergeAreas(mergeAreas);
+        typeInfo->SetIgnoreSeaLand(ignoreSeaLand);
+        typeInfo->SetIgnore(ignore);
+
+        // Type Features
+
+        uint32_t featureCount;
+
+        scanner.ReadNumber(featureCount);
+
+        for (size_t f=0; f<featureCount; f++) {
+          std::string featureName;
+
+          scanner.Read(featureName);
+
+          FeatureRef feature=GetFeature(featureName);
+
+          if (!feature) {
+            log.Error() << "Feature '" << featureName << "' not found";
+            return false;
+          }
+
+          typeInfo->AddFeature(feature);
+        }
+
+        // Groups
+
+        uint32_t groupCount;
+
+        scanner.ReadNumber(groupCount);
+
+        for (size_t g=0; g<groupCount; g++) {
+          std::string groupName;
+
+          scanner.Read(groupName);
+
+          typeInfo->AddGroup(groupName);
+        }
+
+        RegisterType(typeInfo);
+      }
+
+      scanner.Close();
+    }
+    catch (IOException& e) {
+      log.Error() << e.GetDescription();
+      scanner.CloseFailsafe();
+      return false;
+    }
+
+    timer.Stop();
+
+    log.Debug() << "Opening TypeConfig: " << timer.ResultString();
+
+    return true;
+  }
+
+  /**
+   * Store the part of the TypeConfig information to a data file,
+   * which is necessary to review later on when reading and
+   * evaluation an import.
+   *
+   * @param directory
+   *    Directory the data file should be written to
+   * @return
+   *    True, if there were no errors, else false
+   */
+  bool TypeConfig::StoreToDataFile(const std::string& directory) const
+  {
+    FileWriter writer;
+
+    try {
+      writer.Open(AppendFileToDir(directory,"types.dat"));
+
+      writer.Write(FILE_FORMAT_VERSION);
+
+      writer.WriteNumber((uint32_t)tags.size());
+      for (const auto &tag : tags) {
+        writer.WriteNumber(tag.GetId());
+        writer.Write(tag.GetName());
+      }
+
+      uint32_t nameTagCount=0;
+      uint32_t nameAltTagCount=0;
+
+      for (const auto &tag : tags) {
+        uint32_t priority;
+
+        if (IsNameTag(tag.GetId(),priority)) {
+          nameTagCount++;
+        }
+
+        if (IsNameAltTag(tag.GetId(),priority)) {
+          nameAltTagCount++;
+        }
+      }
+
+      writer.WriteNumber(nameTagCount);
+      for (const auto &tag : tags) {
+        uint32_t priority;
+
+        if (IsNameTag(tag.GetId(),priority)) {
+          writer.WriteNumber(tag.GetId());
+          writer.Write(tag.GetName());
+          writer.WriteNumber((uint32_t)priority);
+        }
+      }
+
+      writer.WriteNumber(nameAltTagCount);
+      for (const auto &tag : tags) {
+        uint32_t priority;
+
+        if (IsNameAltTag(tag.GetId(),priority)) {
+          writer.WriteNumber(tag.GetId());
+          writer.Write(tag.GetName());
+          writer.WriteNumber((uint32_t)priority);
+        }
+      }
+
+      uint32_t typeCount=0;
+
+      for (auto type : GetTypes()) {
+        if (!type->IsInternal()) {
+          typeCount++;
+        }
+      }
+
+      writer.WriteNumber(typeCount);
+
+      for (auto type : GetTypes()) {
+        if (type->IsInternal()) {
+          continue;
+        }
+
+        writer.Write(type->GetName());
+        writer.Write(type->CanBeNode());
+        writer.Write(type->CanBeWay());
+        writer.Write(type->CanBeArea());
+        writer.Write(type->CanBeRelation());
+        writer.Write(type->IsPath());
+        writer.Write(type->CanRouteFoot());
+        writer.Write(type->CanRouteBicycle());
+        writer.Write(type->CanRouteCar());
+        writer.Write(type->GetIndexAsAddress());
+        writer.Write(type->GetIndexAsLocation());
+        writer.Write(type->GetIndexAsRegion());
+        writer.Write(type->GetIndexAsPOI());
+        writer.Write(type->GetOptimizeLowZoom());
+        writer.Write(type->GetMultipolygon());
+        writer.Write(type->GetPinWay());
+        writer.Write(type->GetMergeAreas());
+        writer.Write(type->GetIgnoreSeaLand());
+        writer.Write(type->GetIgnore());
+
+        writer.WriteNumber((uint32_t)type->GetFeatures().size());
+        for (const auto &feature : type->GetFeatures()) {
+          writer.Write(feature.GetFeature()->GetName());
+        }
+
+        writer.WriteNumber((uint32_t)type->GetGroups().size());
+        for (const auto &groupName : type->GetGroups()) {
+          writer.Write(groupName);
+        }
+      }
+
+      writer.Close();
+    }
+    catch (IOException& e) {
+      log.Error() << e.GetDescription();
+      writer.CloseFailsafe();
+      return false;
+    }
+
+    return true;
+  }
 }

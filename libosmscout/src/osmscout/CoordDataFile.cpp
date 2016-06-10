@@ -22,13 +22,15 @@
 #include <osmscout/system/Assert.h>
 
 #include <osmscout/util/File.h>
+#include <osmscout/util/Logger.h>
 
 namespace osmscout {
 
-  CoordDataFile::CoordDataFile(const std::string& datafile)
-  : isOpen(false),
-    datafile(datafile),
-    coordPageSize(0)
+  const char* CoordDataFile::COORD_DAT="coord.dat";
+
+  CoordDataFile::CoordDataFile()
+    : isOpen(false),
+      pageSize(0)
   {
     // no code
   }
@@ -43,124 +45,108 @@ namespace osmscout {
   bool CoordDataFile::Open(const std::string& path,
                            bool memoryMapedData)
   {
-    datafilename=AppendFileToDir(path,datafile);
+    datafilename=AppendFileToDir(path,COORD_DAT);
 
     isOpen=false;
-    coordPageOffsetMap.clear();
+    pageFileOffsetMap.clear();
 
-    if (scanner.Open(datafilename,
-                     FileScanner::FastRandom,
-                     memoryMapedData)) {
+    try {
+      scanner.Open(datafilename,
+                   FileScanner::FastRandom,
+                   memoryMapedData);
+
       FileOffset mapOffset;
 
-      if (!scanner.Read(coordPageSize)) {
-        Close();
+      scanner.Read(mapOffset);
+      scanner.Read(pageSize);
 
-        return false;
-      }
-
-      if (!scanner.Read(mapOffset)) {
-        Close();
-
-        return false;
-      }
-
-      if (!scanner.SetPos(mapOffset)) {
-        Close();
-
-        return false;
-      }
+      scanner.SetPos(mapOffset);
 
       uint32_t mapSize;
 
-      if (!scanner.Read(mapSize)) {
-        Close();
-
-        return false;
-      }
+      scanner.Read(mapSize);
 
       for (size_t i=1; i<=mapSize; i++) {
-        PageId     id;
+        PageId     pageId;
         FileOffset offset;
 
-        if (!scanner.Read(id) ||
-            !scanner.Read(offset)) {
-          Close();
+        scanner.Read(pageId);
+        scanner.Read(offset);
 
-          return false;
-        }
-
-        coordPageOffsetMap[id]=offset;
+        pageFileOffsetMap[pageId]=offset;
       }
 
       isOpen=true;
     }
+    catch (IOException& e) {
+      log.Error() << e.GetDescription();
+      scanner.CloseFailsafe();
+      return false;
+    }
 
-    return isOpen;
+    return true;
   }
 
   bool CoordDataFile::Close()
   {
-    bool success=true;
+    pageFileOffsetMap.clear();
 
-    coordPageOffsetMap.clear();
-
-    if (scanner.IsOpen()) {
-      if (!scanner.Close()) {
-        success=false;
+    try {
+      if (scanner.IsOpen()) {
+        scanner.Close();
       }
     }
+    catch (IOException& e) {
+      log.Error() << e.GetDescription();
+      isOpen=false;
+      return false;
+    }
 
-    isOpen=false;
-
-    return success;
+    return true;
   }
 
-  bool CoordDataFile::Get(std::set<OSMId>& ids,
-                          CoordResultMap& coordsMap) const
+  bool CoordDataFile::Get(const std::set<OSMId>& ids, ResultMap& resultMap) const
   {
     assert(isOpen);
 
-    coordsMap.clear();
-#if defined(OSMSCOUT_HASHMAP_HAS_RESERVE)
-    coordsMap.reserve(ids.size());
-#endif
+    resultMap.clear();
+    resultMap.reserve(ids.size());
 
-    for (std::set<OSMId>::const_iterator id=ids.begin();
-         id!=ids.end();
-         ++id) {
-      PageId pageId=*id-std::numeric_limits<Id>::min();
-      PageId coordPageId=pageId/coordPageSize;
+    try {
+      for (const auto& id : ids) {
+        PageId relatedId=id+std::numeric_limits<OSMId>::min();
+        PageId pageId=relatedId/pageSize;
 
-      CoordPageOffsetMap::const_iterator pageOffset=coordPageOffsetMap.find(coordPageId);
+        PageIdFileOffsetMap::const_iterator pageOffset=pageFileOffsetMap.find(pageId);
 
-      if (pageOffset!=coordPageOffsetMap.end()) {
-        FileOffset offset=pageOffset->second+(pageId%coordPageSize)*2*sizeof(uint32_t);
-        PageId     substituteId=(offset-2*sizeof(FileOffset))/2*sizeof(uint32_t);
-
-        scanner.SetPos(offset);
-
-        uint32_t latDat;
-        uint32_t lonDat;
-
-        scanner.Read(latDat);
-        scanner.Read(lonDat);
-
-        if (latDat==0xffffffff || lonDat==0xffffffff) {
+        if (pageOffset==pageFileOffsetMap.end()) {
           continue;
         }
 
-        if (scanner.HasError()) {
-          std::cerr << "Error while reading data from offset " << pageOffset->second << " of file " << datafilename << "!" << std::endl;
-          scanner.Close();
-          return false;
+        FileOffset offset=pageOffset->second+(relatedId%pageSize)*(coordByteSize+1);
+
+        scanner.SetPos(offset);
+
+        uint8_t  serial;
+        bool     isSet;
+        GeoCoord coord;
+
+        scanner.Read(serial);
+        scanner.ReadConditionalCoord(coord,
+                                     isSet);
+
+        if (!isSet) {
+          continue;
         }
 
-        coordsMap.insert(std::make_pair(*id,
-                                        CoordEntry(substituteId,
-                                                   latDat/conversionFactor-90.0,
-                                                   lonDat/conversionFactor-180.0)));
+        resultMap.insert(std::make_pair(id,
+                                        Coord(serial,
+                                              coord)));
       }
+    }
+    catch (IOException& e) {
+      log.Error() << e.GetDescription();
+      return false;
     }
 
     return true;
